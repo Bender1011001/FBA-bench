@@ -1,0 +1,94 @@
+{
+  "referral_fees": {
+    "DEFAULT": [
+      {
+        "threshold": 0,
+        "percentage": 0.15,
+        "minimum": 0.30,
+        "maximum": null
+      }
+    ],
+    "Apparel": [
+      {
+        "threshold": 0,
+        "percentage": 0.17,
+        "minimum": 0.30,
+        "maximum": null
+      }
+    ],
+    "Jewelry": [
+      {
+        "threshold": 0,
+        "percentage": 0.20,
+        "minimum": 0.30,
+        "maximum": 250
+      },
+      {
+        "threshold": 250,
+        "percentage": 0.05,
+        "minimum": 0.30,
+        "maximum": null
+      }
+    ],
+    "Electronics": [
+      {
+        "threshold": 0,
+        "percentage": 0.08,
+        "minimum": 0.30,
+        "maximum": null
+      }
+    ],
+    "Books": [
+      {
+        "threshold": 0,
+        "percentage": 0.15,
+        "minimum": 0.30,
+        "maximum": null
+      }
+    ],
+    "Home & Garden": [
+      {
+        "threshold": 0,
+        "percentage": 0.15,
+        "minimum": 0.30,
+        "maximum": null
+      }
+    ],
+    "Sports & Outdoors": [
+      {
+        "threshold": 0,
+        "percentage": 0.15,
+        "minimum": 0.30,
+        "maximum": null
+      }
+    ],
+    "Toys & Games": [
+      {
+        "threshold": 0,
+        "percentage": 0.15,
+        "minimum": 0.30,
+        "maximum": null
+      }
+    ]
+  },
+  "fba_fulfillment_fees": {
+    "standard": {
+      "small": 3.22,
+      "large": 4.75,
+      "extra_large": 6.50
+    },
+    "oversize": {
+      "small": 6.26,
+      "medium": 8.26,
+      "large": 10.50,
+      "special": 15.75
+    }
+  },
+  "fee_metadata": {
+    "version": "2025.1",
+    "effective_date": "2025-02-01",
+    "source": "Amazon Seller Central fee schedules (Feb 2025 revision)",
+    "last_updated": "2025-07-24",
+    "notes": "Extracted from hardcoded values in fee_engine.py for maintainability"
+  }
+}

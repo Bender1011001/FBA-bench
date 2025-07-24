@@ -1,0 +1,9 @@
+# FBA-Bench Python dependencies
+numpy
+sp-api>=0.22.0  # Required for Live Pilot phase Amazon SP-API integration
+
+# Dashboard dependencies
+fastapi>=0.104.0
+uvicorn>=0.24.0
+websockets>=12.0
+pydantic>=2.5.0
