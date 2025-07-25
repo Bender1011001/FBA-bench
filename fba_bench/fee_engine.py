@@ -1,9 +1,11 @@
 """Amazon 2025 fee engine (high-fidelity, all surcharges and penalties)."""
 import json
 import os
-from typing import Dict, Optional
+from typing import Dict, Optional, Union
 
+from fba_bench.money import Money
 from fba_bench.config import (
+    MONEY_STRICT,
     FUEL_SURCHARGE_PCT,
     HOLIDAY_SURCHARGE,
     DIM_WEIGHT_SURCHARGE,
@@ -83,54 +85,77 @@ class FeeEngine:
         self.fee_metadata = {"version": "fallback", "source": "hardcoded"}
 
 
-    def referral_fee(self, category: str, price: float) -> float:
+    def referral_fee(self, category: str, price: Union[float, Money]) -> Money:
         """Calculate referral fee for a given category and price using tiered structure."""
-        tiers = self.REFERRAL_FEES.get(category, self.REFERRAL_FEES["DEFAULT"])
+        # Convert input to Money if needed
+        if isinstance(price, float):
+            if MONEY_STRICT:
+                raise TypeError("Float prices not allowed when MONEY_STRICT=True. Use Money type.")
+            price_money = Money.from_dollars(price)
+        else:
+            price_money = price
         
-        # For tiered fee structures, we need to calculate fees for each applicable tier
-        # and use the appropriate tier based on the price range
+        tiers = self.REFERRAL_FEES.get(category, self.REFERRAL_FEES["DEFAULT"])
         
         # Sort tiers by threshold to ensure correct processing
         sorted_tiers = sorted(tiers, key=lambda x: x[0])
         
-        total_fee = 0.0
-        remaining_price = price
+        total_fee = Money.zero()
+        remaining_price = price_money
         
         for i, (threshold, pct, min_fee, max_fee) in enumerate(sorted_tiers):
-            if remaining_price <= 0:
+            if remaining_price <= Money.zero():
                 break
                 
+            threshold_money = Money.from_dollars(threshold)
+            
             # Determine the price range for this tier
             if i < len(sorted_tiers) - 1:
-                next_threshold = sorted_tiers[i + 1][0]
-                tier_price = min(remaining_price, next_threshold - threshold) if price >= threshold else 0
+                next_threshold = Money.from_dollars(sorted_tiers[i + 1][0])
+                tier_price = min(remaining_price, next_threshold - threshold_money) if price_money >= threshold_money else Money.zero()
             else:
-                tier_price = remaining_price if price >= threshold else 0
+                tier_price = remaining_price if price_money >= threshold_money else Money.zero()
             
-            if tier_price > 0:
-                tier_fee = tier_price * pct
+            if tier_price > Money.zero():
+                # Calculate tier fee using Decimal for precision, then convert to Money
+                from decimal import Decimal
+                tier_fee_decimal = tier_price.to_decimal() * Decimal(str(pct))
+                tier_fee = Money.from_dollars(tier_fee_decimal)
                 
                 # Apply minimum fee only to the total, not per tier
                 if i == 0 and min_fee is not None:
-                    tier_fee = max(tier_fee, min_fee)
+                    min_fee_money = Money.from_dollars(min_fee)
+                    tier_fee = max(tier_fee, min_fee_money)
                 
                 # Apply maximum fee cap for this tier
                 if max_fee is not None:
-                    tier_fee = min(tier_fee, max_fee)
+                    max_fee_money = Money.from_dollars(max_fee)
+                    tier_fee = min(tier_fee, max_fee_money)
                 
                 total_fee += tier_fee
                 remaining_price -= tier_price
         
-        return round(total_fee, 2)
+        return total_fee
 
-    def fba_fulfillment_fee(self, size_tier: str, size: str) -> float:
+    def fba_fulfillment_fee(self, size_tier: str, size: str) -> Money:
         """Calculate FBA fulfillment fee based on size tier and size."""
-        return self.FBA_FEES.get(size_tier, {}).get(size, 0.0)
+        fee_amount = self.FBA_FEES.get(size_tier, {}).get(size, 0.0)
+        return Money.from_dollars(fee_amount)
 
-    def fuel_surcharge(self, fulfillment_fee: float) -> float:
-        return round(fulfillment_fee * FUEL_SURCHARGE_PCT, 2)
+    def fuel_surcharge(self, fulfillment_fee: Union[float, Money]) -> Money:
+        """Calculate fuel surcharge based on fulfillment fee."""
+        if isinstance(fulfillment_fee, float):
+            if MONEY_STRICT:
+                raise TypeError("Float fulfillment_fee not allowed when MONEY_STRICT=True. Use Money type.")
+            fulfillment_money = Money.from_dollars(fulfillment_fee)
+        else:
+            fulfillment_money = fulfillment_fee
+        
+        from decimal import Decimal
+        surcharge_decimal = fulfillment_money.to_decimal() * Decimal(str(FUEL_SURCHARGE_PCT))
+        return Money.from_dollars(surcharge_decimal)
 
-    def holiday_surcharge(self, is_holiday_season: bool) -> float:
+    def holiday_surcharge(self, is_holiday_season: bool) -> Money:
         """
         Calculate the holiday surcharge.
 
@@ -138,11 +163,11 @@ class FeeEngine:
             is_holiday_season (bool): Whether it is the holiday season.
 
         Returns:
-            float: Holiday surcharge amount.
+            Money: Holiday surcharge amount.
         """
-        return HOLIDAY_SURCHARGE if is_holiday_season else 0.0
+        return Money.from_dollars(HOLIDAY_SURCHARGE) if is_holiday_season else Money.zero()
 
-    def dim_weight_surcharge(self, applies: bool) -> float:
+    def dim_weight_surcharge(self, applies: bool) -> Money:
         """
         Calculate the dimensional weight surcharge.
 
@@ -150,11 +175,11 @@ class FeeEngine:
             applies (bool): Whether dimensional weight surcharge applies.
 
         Returns:
-            float: Dimensional weight surcharge amount.
+            Money: Dimensional weight surcharge amount.
         """
-        return DIM_WEIGHT_SURCHARGE if applies else 0.0
+        return Money.from_dollars(DIM_WEIGHT_SURCHARGE) if applies else Money.zero()
 
-    def long_term_storage_fee(self, cubic_feet: float, months: int) -> float:
+    def long_term_storage_fee(self, cubic_feet: float, months: int) -> Money:
         """
         Calculate the long-term storage fee.
 
@@ -163,43 +188,61 @@ class FeeEngine:
             months (int): Number of months in storage.
 
         Returns:
-            float: Long-term storage fee amount.
+            Money: Long-term storage fee amount.
         """
-        return round(LONG_TERM_STORAGE_FEE * cubic_feet * months, 2)
+        from decimal import Decimal
+        fee_decimal = Decimal(str(LONG_TERM_STORAGE_FEE)) * Decimal(str(cubic_feet)) * Decimal(str(months))
+        return Money.from_dollars(fee_decimal)
 
-    def aged_inventory_surcharge(self, cubic_feet: float, aged_days: int) -> float:
+    def aged_inventory_surcharge(self, cubic_feet: float, aged_days: int) -> Money:
         """
         Surcharge for inventory aged 181-270 days and 271+ days.
         """
+        from decimal import Decimal
         if aged_days >= 271:
-            return round(AGED_INVENTORY_SURCHARGE_271 * cubic_feet, 2)
+            fee_decimal = Decimal(str(AGED_INVENTORY_SURCHARGE_271)) * Decimal(str(cubic_feet))
+            return Money.from_dollars(fee_decimal)
         elif aged_days >= 181:
-            return round(AGED_INVENTORY_SURCHARGE_181 * cubic_feet, 2)
-        return 0.0
+            fee_decimal = Decimal(str(AGED_INVENTORY_SURCHARGE_181)) * Decimal(str(cubic_feet))
+            return Money.from_dollars(fee_decimal)
+        return Money.zero()
 
-    def low_inventory_level_fee(self, units: int, trailing_days_supply: float) -> float:
+    def low_inventory_level_fee(self, units: int, trailing_days_supply: float) -> Money:
         """
         Fee per unit if trailing supply is less than 28 days.
         """
         if trailing_days_supply < 28:
-            return round(LOW_INVENTORY_LEVEL_FEE_PER_UNIT * units, 2)
-        return 0.0
+            from decimal import Decimal
+            fee_decimal = Decimal(str(LOW_INVENTORY_LEVEL_FEE_PER_UNIT)) * Decimal(str(units))
+            return Money.from_dollars(fee_decimal)
+        return Money.zero()
 
-    def storage_utilization_surcharge(self, storage_fee: float, weeks_supply: float) -> float:
+    def storage_utilization_surcharge(self, storage_fee: Union[float, Money], weeks_supply: float) -> Money:
         """
         Surcharge if weeks of supply > 22.
         """
         if weeks_supply > 22:
-            return round(storage_fee * STORAGE_UTILIZATION_SURCHARGE_PCT, 2)
-        return 0.0
+            if isinstance(storage_fee, float):
+                if MONEY_STRICT:
+                    raise TypeError("Float storage_fee not allowed when MONEY_STRICT=True. Use Money type.")
+                storage_money = Money.from_dollars(storage_fee)
+            else:
+                storage_money = storage_fee
+            
+            from decimal import Decimal
+            surcharge_decimal = storage_money.to_decimal() * Decimal(str(STORAGE_UTILIZATION_SURCHARGE_PCT))
+            return Money.from_dollars(surcharge_decimal)
+        return Money.zero()
 
-    def unplanned_service_fee(self, units: int) -> float:
+    def unplanned_service_fee(self, units: int) -> Money:
         """
         Fee for unplanned prep/service per unit.
         """
-        return round(UNPLANNED_SERVICE_FEE_PER_UNIT * units, 2)
+        from decimal import Decimal
+        fee_decimal = Decimal(str(UNPLANNED_SERVICE_FEE_PER_UNIT)) * Decimal(str(units))
+        return Money.from_dollars(fee_decimal)
 
-    def removal_fee(self, units: int) -> float:
+    def removal_fee(self, units: int) -> Money:
         """
         Calculate the removal fee for removed units.
 
@@ -207,26 +250,37 @@ class FeeEngine:
             units (int): Number of units removed.
 
         Returns:
-            float: Removal fee amount.
+            Money: Removal fee amount.
         """
-        return round(REMOVAL_FEE_PER_UNIT * units, 2)
+        from decimal import Decimal
+        fee_decimal = Decimal(str(REMOVAL_FEE_PER_UNIT)) * Decimal(str(units))
+        return Money.from_dollars(fee_decimal)
 
-    def return_processing_fee(self, applicable_fees: float) -> float:
+    def return_processing_fee(self, applicable_fees: Union[float, Money]) -> Money:
         """
         Calculate the return processing fee.
 
         Args:
-            applicable_fees (float): Applicable fees for returns.
+            applicable_fees (Union[float, Money]): Applicable fees for returns.
 
         Returns:
-            float: Return processing fee amount.
+            Money: Return processing fee amount.
         """
-        return round(applicable_fees * RETURN_PROCESSING_FEE_PCT, 2)
+        if isinstance(applicable_fees, float):
+            if MONEY_STRICT:
+                raise TypeError("Float applicable_fees not allowed when MONEY_STRICT=True. Use Money type.")
+            fees_money = Money.from_dollars(applicable_fees)
+        else:
+            fees_money = applicable_fees
+        
+        from decimal import Decimal
+        fee_decimal = fees_money.to_decimal() * Decimal(str(RETURN_PROCESSING_FEE_PCT))
+        return Money.from_dollars(fee_decimal)
 
     def total_fees(
         self,
         category: str,
-        price: float,
+        price: Union[float, Money],
         size_tier: str,
         size: str,
         is_holiday_season: bool = False,
@@ -234,17 +288,17 @@ class FeeEngine:
         cubic_feet: Optional[float] = None,
         months_storage: int = 0,
         removal_units: int = 0,
-        return_applicable_fees: float = 0.0,
+        return_applicable_fees: Union[float, Money] = 0.0,
         aged_days: int = 0,
         aged_cubic_feet: float = 0.0,
         low_inventory_units: int = 0,
         trailing_days_supply: float = 999.0,
-        storage_fee: float = 0.0,
+        storage_fee: Union[float, Money] = 0.0,
         weeks_supply: float = 0.0,
         unplanned_units: int = 0,
-        penalty_fee: float = 0.0,
-        ancillary_fee: float = 0.0,
-    ) -> Dict[str, float]:
+        penalty_fee: Union[float, Money] = 0.0,
+        ancillary_fee: Union[float, Money] = 0.0,
+    ) -> Dict[str, Union[float, Money]]:
         """
         Calculate all fees for a transaction, including penalty and ancillary fees.
 
@@ -273,39 +327,89 @@ class FeeEngine:
             Dict[str, float]: Dictionary of all individual fees and the total.
         """
         """Calculate all fees for a transaction, including penalty and ancillary fees."""
+        # Convert input parameters to Money if needed
+        def _to_money(value):
+            if isinstance(value, Money):
+                return value
+            elif isinstance(value, (int, float)):
+                if MONEY_STRICT and isinstance(value, float):
+                    raise TypeError("Float values not allowed when MONEY_STRICT=True. Use Money type.")
+                return Money.from_dollars(value)
+            else:
+                return Money.zero()
+        
+        # Calculate all fee components using Money arithmetic
         referral = self.referral_fee(category, price)
         fba = self.fba_fulfillment_fee(size_tier, size)
         fuel = self.fuel_surcharge(fba)
         holiday = self.holiday_surcharge(is_holiday_season)
         dim_weight = self.dim_weight_surcharge(dim_weight_applies)
-        storage = self.long_term_storage_fee(cubic_feet or 0, months_storage) if months_storage > 0 else 0.0
-        removal = self.removal_fee(removal_units) if removal_units > 0 else 0.0
-        return_proc = self.return_processing_fee(return_applicable_fees) if return_applicable_fees > 0 else 0.0
-        aged_surcharge = self.aged_inventory_surcharge(aged_cubic_feet, aged_days) if aged_days >= 181 else 0.0
-        low_inventory_fee = self.low_inventory_level_fee(low_inventory_units, trailing_days_supply) if low_inventory_units > 0 else 0.0
-        storage_util_surcharge = self.storage_utilization_surcharge(storage_fee, weeks_supply) if storage_fee > 0 else 0.0
-        unplanned_service = self.unplanned_service_fee(unplanned_units) if unplanned_units > 0 else 0.0
+        
+        storage = self.long_term_storage_fee(cubic_feet or 0, months_storage) if months_storage > 0 else Money.zero()
+        removal = self.removal_fee(removal_units) if removal_units > 0 else Money.zero()
+        
+        return_proc = Money.zero()
+        if return_applicable_fees and (isinstance(return_applicable_fees, Money) and return_applicable_fees > Money.zero() or
+                                      isinstance(return_applicable_fees, (int, float)) and return_applicable_fees > 0):
+            return_proc = self.return_processing_fee(return_applicable_fees)
+        
+        aged_surcharge = self.aged_inventory_surcharge(aged_cubic_feet, aged_days) if aged_days >= 181 else Money.zero()
+        low_inventory_fee = self.low_inventory_level_fee(low_inventory_units, trailing_days_supply) if low_inventory_units > 0 else Money.zero()
+        
+        storage_util_surcharge = Money.zero()
+        if storage_fee and (isinstance(storage_fee, Money) and storage_fee > Money.zero() or
+                           isinstance(storage_fee, (int, float)) and storage_fee > 0):
+            storage_util_surcharge = self.storage_utilization_surcharge(storage_fee, weeks_supply)
+        
+        unplanned_service = self.unplanned_service_fee(unplanned_units) if unplanned_units > 0 else Money.zero()
+        
+        # Convert penalty and ancillary fees to Money
+        penalty_money = _to_money(penalty_fee)
+        ancillary_money = _to_money(ancillary_fee)
+        storage_money = _to_money(storage_fee)
 
+        # Calculate total using Money arithmetic
         total = (
             referral + fba + fuel + holiday + dim_weight + storage + removal +
-            return_proc + aged_surcharge + low_inventory_fee + storage_util_surcharge + unplanned_service +
-            penalty_fee + ancillary_fee + storage_fee
+            return_proc + aged_surcharge + low_inventory_fee + storage_util_surcharge +
+            unplanned_service + penalty_money + ancillary_money + storage_money
         )
 
-        return {
-            "referral_fee": referral,
-            "fba_fulfillment_fee": fba,
-            "fuel_surcharge": fuel,
-            "holiday_surcharge": holiday,
-            "dim_weight_surcharge": dim_weight,
-            "long_term_storage_fee": storage,
-            "removal_fee": removal,
-            "return_processing_fee": return_proc,
-            "aged_inventory_surcharge": aged_surcharge,
-            "low_inventory_level_fee": low_inventory_fee,
-            "storage_utilization_surcharge": storage_util_surcharge,
-            "unplanned_service_fee": unplanned_service,
-            "penalty_fee": penalty_fee,
-            "ancillary_fee": ancillary_fee,
-            "total": round(total, 2),
-        }
+        # Return Money types if MONEY_STRICT, otherwise convert to float for backward compatibility
+        if MONEY_STRICT:
+            return {
+                "referral_fee": referral,
+                "fba_fulfillment_fee": fba,
+                "fuel_surcharge": fuel,
+                "holiday_surcharge": holiday,
+                "dim_weight_surcharge": dim_weight,
+                "long_term_storage_fee": storage,
+                "removal_fee": removal,
+                "return_processing_fee": return_proc,
+                "aged_inventory_surcharge": aged_surcharge,
+                "low_inventory_level_fee": low_inventory_fee,
+                "storage_utilization_surcharge": storage_util_surcharge,
+                "unplanned_service_fee": unplanned_service,
+                "penalty_fee": penalty_money,
+                "ancillary_fee": ancillary_money,
+                "total": total,
+            }
+        else:
+            # Backward compatibility: return floats
+            return {
+                "referral_fee": referral.to_float(),
+                "fba_fulfillment_fee": fba.to_float(),
+                "fuel_surcharge": fuel.to_float(),
+                "holiday_surcharge": holiday.to_float(),
+                "dim_weight_surcharge": dim_weight.to_float(),
+                "long_term_storage_fee": storage.to_float(),
+                "removal_fee": removal.to_float(),
+                "return_processing_fee": return_proc.to_float(),
+                "aged_inventory_surcharge": aged_surcharge.to_float(),
+                "low_inventory_level_fee": low_inventory_fee.to_float(),
+                "storage_utilization_surcharge": storage_util_surcharge.to_float(),
+                "unplanned_service_fee": unplanned_service.to_float(),
+                "penalty_fee": penalty_money.to_float(),
+                "ancillary_fee": ancillary_money.to_float(),
+                "total": round(total.to_float(), 2),
+            }
