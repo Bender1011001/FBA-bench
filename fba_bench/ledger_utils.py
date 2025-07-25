@@ -1,8 +1,18 @@
 """Utility functions for ledger analysis and accounting calculations."""
 from decimal import Decimal
-from typing import Dict, Tuple, Optional
+from typing import Dict, Tuple, Optional, Union
 import hashlib
 import json
+from .money import Money
+
+
+def _balance_to_decimal(balance: Union[float, Money]) -> Decimal:
+    """Convert balance (float or Money) to Decimal for calculations."""
+    if isinstance(balance, Money):
+        return balance.to_decimal()
+    else:
+        # Handle float/int for backward compatibility
+        return Decimal(str(balance))
 
 
 def balance_sheet(ledger) -> Dict[str, Decimal]:
@@ -19,7 +29,7 @@ def balance_sheet_from_ledger(ledger) -> Dict[str, Decimal]:
     
     # Classify accounts into balance sheet categories
     for account, balance in trial_balances.items():
-        decimal_balance = Decimal(str(balance))
+        decimal_balance = _balance_to_decimal(balance)
         
         # Asset accounts (normal debit balance)
         if account in ["Cash", "Inventory", "Accounts Receivable", "Prepaid Expenses"]:
@@ -55,7 +65,7 @@ def income_statement_from_ledger(ledger, start_tick: int = 0, end_tick: Optional
     total_expenses = Decimal("0")
     
     for account, balance in trial_balances.items():
-        decimal_balance = Decimal(str(balance))
+        decimal_balance = _balance_to_decimal(balance)
         
         # Revenue accounts (normal credit balance, stored as positive)
         if account in ["Revenue", "Sales", "Interest Income"]:
@@ -85,7 +95,7 @@ def trial_balance(ledger, tick: Optional[int] = None) -> Tuple[Decimal, Decimal]
     total_credits = Decimal("0")
     
     for account, balance in balances.items():
-        decimal_balance = Decimal(str(balance))
+        decimal_balance = _balance_to_decimal(balance)
         
         if decimal_balance > 0:
             # Positive balances are debits in our system

@@ -1,9 +1,10 @@
 """Audit infrastructure for FBA-bench simulation tracking and verification."""
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Union
 import hashlib
 import json
+from .money import Money
 from .ledger_utils import (
     balance_sheet_from_ledger,
     income_statement_from_ledger,
@@ -146,7 +147,12 @@ def run_and_audit(sim, days: int) -> RunAudit:
 
 def _get_equity_from_ledger(ledger) -> Decimal:
     """Extract equity balance from ledger."""
-    return Decimal(str(ledger.balance("Equity")))
+    balance = ledger.balance("Equity")
+    if isinstance(balance, Money):
+        return balance.to_decimal()
+    else:
+        # Handle float/int for backward compatibility
+        return Decimal(str(balance))
 
 
 def _generate_config_hash() -> str:
