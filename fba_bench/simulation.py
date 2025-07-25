@@ -12,6 +12,7 @@ from .fee_engine import FeeEngine
 from .inventory import InventoryManager
 from .ledger import Ledger, Transaction, Entry
 from .supply_chain import GlobalSupplyChain
+from .audit import run_and_audit, RunAudit
 
 from fba_bench.config import (
     # Product defaults
@@ -1040,6 +1041,14 @@ class Simulation:
     def run(self, days: int = 30):
         for _ in range(days):
             self.tick_day()
+    
+    def run_and_audit(self, days: int = 30) -> RunAudit:
+        """Run simulation and return comprehensive audit data."""
+        return run_and_audit(self, days)
+    
+    def enable_fee_audits(self, enabled: bool = True):
+        """Enable or disable fee auditing for closure checking."""
+        self._fee_audits_enabled = enabled
 
 def bootstrap_example():
     sim = Simulation()

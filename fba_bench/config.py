@@ -27,6 +27,9 @@ TRAILING_DAYS_SUPPLY_DEFAULT = 30.0
 EMA_DECAY = 0.2
 WEEKS_SUPPLY_DEFAULT = 10.0
 
+# --- Money Migration Feature Flag ---
+MONEY_STRICT = False  # Set to True to enforce Money types only
+
 # --- Adversarial Events Configuration ---
 DEFAULT_SUPPLY_SHOCK_FACTOR = 0.5
 DEFAULT_SUPPLY_SHOCK_DURATION = 3
