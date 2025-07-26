@@ -320,6 +320,9 @@ class Simulation:
         trust_score_service = TrustScoreService()
         listing_manager_service = ListingManagerService()
         
+        # Store inventory service for agent access
+        self.inventory_service = inventory_service
+        
         # Initialize orchestrator with available services
         # Some services may not exist yet, so we'll use None for optional ones
         self._orchestrator = SimulationOrchestrator(

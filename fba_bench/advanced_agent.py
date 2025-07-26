@@ -1189,7 +1189,15 @@ class AdvancedAgent:
         elif action == "reorder_inventory":
             self.meter_api_call(cpu_units=5.0, usd_cost=0.05)  # Medium-high cost for inventory management
             qty = decision.get("qty", 50)
+            
+            # Use new InventoryService for batch management and COGS tracking
+            from fba_bench.money import Money
+            cost_per_unit = Money.from_dollars(self.cost)
+            self.sim.inventory_service.add_batch(self.asin, qty, cost_per_unit, self.sim.now)
+            
+            # Also update legacy inventory for backward compatibility
             self.sim.inventory.add(self.asin, qty, self.cost, self.sim.now)
+            
             self.long_term_memory["procedural"].append("reorder_inventory")
         elif action == "create_ad_campaign":
             self.meter_api_call(cpu_units=7.0, usd_cost=0.07)  # High cost for marketing actions

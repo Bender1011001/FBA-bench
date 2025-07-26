@@ -215,9 +215,19 @@ class SimulationOrchestrator:
                 BSR_MAX_VALUE = getattr(product, "BSR_MAX_VALUE", 1_000_000)
                 product.bsr = min(BSR_MAX_VALUE, int(product.bsr * (1 + search_penalty)))
 
-        # 3. Update inventory after sales
+        # 3. Update inventory after sales and capture COGS
+        cogs = Money.zero()
         if self.inventory_service is not None:
-            self.inventory_service.update_inventory(product, units_sold)
+            cogs = self.inventory_service.update_inventory(product, units_sold)
+            
+            # Record COGS transaction in ledger if we have sales
+            if units_sold > 0 and cogs > Money.zero():
+                asin_str = getattr(product, "asin", "UNKNOWN")
+                simulation.ledger.post(Transaction(
+                    f"COGS for {units_sold} units of {asin_str}",
+                    [Entry("Cost of Goods Sold", cogs, simulation.now)],
+                    [Entry("Inventory", cogs, simulation.now)]
+                ))
 
         # 4. Update BSR metrics
         self.demand_service.update_bsr(
