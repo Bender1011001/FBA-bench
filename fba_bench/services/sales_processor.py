@@ -14,13 +14,24 @@ from fba_bench.fee_engine import FeeEngine
 from fba_bench.models.sales_result import SalesResult
 from fba_bench.models import Competitor
 
-from fba_bench.config import (
-    CUBIC_FEET_PER_UNIT, MONTHS_STORAGE_DEFAULT, REMOVAL_UNITS_DEFAULT,
-    RETURN_FEES_DEFAULT, AGED_DAYS_DEFAULT, AGED_CUBIC_FEET_PER_UNIT,
-    LOW_INVENTORY_UNITS_DEFAULT, TRAILING_DAYS_SUPPLY_DEFAULT,
-    WEEKS_SUPPLY_DEFAULT, EMA_DECAY, BSR_BASE, BSR_SMOOTHING_FACTOR,
-    BSR_MIN_VALUE, BSR_MAX_VALUE, INDIVIDUAL_PER_ITEM
-)
+# Load configuration constants
+from fba_bench.config_loader import load_config
+_config = load_config()
+CUBIC_FEET_PER_UNIT = _config.simulation.cubic_feet_per_unit
+MONTHS_STORAGE_DEFAULT = _config.simulation.months_storage_default
+REMOVAL_UNITS_DEFAULT = _config.simulation.removal_units_default
+RETURN_FEES_DEFAULT = _config.simulation.return_fees_default
+AGED_DAYS_DEFAULT = _config.simulation.aged_days_default
+AGED_CUBIC_FEET_PER_UNIT = _config.simulation.aged_cubic_feet_per_unit
+LOW_INVENTORY_UNITS_DEFAULT = _config.simulation.low_inventory_units_default
+TRAILING_DAYS_SUPPLY_DEFAULT = _config.simulation.trailing_days_supply_default
+WEEKS_SUPPLY_DEFAULT = _config.simulation.weeks_supply_default
+EMA_DECAY = _config.simulation.ema_decay
+BSR_BASE = _config.market_dynamics.bsr_base
+BSR_SMOOTHING_FACTOR = _config.market_dynamics.bsr_smoothing_factor
+BSR_MIN_VALUE = _config.market_dynamics.bsr_min_value
+BSR_MAX_VALUE = _config.market_dynamics.bsr_max_value
+INDIVIDUAL_PER_ITEM = _config.fees.individual_per_item
 
 
 class MarketDynamics(Protocol):

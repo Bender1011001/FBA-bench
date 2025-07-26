@@ -113,7 +113,7 @@ simulation:
   trailing_days_supply_default: 30.0
   ema_decay: 0.2
   weeks_supply_default: 10.0
-  money_strict: false  # Will be changed to true later
+  money_strict: true  # Enforce strict Money type usage
 
 # Adversarial events configuration
 adversarial_events:

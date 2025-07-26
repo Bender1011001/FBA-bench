@@ -2,7 +2,12 @@ from typing import Dict, List
 
 import numpy as np
 
-from .config import REL_PRICE_FACTOR_MIN, REL_PRICE_FACTOR_MAX
+from .config_loader import load_config
+
+# Load configuration
+_config = load_config()
+REL_PRICE_FACTOR_MIN = _config.market_dynamics.rel_price_factor_min
+REL_PRICE_FACTOR_MAX = _config.market_dynamics.rel_price_factor_max
 
 class Competitor:
     """

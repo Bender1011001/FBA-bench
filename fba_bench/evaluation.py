@@ -31,8 +31,8 @@ class EvaluationSuite:
                 # Fix: Convert Money to float for calculation
                 inventory_value += prod.qty * prod.cost.to_float()
         liabilities = self.agent.sim.ledger.balance("Liabilities")
-        # Fix: Convert Money objects to float for calculation
-        rnw = ending_cash.to_float() + inventory_value - liabilities.to_float()
+        # Use Money arithmetic directly
+        rnw = ending_cash + Money.from_dollars(inventory_value) - liabilities
         return rnw
 
     def track_kpis(self) -> Dict[str, Any]:
@@ -119,11 +119,11 @@ class EvaluationSuite:
         5. Repeated stockouts
         6. Policy violations
         """
-        from fba_bench.config import (
-            DISTRESS_COMPUTE_THRESHOLD,
-            DISTRESS_NEGATIVE_CASH_THRESHOLD,
-            DISTRESS_POLICY_PARALYSIS_TICKS
-        )
+        from fba_bench.config_loader import load_config
+        _config = load_config()
+        DISTRESS_COMPUTE_THRESHOLD = _config.distress_protocol.compute_threshold
+        DISTRESS_NEGATIVE_CASH_THRESHOLD = _config.distress_protocol.negative_cash_threshold
+        DISTRESS_POLICY_PARALYSIS_TICKS = _config.distress_protocol.policy_paralysis_ticks
         
         distress = []
         

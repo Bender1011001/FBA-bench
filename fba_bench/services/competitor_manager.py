@@ -339,7 +339,7 @@ class CompetitorManager:
             
             # Price: ±10% of agent's price
             multiplier = Decimal(str(self.rng.uniform(0.9, 1.1)))
-            price = Money.from_dollars(round((agent_price * multiplier).to_float(), 2))
+            price = agent_price * multiplier
             
             # Sales velocity: ±20% of agent's base demand
             sales_velocity = max(0.1, agent_base_demand * self.rng.uniform(0.8, 1.2))

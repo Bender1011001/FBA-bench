@@ -16,7 +16,14 @@ from typing import Any, Dict, List, Optional, Callable
 from decimal import Decimal
 
 from .simulation import Simulation
-from fba_bench.config import DEFAULT_CATEGORY, DEFAULT_COST, DEFAULT_PRICE, DEFAULT_QTY
+from fba_bench.config_loader import load_config
+
+# Load configuration
+_config = load_config()
+DEFAULT_CATEGORY = _config.agent_defaults.default_category
+DEFAULT_COST = _config.agent_defaults.default_cost
+DEFAULT_PRICE = _config.agent_defaults.default_price
+DEFAULT_QTY = _config.agent_defaults.default_qty
 from fba_bench.money import Money
 
 class AdvancedAgent:
@@ -1428,7 +1435,7 @@ class AdvancedAgent:
         ending_cash = self.sim.ledger.balance("Cash")
         cogs = total_sales * self.cost
         revenue = total_sales * self.price
-        profit = ending_cash.to_float() - 10000  # Seed capital is 10,000, convert Money to float
+        profit = ending_cash - Money.from_dollars(10000)  # Seed capital is 10,000
         return {
             "total_sales": total_sales,
             "revenue": revenue,

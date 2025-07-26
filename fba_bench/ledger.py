@@ -3,7 +3,11 @@ from dataclasses import dataclass
 from typing import List, Dict, Union
 from datetime import datetime
 from .money import Money
-from .config import MONEY_STRICT
+from .config_loader import load_config
+
+# Load configuration
+_config = load_config()
+MONEY_STRICT = _config.simulation.money_strict
 
 @dataclass
 class Entry:

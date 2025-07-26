@@ -7,17 +7,20 @@ Defines a system for red-team testing, agent hardening, and stress-testing via a
 from typing import Callable, List, Dict, Any
 import random
 
-from fba_bench.config import (
-    DEFAULT_SUPPLY_SHOCK_FACTOR,
-    DEFAULT_SUPPLY_SHOCK_DURATION,
-    DEFAULT_REVIEW_ATTACK_COUNT,
-    DEFAULT_PRICE_WAR_DROP_PCT,
-    DEFAULT_PRICE_WAR_DURATION,
-    DEFAULT_FAKE_REVIEW_COUNT,
-    DEFAULT_INVENTORY_FREEZE_DURATION,
-    DEFAULT_BUYBOX_HIJACK_DURATION,
-    DEFAULT_POLICY_PENALTY_AMOUNT,
-)
+from fba_bench.config_loader import load_config
+
+# Load configuration
+_config = load_config()
+DEFAULT_SUPPLY_SHOCK_FACTOR = _config.adversarial_events.default_supply_shock_factor
+DEFAULT_SUPPLY_SHOCK_DURATION = _config.adversarial_events.default_supply_shock_duration
+DEFAULT_REVIEW_ATTACK_COUNT = _config.adversarial_events.default_review_attack_count
+DEFAULT_PRICE_WAR_DROP_PCT = _config.adversarial_events.default_price_war_drop_pct
+DEFAULT_PRICE_WAR_DURATION = _config.adversarial_events.default_price_war_duration
+DEFAULT_FAKE_REVIEW_COUNT = _config.adversarial_events.default_fake_review_count
+DEFAULT_INVENTORY_FREEZE_DURATION = _config.adversarial_events.default_inventory_freeze_duration
+DEFAULT_BUYBOX_HIJACK_DURATION = _config.adversarial_events.default_buybox_hijack_duration
+DEFAULT_POLICY_PENALTY_AMOUNT = _config.adversarial_events.default_policy_penalty_amount
+
 class AdversarialEvent:
     """
     Base class for adversarial events.

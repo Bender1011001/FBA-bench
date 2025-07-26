@@ -297,7 +297,13 @@ def test_selling_plans_and_fee_structure():
 
 def test_bsr_calculation_consistency():
     """Test BSR calculation with blueprint formula using known inputs and expected outputs."""
-    from fba_bench.config import BSR_BASE, BSR_SMOOTHING_FACTOR, BSR_MIN_VALUE, BSR_MAX_VALUE, EMA_DECAY
+    from fba_bench.config_loader import load_config
+    _config = load_config()
+    BSR_BASE = _config.market_dynamics.bsr_base
+    BSR_SMOOTHING_FACTOR = _config.market_dynamics.bsr_smoothing_factor
+    BSR_MIN_VALUE = _config.market_dynamics.bsr_min_value
+    BSR_MAX_VALUE = _config.market_dynamics.bsr_max_value
+    EMA_DECAY = _config.simulation.ema_decay
     
     sim = Simulation()
     sim.launch_product("B000TEST", "DEFAULT", cost=5.0, price=19.99, qty=100)
@@ -877,10 +883,13 @@ def test_memory_system_vector_store_capabilities():
 
 def test_config_constants_usage():
     """Test that hardcoded values have been moved to config."""
-    from fba_bench.config import (
-        BSR_BASE, BSR_SMOOTHING_FACTOR, COMPETITOR_PRICE_CHANGE_BASE,
-        DEFAULT_API_BUDGET, DEFAULT_CPU_BUDGET
-    )
+    from fba_bench.config_loader import load_config
+    _config = load_config()
+    BSR_BASE = _config.market_dynamics.bsr_base
+    BSR_SMOOTHING_FACTOR = _config.market_dynamics.bsr_smoothing_factor
+    COMPETITOR_PRICE_CHANGE_BASE = _config.competitor_model.price_change_base
+    DEFAULT_API_BUDGET = _config.api_cost_model.default_api_budget
+    DEFAULT_CPU_BUDGET = _config.api_cost_model.default_cpu_budget
     
     # Test config constants are defined
     assert BSR_BASE > 0

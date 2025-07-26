@@ -191,9 +191,7 @@ class PenaltyFeeService:
         estimated_return_rate = min(0.3, len(returns) / max(1, units_sold * 4))
         returned_units = int(units_sold * estimated_return_rate)
         
-        return Money.from_dollars(
-            returned_units * product.price.to_float() * self.return_processing_fee_pct
-        )
+        return product.price * returned_units * Money.from_dollars(self.return_processing_fee_pct)
     
     def _calculate_prep_service_fees(self, product: Any, units_sold: int) -> Money:
         """Calculate prep service fees based on product characteristics."""
@@ -381,7 +379,7 @@ class PenaltyFeeService:
         for i, violation in enumerate(recent_violations):
             base_penalty = Money.from_dollars(150.0)
             escalation_multiplier = 1.0 + (i * 0.5)
-            penalty_fee += base_penalty * Money.from_dollars(escalation_multiplier)
+            penalty_fee += base_penalty * escalation_multiplier
         
         return penalty_fee
     
@@ -390,7 +388,7 @@ class PenaltyFeeService:
     ) -> Money:
         """Apply category-specific penalty adjustments."""
         if category in self.high_risk_categories and penalty_fee > Money.zero():
-            return penalty_fee * Money.from_dollars(1.3)  # 30% increase
+            return penalty_fee * 1.3  # 30% increase
         return penalty_fee
     
     def _calculate_pricing_penalties(

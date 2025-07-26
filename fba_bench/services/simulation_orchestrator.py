@@ -10,6 +10,21 @@ from decimal import Decimal
 
 from fba_bench.money import Money
 from fba_bench.ledger import Entry, Transaction
+from fba_bench.config_loader import load_config
+
+# Load configuration constants
+_config = load_config()
+PROFESSIONAL_MONTHLY = _config.fees.professional_monthly
+CUBIC_FEET_PER_UNIT = _config.simulation.cubic_feet_per_unit
+MONTHS_STORAGE_DEFAULT = _config.simulation.months_storage_default
+REMOVAL_UNITS_DEFAULT = _config.simulation.removal_units_default
+RETURN_FEES_DEFAULT = _config.simulation.return_fees_default
+AGED_DAYS_DEFAULT = _config.simulation.aged_days_default
+AGED_CUBIC_FEET_PER_UNIT = _config.simulation.aged_cubic_feet_per_unit
+LOW_INVENTORY_UNITS_DEFAULT = _config.simulation.low_inventory_units_default
+TRAILING_DAYS_SUPPLY_DEFAULT = _config.simulation.trailing_days_supply_default
+WEEKS_SUPPLY_DEFAULT = _config.simulation.weeks_supply_default
+INDIVIDUAL_PER_ITEM = _config.fees.individual_per_item
 from fba_bench.services.sales_processor import SalesProcessor
 from fba_bench.services.competitor_manager import CompetitorManager
 from fba_bench.services.demand_service import DemandService
@@ -111,7 +126,6 @@ class SimulationOrchestrator:
     
     def _charge_monthly_plan_fee(self, simulation: Any) -> None:
         """Charge the monthly Professional selling plan fee."""
-        from fba_bench.config import PROFESSIONAL_MONTHLY
         fee = Money.from_dollars(PROFESSIONAL_MONTHLY)
         
         simulation.ledger.post(Transaction(
@@ -228,17 +242,11 @@ class SimulationOrchestrator:
                 dims.get("L", 10.0) * dims.get("W", 6.0) * dims.get("H", 2.0)
             ) / 1728.0
         else:
-            from fba_bench.config import CUBIC_FEET_PER_UNIT
             cubic_feet_per_unit = CUBIC_FEET_PER_UNIT
         
         cubic_feet = cubic_feet_per_unit * units_sold
         
-        # Load default values from config
-        from fba_bench.config import (
-            MONTHS_STORAGE_DEFAULT, REMOVAL_UNITS_DEFAULT, RETURN_FEES_DEFAULT,
-            AGED_DAYS_DEFAULT, AGED_CUBIC_FEET_PER_UNIT, LOW_INVENTORY_UNITS_DEFAULT,
-            TRAILING_DAYS_SUPPLY_DEFAULT, WEEKS_SUPPLY_DEFAULT
-        )
+        # Use default values from config
         
         aged_cubic_feet_per_unit = (
             cubic_feet_per_unit * 0.4 if hasattr(product, "dimensions") and product.dimensions
@@ -270,7 +278,6 @@ class SimulationOrchestrator:
     def _calculate_selling_plan_fee(self, selling_plan: str, units_sold: int) -> Money:
         """Calculate selling plan per-item fees."""
         if selling_plan == "Individual":
-            from fba_bench.config import INDIVIDUAL_PER_ITEM
             return Money.from_dollars(INDIVIDUAL_PER_ITEM) * units_sold
         return Money.zero()
     
