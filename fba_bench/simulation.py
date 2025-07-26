@@ -308,35 +308,6 @@ class Simulation:
             config=config
         )
 
-    def _calculate_trust_fee_multiplier(self, trust_score: float) -> float:
-        """
-        Calculate fee multiplier based on seller trust score.
-        Lower trust = higher fees as penalty.
-        """
-        if trust_score >= 0.9:
-            return 1.0  # No penalty for high trust
-        elif trust_score >= 0.7:
-            return 1.1  # 10% penalty for medium trust
-        elif trust_score >= 0.5:
-            return 1.25  # 25% penalty for low trust
-        else:
-            return 1.5  # 50% penalty for very low trust
-
-    def _check_listing_suppression(self, trust_score: float) -> dict:
-        """
-        Check if listing should be suppressed based on trust score.
-        Returns a dict with suppression details including severity level.
-        """
-        if trust_score >= 0.7:
-            return {"suppressed": False, "level": "none", "demand_multiplier": 1.0, "search_penalty": 0.0}
-        elif trust_score >= 0.5:
-            return {"suppressed": True, "level": "warning", "demand_multiplier": 0.8, "search_penalty": 0.1}
-        elif trust_score >= 0.3:
-            return {"suppressed": True, "level": "moderate", "demand_multiplier": 0.5, "search_penalty": 0.3}
-        elif trust_score >= 0.1:
-            return {"suppressed": True, "level": "severe", "demand_multiplier": 0.2, "search_penalty": 0.6}
-        else:
-            return {"suppressed": True, "level": "critical", "demand_multiplier": 0.05, "search_penalty": 0.9}
 
     def _generate_customer_event(self, asin=None, price=None, trust_score=1.0, avg_comp_price=None):
         """
@@ -583,26 +554,6 @@ class Simulation:
     # Legacy methods moved to specialized services for better modularity and testability
     # These methods are kept as stubs for backward compatibility
     
-    def _charge_monthly_plan_fee(self):
-        """Legacy method - monthly fees are now handled by SimulationOrchestrator."""
-        if hasattr(self, '_orchestrator'):
-            self._orchestrator._charge_monthly_plan_fee(self)
-    
-    def _calculate_ancillary_fees(self, asin: str, units_sold: int) -> Money:
-        """Legacy method - ancillary fees are now handled by PenaltyFeeService."""
-        if hasattr(self, '_orchestrator'):
-            return self._orchestrator.penalty_fee_service.calculate_ancillary_fees(
-                asin, self.products.get(asin), units_sold, self.customer_events, self.now
-            )
-        return Money.zero()
-    
-    def _calculate_penalty_fees(self, asin: str, units_sold: int) -> Money:
-        """Legacy method - penalty fees are now handled by PenaltyFeeService."""
-        if hasattr(self, '_orchestrator'):
-            return self._orchestrator.penalty_fee_service.calculate_penalty_fees(
-                asin, self.products.get(asin), units_sold, self.customer_events,
-                self.inventory, self.competitors, self.event_log, self.now
-            )
         return Money.zero()
 
 

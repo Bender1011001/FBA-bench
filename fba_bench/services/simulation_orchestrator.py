@@ -12,11 +12,14 @@ from fba_bench.money import Money
 from fba_bench.ledger import Entry, Transaction
 from fba_bench.services.sales_processor import SalesProcessor
 from fba_bench.services.competitor_manager import CompetitorManager
-from fba_bench.services.bsr_calculation_service import BSRCalculationService
+from fba_bench.services.demand_service import DemandService
+from fba_bench.services.inventory_service import InventoryService
 from fba_bench.services.customer_event_service import CustomerEventService
 from fba_bench.services.penalty_fee_service import PenaltyFeeService
 from fba_bench.services.fee_calculation_service import FeeCalculationService
 from fba_bench.services.event_management_service import EventManagementService
+from fba_bench.services.trust_score_service import TrustScoreService
+from fba_bench.services.listing_manager import ListingManagerService
 
 
 class SimulationOrchestrator:
@@ -31,11 +34,14 @@ class SimulationOrchestrator:
         self,
         sales_processor: Optional[SalesProcessor],
         competitor_manager: Optional[CompetitorManager],
-        bsr_service: BSRCalculationService,
+        demand_service: DemandService,
+        inventory_service: InventoryService,
         customer_event_service: CustomerEventService,
         penalty_fee_service: PenaltyFeeService,
         fee_calculation_service: Optional[FeeCalculationService],
         event_management_service: Optional[EventManagementService],
+        trust_score_service: Optional[TrustScoreService],
+        listing_manager_service: Optional[ListingManagerService],
         config: Dict[str, Any]
     ):
         """
@@ -49,15 +55,19 @@ class SimulationOrchestrator:
             penalty_fee_service: Service for penalty and ancillary fee calculations
             fee_calculation_service: Service for fee calculations and ledger entries (optional)
             event_management_service: Service for event management (optional)
+            trust_score_service: Service for trust score updates (optional)
             config: Configuration dictionary
         """
         self.sales_processor = sales_processor
         self.competitor_manager = competitor_manager
-        self.bsr_service = bsr_service
+        self.demand_service = demand_service
+        self.inventory_service = inventory_service
         self.customer_event_service = customer_event_service
         self.penalty_fee_service = penalty_fee_service
         self.fee_calculation_service = fee_calculation_service
         self.event_management_service = event_management_service
+        self.trust_score_service = trust_score_service
+        self.listing_manager_service = listing_manager_service
         self.config = config
     
     def tick_day(self, simulation: Any) -> None:
@@ -137,8 +147,37 @@ class SimulationOrchestrator:
         """Process sales for a single product with full service orchestration."""
         # Get competitors for this product
         competitors = [c for c in simulation.competitors if c.asin != asin]
-        
-        # 1. Process sales using SalesProcessor
+
+        # 0. Update trust score using TrustScoreService
+        if self.trust_score_service is not None:
+            # Gather customer events for this product
+            product_events = [
+                e for e in simulation.customer_events if e.get("asin") == asin
+            ]
+            total_orders = getattr(product, "total_orders", 0)
+            new_trust_score = self.trust_score_service.update_score(
+                getattr(product, "trust_score", 1.0),
+                product_events,
+                total_orders
+            )
+            if hasattr(product, "set_trust_score"):
+                product.set_trust_score(new_trust_score)
+            else:
+                product.trust_score = new_trust_score
+
+        # 1. Manage Listings (suppression/reinstatement)
+        suppression_info = None
+        if self.listing_manager_service is not None:
+            suppression_info = self.listing_manager_service.update_listings(
+                getattr(product, "trust_score", 1.0),
+                product,
+                simulation.event_log,
+                simulation.now
+            )
+        else:
+            suppression_info = {"suppressed": False, "demand_multiplier": 1.0, "search_penalty": 0.0}
+
+        # 2. Process sales using SalesProcessor
         sales_result = self.sales_processor.process_product_sales(
             asin=asin,
             product=product,
@@ -149,108 +188,37 @@ class SimulationOrchestrator:
             selling_plan=simulation.selling_plan,
             event_log=simulation.event_log
         )
-        
+
         units_sold = sales_result.units_sold
         demand = sales_result.demand
-        
-        # 2. Update BSR metrics
-        self.bsr_service.update_product_bsr(
+
+        # Apply suppression effects to demand and BSR
+        if suppression_info and suppression_info.get("suppressed", False):
+            demand = int(demand * suppression_info.get("demand_multiplier", 1.0))
+            search_penalty = suppression_info.get("search_penalty", 0.0)
+            if search_penalty > 0 and hasattr(product, "bsr"):
+                # Worsen BSR by the penalty factor (higher BSR = worse ranking)
+                BSR_MAX_VALUE = getattr(product, "BSR_MAX_VALUE", 1_000_000)
+                product.bsr = min(BSR_MAX_VALUE, int(product.bsr * (1 + search_penalty)))
+
+        # 3. Update inventory after sales
+        if self.inventory_service is not None:
+            self.inventory_service.update_inventory(product, units_sold)
+
+        # 4. Update BSR metrics
+        self.demand_service.update_bsr(
             product=product,
             units_sold=units_sold,
             demand=demand,
             competitors=competitors
         )
-        
-        # 3. Process financial transactions if sales occurred
+
+        # 5. Generate customer events if sales occurred
         if units_sold > 0:
-            self._process_sales_transactions(
-                simulation, asin, product, units_sold, competitors
-            )
-            
-            # 4. Generate customer events
             self._generate_customer_events(
                 simulation, asin, product, units_sold, competitors
             )
-    
-    def _process_sales_transactions(
-        self,
-        simulation: Any,
-        asin: str,
-        product: Any,
-        units_sold: int,
-        competitors: List[Any]
-    ) -> None:
-        """Process all financial transactions for sales."""
-        # Calculate revenue
-        revenue = units_sold * product.price
-        
-        # Calculate fees using comprehensive fee calculation
-        total_fees = self._calculate_comprehensive_fees(
-            simulation, asin, product, units_sold, competitors
-        )
-        
-        # Calculate COGS
-        cogs = units_sold * product.cost
-        
-        # Post ledger transaction
-        self._post_sales_transaction(
-            simulation, asin, revenue, total_fees, cogs
-        )
-    
-    def _calculate_comprehensive_fees(
-        self,
-        simulation: Any,
-        asin: str,
-        product: Any,
-        units_sold: int,
-        competitors: List[Any]
-    ) -> Money:
-        """Calculate all fees using the modular fee services."""
-        # 1. Calculate base fees using FeeEngine
-        fee_params = self._prepare_fee_parameters(product, units_sold)
-        base_fees = simulation.fees.total_fees(**fee_params)
-        
-        # 2. Calculate ancillary fees
-        ancillary_fees = self.penalty_fee_service.calculate_ancillary_fees(
-            asin=asin,
-            product=product,
-            units_sold=units_sold,
-            customer_events=simulation.customer_events,
-            current_date=simulation.now
-        )
-        
-        # 3. Calculate penalty fees
-        penalty_fees = self.penalty_fee_service.calculate_penalty_fees(
-            asin=asin,
-            product=product,
-            units_sold=units_sold,
-            customer_events=simulation.customer_events,
-            inventory=simulation.inventory,
-            competitors=competitors,
-            event_log=simulation.event_log,
-            current_date=simulation.now
-        )
-        
-        # 4. Calculate trust score multiplier
-        trust_score = getattr(product, 'trust_score', 1.0)
-        trust_multiplier = max(1.0, 1.0 + (1.0 - trust_score) * 0.5)
-        
-        # 5. Calculate selling plan fees
-        selling_plan_fee = self._calculate_selling_plan_fee(
-            simulation.selling_plan, units_sold
-        )
-        
-        # 6. Combine all fees
-        base_fee_money = Money.from_dollars(base_fees["total"]) * units_sold
-        total_fees = (
-            base_fee_money * Decimal(str(trust_multiplier)) +
-            ancillary_fees +
-            penalty_fees +
-            selling_plan_fee
-        )
-        
-        return total_fees
-    
+
     def _prepare_fee_parameters(self, product: Any, units_sold: int) -> Dict[str, Any]:
         """Prepare parameters for fee engine calculation."""
         # Calculate product dimensions
