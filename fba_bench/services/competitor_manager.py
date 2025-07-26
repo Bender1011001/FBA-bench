@@ -297,7 +297,7 @@ class CompetitorManager:
             # comp.price is already Money
             new_price_money = comp.price * multiplier
             new_price = new_price_money.to_float()
-        comp.price = Money.from_dollars(max(1.0, min(999.99, round(new_price.to_float(), 2))))
+        comp.price = Money.from_dollars(max(1.0, min(999.99, round(new_price, 2))))
     
     def _apply_sales_velocity_change(self, comp: Competitor, sales_change: float) -> None:
         """

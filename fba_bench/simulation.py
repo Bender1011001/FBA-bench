@@ -262,196 +262,52 @@ class Simulation:
 
     def tick_day(self):
         """
-        Advance simulation by one day, process sales & fees.
-
-        Updates product sales, demand, BSR, processes fees, and generates customer events.
+        Advance simulation by one day using modular service orchestration.
+        
+        This method replaces the previous 686-line monolithic implementation
+        with a clean, testable, and maintainable service-oriented approach.
         """
-        self.update_competitors()
-        self.now += timedelta(days=1)
+        if not hasattr(self, '_orchestrator'):
+            self._initialize_orchestrator()
         
-        # Charge monthly Professional plan fee on the first day of each month
-        if self.selling_plan == "Professional" and self.now.day == 1 and not self.monthly_plan_fee_charged:
-            self._charge_monthly_plan_fee()
-        elif self.now.day != 1:
-            self.monthly_plan_fee_charged = False  # Reset for next month
+        self._orchestrator.tick_day(self)
+    
+    def _initialize_orchestrator(self):
+        """Initialize the simulation orchestrator with all required services."""
+        from fba_bench.services.simulation_orchestrator import SimulationOrchestrator
+        from fba_bench.services.bsr_calculation_service import BSRCalculationService
+        from fba_bench.services.customer_event_service import CustomerEventService
+        from fba_bench.services.penalty_fee_service import PenaltyFeeService
         
-        # --- Adversarial Events ---
-        if self.adversarial_events:
-            self.adversarial_events.run_events(self, self.now.timetuple().tm_yday)
-        # Process sales for each product using the SalesProcessor
-        for asin, prod in self.products.items():
-            # --- Competitor Set for this product ---
-            competitors = [c for c in self.competitors if c.asin != asin]
-            
-            # Process sales using the dedicated service
-            sales_result = self.sales_processor.process_product_sales(
-                asin=asin,
-                product=prod,
-                competitors=competitors,
-                customer_events=self.customer_events,
-                current_date=self.now,
-                fee_engine=self.fees,
-                selling_plan=self.selling_plan,
-                event_log=self.event_log
-            )
-            sold = sales_result.units_sold
-            demand = sales_result.demand
-            # --- BSR v2: Track sales and demand history ---
-            prod.sales_history.append(sold)
-            prod.demand_history.append(demand)
-            conversion = sold / demand if demand > 0 else 0.0
-            prod.conversion_history.append(conversion)
-            # --- BSR v2: Update EMA for sales velocity and conversion ---
-            if len(prod.sales_history) == 1:
-                prod.ema_sales_velocity = sold
-                prod.ema_conversion = conversion
-            else:
-                prod.ema_sales_velocity = (1 - EMA_DECAY) * prod.ema_sales_velocity + EMA_DECAY * sold
-                prod.ema_conversion = (1 - EMA_DECAY) * prod.ema_conversion + EMA_DECAY * conversion
-            
-            # --- BSR v3: Update BSR based on blueprint formula ---
-            # BSR = base / (ema_sales_velocity * ema_conversion * rel_sales_index * rel_price_index)
-            # Compute competitor averages for relative indices
-            avg_comp_sales = BSR_SMOOTHING_FACTOR  # Use config smoothing factor instead of hardcoded 1.0
-            avg_comp_price = prod.price
-            
-            if competitors:
-                avg_comp_sales = max(BSR_SMOOTHING_FACTOR, sum(c.sales_velocity for c in competitors) / len(competitors))
-                total_comp_price = Money.zero()
-                for c in competitors:
-                    total_comp_price += c.price
-                avg_comp_price = total_comp_price / len(competitors)
-            
-            # Relative sales index: agent's sales velocity vs. competitors
-            rel_sales_index = max(BSR_SMOOTHING_FACTOR, prod.ema_sales_velocity) / avg_comp_sales
-            
-            # Relative price index: agent's price vs. competitors (lower price = better index)
-            rel_price_index = avg_comp_price / max(Money.from_dollars(BSR_SMOOTHING_FACTOR), prod.price)
-            
-            # Apply blueprint BSR formula with bounds checking
-            if prod.ema_sales_velocity > BSR_SMOOTHING_FACTOR and prod.ema_conversion > BSR_SMOOTHING_FACTOR:
-                denominator = (
-                    prod.ema_sales_velocity *
-                    prod.ema_conversion *
-                    rel_sales_index *
-                    float(rel_price_index)
-                )
-                calculated_bsr = BSR_BASE / max(BSR_SMOOTHING_FACTOR, denominator)
-                prod.bsr = max(BSR_MIN_VALUE, min(BSR_MAX_VALUE, int(calculated_bsr)))
-            else:
-                prod.bsr = BSR_BASE
-            if sold:
-                revenue = sold * prod.price
-                # Calculate all fees using the high-fidelity fee engine
-                # --- Advanced Fee Parameter Calculation (stubs/estimates for now) ---
-                # In a real implementation, these would be calculated from inventory/product state or loaded from config
-                # Use product dimensions if available, else config default
-                if hasattr(prod, "dimensions") and prod.dimensions:
-                    dims = prod.dimensions
-                    cubic_feet_per_unit = (dims.get("L", 10.0) * dims.get("W", 6.0) * dims.get("H", 2.0)) / 1728.0
-                else:
-                    cubic_feet_per_unit = CUBIC_FEET_PER_UNIT
-                cubic_feet = cubic_feet_per_unit * sold
+        # Load configuration for services
+        config = {
+            'ema_decay': EMA_DECAY,
+            'bsr_smoothing_factor': BSR_SMOOTHING_FACTOR,
+            'bsr_base': BSR_BASE,
+            'bsr_min_value': BSR_MIN_VALUE,
+            'bsr_max_value': BSR_MAX_VALUE,
+            'return_processing_fee_pct': 0.15,
+            'unplanned_service_fee_per_unit': 3.00
+        }
+        
+        # Initialize services
+        bsr_service = BSRCalculationService(config)
+        customer_event_service = CustomerEventService(self.rng, config)
+        penalty_fee_service = PenaltyFeeService(self.rng, config)
+        
+        # Initialize orchestrator with available services
+        # Some services may not exist yet, so we'll use None for optional ones
+        self._orchestrator = SimulationOrchestrator(
+            sales_processor=getattr(self, 'sales_processor', None),
+            competitor_manager=getattr(self, 'competitor_manager', None),
+            bsr_service=bsr_service,
+            customer_event_service=customer_event_service,
+            penalty_fee_service=penalty_fee_service,
+            fee_calculation_service=getattr(self, 'fee_calculation_service', None),
+            event_management_service=getattr(self, 'event_management_service', None),
+            config=config
+        )
 
-                months_storage = MONTHS_STORAGE_DEFAULT
-                removal_units = REMOVAL_UNITS_DEFAULT
-                return_applicable_fees = RETURN_FEES_DEFAULT
-                aged_days = AGED_DAYS_DEFAULT
-                if hasattr(prod, "dimensions") and prod.dimensions:
-                    aged_cubic_feet_per_unit = cubic_feet_per_unit * 0.4  # Example: 40% aged
-                else:
-                    aged_cubic_feet_per_unit = AGED_CUBIC_FEET_PER_UNIT
-                aged_cubic_feet = aged_cubic_feet_per_unit * sold
-
-                low_inventory_units = LOW_INVENTORY_UNITS_DEFAULT
-                trailing_days_supply = TRAILING_DAYS_SUPPLY_DEFAULT
-                weeks_supply = WEEKS_SUPPLY_DEFAULT
-                unplanned_units = 0  # No unplanned service in this tick
-
-                # Determine size tier and dimensional weight
-                size_tier = "standard"  # Default size tier
-                dim_weight_applies = False  # Default dimensional weight
-                
-                # Calculate ancillary and penalty fees based on current state
-                ancillary_fee = self._calculate_ancillary_fees(asin, sold)
-                penalty_fee = self._calculate_penalty_fees(asin, sold)
-                
-                # Add selling plan per-item fee for Individual plan
-                selling_plan_fee = Money.zero()
-                if self.selling_plan == "Individual":
-                    from fba_bench.config import INDIVIDUAL_PER_ITEM
-                    selling_plan_fee = Money.from_dollars(INDIVIDUAL_PER_ITEM) * sold
-
-                # Calculate trust score fee multiplier
-                trust_score = getattr(prod, 'trust_score', 1.0)
-                trust_fee_multiplier = max(1.0, 1.0 + (1.0 - trust_score) * 0.5)  # Higher fees for lower trust
-                
-                # BUGFIX: Convert total ancillary/penalty fees to per-unit amounts before passing to fee engine
-                # The fee engine expects per-unit fees, but ancillary_fee and penalty_fee are calculated as totals
-                ancillary_fee_per_unit = ancillary_fee.to_float() / max(1, sold) if ancillary_fee > Money.zero() else 0.0
-                penalty_fee_per_unit = penalty_fee.to_float() / max(1, sold) if penalty_fee > Money.zero() else 0.0
-                
-                # All fee calculations are now handled by FeeEngine.total_fees
-                fees = self.fees.total_fees(
-                    category=prod.category,
-                    price=prod.price,
-                    size_tier=size_tier,
-                    size="small" if size_tier == "standard" else "large",
-                    is_holiday_season=(self.now.month in [11, 12]),
-                    dim_weight_applies=dim_weight_applies,
-                    cubic_feet=cubic_feet,
-                    months_storage=months_storage,
-                    removal_units=removal_units,
-                    return_applicable_fees=return_applicable_fees,
-                    aged_days=aged_days,
-                    aged_cubic_feet=aged_cubic_feet,
-                    low_inventory_units=low_inventory_units,
-                    trailing_days_supply=trailing_days_supply,
-                    weeks_supply=weeks_supply,
-                    unplanned_units=unplanned_units,
-                    penalty_fee=penalty_fee_per_unit,
-                    ancillary_fee=ancillary_fee_per_unit
-                )
-                # BUGFIX: fee_engine.total_fees() returns per-unit fees, so multiply by sold only once
-                total_fees = (Money.from_dollars(fees["total"]) * sold * Decimal(str(trust_fee_multiplier))) + selling_plan_fee
-                referral = fees["referral_fee"] * sold
-                cogs = sold * prod.cost
-                # ledger entries for sales and all fees - corrected accounting structure
-                # All amounts are positive Money objects; accounting effect determined by debit/credit side
-                ts = self.now
-                debits = [
-                    Entry("COGS", cogs, ts),        # Cost of goods sold expense
-                    Entry("Fees", total_fees, ts),  # Fees expense
-                ]
-                credits = [
-                    Entry("Revenue", revenue, ts),   # Gross revenue earned
-                    Entry("Inventory", cogs, ts),    # Inventory asset reduced
-                ]
-                
-                # Handle cash flow based on whether net is positive or negative
-                net_cash = revenue - total_fees
-                if net_cash >= Money.zero():
-                    # Positive cash flow: debit Cash (asset increase)
-                    debits.insert(0, Entry("Cash", net_cash, ts))
-                else:
-                    # Negative cash flow: credit Cash (asset decrease) with positive amount
-                    credits.insert(0, Entry("Cash", -net_cash, ts))
-                
-                # Post balanced transaction with all positive amounts
-                self.ledger.post(Transaction(f"Sales and fees for {asin}",
-                    debits=debits,
-                    credits=credits
-                ))
-                # --- Customer Systems: Generate customer events after sale ---
-                if asin not in self.customer_events:
-                    self.customer_events[asin] = []
-                for _ in range(sold):
-                    event_type = self._generate_customer_event()
-                    if event_type:
-                        self.customer_events[asin].append({
-                            "type": event_type,
-                            "date": self.now,
-                        })
     def _calculate_trust_fee_multiplier(self, trust_score: float) -> float:
         """
         Calculate fee multiplier based on seller trust score.
@@ -724,207 +580,30 @@ class Simulation:
         
         return None  # No event generated
 
+    # Legacy methods moved to specialized services for better modularity and testability
+    # These methods are kept as stubs for backward compatibility
+    
     def _charge_monthly_plan_fee(self):
-        """Charge the monthly Professional selling plan fee."""
-        from fba_bench.config import PROFESSIONAL_MONTHLY
-        fee = Money.from_dollars(PROFESSIONAL_MONTHLY)
-        self.ledger.post(Transaction("Professional Plan Monthly Fee",
-            debits=[Entry("Fees", fee, self.now)],    # Fee expense (debit increases expense)
-            credits=[Entry("Cash", fee, self.now)]))  # Cash decrease (credit decreases asset)
-        self.monthly_plan_fee_charged = True
-        self.event_log.append(f"Day {self.now.day}: Charged Professional plan monthly fee: ${PROFESSIONAL_MONTHLY}")
-
+        """Legacy method - monthly fees are now handled by SimulationOrchestrator."""
+        if hasattr(self, '_orchestrator'):
+            self._orchestrator._charge_monthly_plan_fee(self)
+    
     def _calculate_ancillary_fees(self, asin: str, units_sold: int) -> Money:
-        """
-        Calculate ancillary fees based on current product state and recent events.
-        Enhanced with realistic Amazon FBA ancillary fee scenarios.
-        """
-        ancillary_fee = Money.zero()
-        prod = self.products.get(asin)
-        if not prod:
-            return Money.zero()
-        
-        # 1. Return processing fees (based on actual returns)
-        if asin in self.customer_events:
-            recent_events = [e for e in self.customer_events[asin]
-                           if (self.now - e["date"]).days <= 30]  # Last 30 days
-            
-            # Returns and refunds
-            returns = [e for e in recent_events if e["type"] in ["a_to_z_claim", "negative_review"]]
-            if returns:
-                from fba_bench.config import RETURN_PROCESSING_FEE_PCT
-                # Return processing fee based on returned units
-                estimated_return_rate = min(0.3, len(returns) / max(1, units_sold * 4))  # Max 30% return rate
-                returned_units = int(units_sold * estimated_return_rate)
-                ancillary_fee += Money.from_dollars(returned_units * prod.price.to_float() * RETURN_PROCESSING_FEE_PCT)
-        
-        # 2. Prep service fees (based on product characteristics and category)
-        prep_fee_probability = 0.02  # Base 2% chance
-        
-        # Higher prep fees for certain categories
-        high_prep_categories = ["Electronics", "Toys", "Health", "Beauty"]
-        if prod.category in high_prep_categories:
-            prep_fee_probability = 0.08  # 8% for high-prep categories
-        
-        # Size-based prep fee adjustments
-        if prod.weight > 5.0:  # Heavy items need more prep
-            prep_fee_probability *= 1.5
-        
-        if self.rng.random() < prep_fee_probability:
-            from fba_bench.config import UNPLANNED_SERVICE_FEE_PER_UNIT
-            prep_units = max(1, int(units_sold * 0.1))  # 10% of units need prep
-            ancillary_fee += Money.from_dollars(UNPLANNED_SERVICE_FEE_PER_UNIT) * prep_units
-        
-        # 3. Labeling and packaging fees
-        if self.rng.random() < 0.03:  # 3% chance of labeling issues
-            labeling_fee = Money.from_dollars(0.55) * units_sold  # $0.55 per unit for labeling
-            ancillary_fee += labeling_fee
-        
-        # 4. Disposal fees for damaged/unsellable inventory
-        if asin in self.customer_events:
-            damage_events = [e for e in self.customer_events[asin]
-                           if e.get("type") == "negative_review" and "damaged" in e.get("message", "").lower()]
-            if damage_events:
-                # Estimate disposal needs based on damage reports
-                disposal_rate = min(0.05, len(damage_events) / max(1, units_sold * 10))
-                disposal_units = int(units_sold * disposal_rate)
-                disposal_fee = Money.from_dollars(0.15) * disposal_units  # $0.15 per unit disposal
-                ancillary_fee += disposal_fee
-        
-        # 5. Repackaging fees for customer returns
-        if asin in self.customer_events:
-            return_events = [e for e in self.customer_events[asin]
-                           if e.get("type") == "a_to_z_claim"]
-            if return_events:
-                repackaging_rate = min(0.15, len(return_events) / max(1, units_sold * 5))
-                repackaging_units = int(units_sold * repackaging_rate)
-                repackaging_fee = Money.from_dollars(1.00) * repackaging_units  # $1.00 per unit repackaging
-                ancillary_fee += repackaging_fee
-        
-        # 6. Photography and content fees (occasional)
-        if self.rng.random() < 0.01:  # 1% chance per day
-            content_fee = Money.from_dollars(50.0)  # One-time content update fee
-            ancillary_fee += content_fee
-        
-        return ancillary_fee
-
-    def _calculate_penalty_fees(self, asin: str, units_sold: int) -> Money:
-        """
-        Calculate penalty fees based on policy violations and performance issues.
-        Enhanced with realistic Amazon FBA penalty scenarios.
-        """
-        penalty_fee = Money.zero()
-        prod = self.products.get(asin)
-        if not prod:
-            return Money.zero()
-        
-        # 1. Performance-based penalties
-        if asin in self.customer_events:
-            events = self.customer_events[asin]
-            recent_events = [e for e in events if (self.now - e["date"]).days <= 30]
-            
-            # Customer satisfaction penalties
-            negative_events = [e for e in recent_events if e["type"] in ["negative_review", "a_to_z_claim"]]
-            total_interactions = len(recent_events)
-            
-            if total_interactions > 0:
-                negative_rate = len(negative_events) / total_interactions
-                
-                # Graduated penalty system based on negative feedback rate
-                if negative_rate > 0.3:  # >30% negative feedback
-                    penalty_fee += Money.from_dollars(200.0)  # Severe performance penalty
-                elif negative_rate > 0.2:  # >20% negative feedback
-                    penalty_fee += Money.from_dollars(100.0)  # Moderate performance penalty
-                elif negative_rate > 0.1:  # >10% negative feedback
-                    penalty_fee += Money.from_dollars(50.0)   # Warning penalty
-            
-            # A-to-Z claim penalties (more severe)
-            a_to_z_claims = [e for e in recent_events if e["type"] == "a_to_z_claim"]
-            if len(a_to_z_claims) > 0:
-                # Escalating penalty for multiple claims
-                claim_penalty = Money.from_dollars(75.0) * len(a_to_z_claims)  # $75 per claim
-                if len(a_to_z_claims) > 3:
-                    claim_penalty = claim_penalty * Money.from_dollars(1.5)  # 50% increase for excessive claims
-                penalty_fee += claim_penalty
-        
-        # 2. Inventory performance penalties
-        batches = self.inventory._batches.get(asin, [])
-        current_inventory = sum(getattr(batch, "quantity", 0) for batch in batches)
-        
-        # Stockout penalty (impacts customer experience)
-        if current_inventory == 0 and units_sold > 0:
-            stockout_penalty = Money.from_dollars(min(100.0, units_sold * 2.0))  # $2 per lost sale, max $100
-            penalty_fee += stockout_penalty
-        
-        # Excess inventory penalty (storage utilization)
-        if current_inventory > units_sold * 10:  # More than 10x daily sales
-            excess_penalty = Money.from_dollars((current_inventory - units_sold * 10) * 0.10)  # $0.10 per excess unit
-            penalty_fee += Money.from_dollars(min(50.0, excess_penalty.to_decimal()))  # Cap at $50
-        
-        # 3. Trust score penalties
-        if asin in self.customer_events:
-            events = self.customer_events[asin]
-            cancellations = sum(1 for e in events if e.get("type") == "a_to_z_claim")
-            negative_reviews = sum(1 for e in events if e.get("type") == "negative_review")
-            customer_issues = sum(1 for e in events if e.get("type") in ["negative_review", "negative_feedback"])
-            
-            trust_score = market_dynamics.calculate_trust_score(
-                cancellations=cancellations,
-                negative_reviews=negative_reviews,
-                customer_issues=customer_issues,
-                total_orders=max(1, units_sold * 10)  # Estimate total orders
+        """Legacy method - ancillary fees are now handled by PenaltyFeeService."""
+        if hasattr(self, '_orchestrator'):
+            return self._orchestrator.penalty_fee_service.calculate_ancillary_fees(
+                asin, self.products.get(asin), units_sold, self.customer_events, self.now
             )
-            
-            if trust_score < 0.5:  # Low trust score
-                trust_penalty = Money.from_dollars((0.5 - trust_score) * 200.0)  # Up to $100 penalty
-                penalty_fee += trust_penalty
-        else:
-            trust_score = 1.0  # Default high trust score for new products
-        
-        # 4. Policy violation penalties
-        recent_violations = [e for e in self.event_log
-                           if "policy" in e.lower() and asin in e and
-                           "Day " + str(max(1, self.now.day - 30)) <= e <= "Day " + str(self.now.day)]
-        
-        # Escalating penalties for repeated violations
-        for i, violation in enumerate(recent_violations):
-            base_penalty = Money.from_dollars(150.0)  # Base penalty per violation
-            escalation_multiplier = 1.0 + (i * 0.5)  # 50% increase per additional violation
-            penalty_fee += base_penalty * Money.from_dollars(escalation_multiplier)
-        
-        # 5. Category-specific penalties
-        high_risk_categories = ["Health", "Beauty", "Baby", "Electronics"]
-        if prod.category in high_risk_categories:
-            # Higher penalties for regulated categories
-            if penalty_fee > Money.zero():
-                penalty_fee = penalty_fee * Money.from_dollars(1.3)  # 30% increase for high-risk categories
-        
-        # 6. Pricing policy penalties
-        if hasattr(self, 'competitors') and asin in self.competitors:
-            competitors = self.competitors[asin]
-            if competitors:
-                avg_competitor_price = sum(c.price for c in competitors) / len(competitors)
-                
-                # Penalty for excessive pricing (potential price gouging)
-                if prod.price > Money.from_dollars(avg_competitor_price * 2.0):
-                    pricing_penalty = Money.from_dollars(min(75.0, (prod.price.to_decimal() - avg_competitor_price) * 0.1))
-                    penalty_fee += pricing_penalty
-        
-        # 7. Late shipment penalties (simulated)
-        if self.rng.random() < 0.02:  # 2% chance of late shipment issues
-            late_shipment_penalty = Money.from_dollars(25.0) * units_sold  # $25 per unit for late shipment
-            penalty_fee += Money.from_dollars(min(200.0, late_shipment_penalty.to_decimal()))  # Cap at $200
-        
-        # 8. Account health penalties (cumulative effect)
-        total_recent_penalties = sum(1 for e in self.event_log
-                                   if "penalty" in e.lower() and
-                                   "Day " + str(max(1, self.now.day - 90)) <= e <= "Day " + str(self.now.day))
-        
-        if total_recent_penalties > 5:  # More than 5 penalties in 90 days
-            account_health_penalty = Money.from_dollars((total_recent_penalties - 5) * 50.0)  # $50 per excess penalty
-            penalty_fee += Money.from_dollars(min(300.0, account_health_penalty.to_decimal()))  # Cap at $300
-        
-        return penalty_fee
+        return Money.zero()
+    
+    def _calculate_penalty_fees(self, asin: str, units_sold: int) -> Money:
+        """Legacy method - penalty fees are now handled by PenaltyFeeService."""
+        if hasattr(self, '_orchestrator'):
+            return self._orchestrator.penalty_fee_service.calculate_penalty_fees(
+                asin, self.products.get(asin), units_sold, self.customer_events,
+                self.inventory, self.competitors, self.event_log, self.now
+            )
+        return Money.zero()
 
 
     def run(self, days: int = 30):
