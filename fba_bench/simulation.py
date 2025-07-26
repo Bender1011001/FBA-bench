@@ -308,20 +308,31 @@ class Simulation:
         }
         
         # Initialize services
-        bsr_service = BSRCalculationService(config)
+        from fba_bench.services.demand_service import DemandService
+        from fba_bench.services.inventory_service import InventoryService
+        from fba_bench.services.trust_score_service import TrustScoreService
+        from fba_bench.services.listing_manager import ListingManagerService
+        
+        demand_service = DemandService()
+        inventory_service = InventoryService()
         customer_event_service = CustomerEventService(self.rng, config)
         penalty_fee_service = PenaltyFeeService(self.rng, config)
+        trust_score_service = TrustScoreService()
+        listing_manager_service = ListingManagerService()
         
         # Initialize orchestrator with available services
         # Some services may not exist yet, so we'll use None for optional ones
         self._orchestrator = SimulationOrchestrator(
             sales_processor=getattr(self, 'sales_processor', None),
             competitor_manager=getattr(self, 'competitor_manager', None),
-            bsr_service=bsr_service,
+            demand_service=demand_service,
+            inventory_service=inventory_service,
             customer_event_service=customer_event_service,
             penalty_fee_service=penalty_fee_service,
             fee_calculation_service=getattr(self, 'fee_calculation_service', None),
             event_management_service=getattr(self, 'event_management_service', None),
+            trust_score_service=trust_score_service,
+            listing_manager_service=listing_manager_service,
             config=config
         )
 
