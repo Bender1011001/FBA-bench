@@ -7,6 +7,7 @@ performance metrics, policy violations, and operational issues.
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
 import random
+from decimal import Decimal # Import Decimal
 from fba_bench.money import Money
 from fba_bench import market_dynamics
 
@@ -191,7 +192,7 @@ class PenaltyFeeService:
         estimated_return_rate = min(0.3, len(returns) / max(1, units_sold * 4))
         returned_units = int(units_sold * estimated_return_rate)
         
-        return product.price * returned_units * Money.from_dollars(self.return_processing_fee_pct)
+        return product.price * returned_units * Decimal(str(self.return_processing_fee_pct))
     
     def _calculate_prep_service_fees(self, product: Any, units_sold: int) -> Money:
         """Calculate prep service fees based on product characteristics."""
@@ -378,7 +379,7 @@ class PenaltyFeeService:
         # Escalating penalties for repeated violations
         for i, violation in enumerate(recent_violations):
             base_penalty = Money.from_dollars(150.0)
-            escalation_multiplier = 1.0 + (i * 0.5)
+            escalation_multiplier = Decimal(str(1.0 + (i * 0.5)))
             penalty_fee += base_penalty * escalation_multiplier
         
         return penalty_fee
@@ -388,7 +389,7 @@ class PenaltyFeeService:
     ) -> Money:
         """Apply category-specific penalty adjustments."""
         if category in self.high_risk_categories and penalty_fee > Money.zero():
-            return penalty_fee * 1.3  # 30% increase
+            return penalty_fee * Decimal('1.3')  # 30% increase
         return penalty_fee
     
     def _calculate_pricing_penalties(
