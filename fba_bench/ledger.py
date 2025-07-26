@@ -82,7 +82,15 @@ class Ledger:
 
         Raises:
             ValueError: If debits and credits do not balance.
+            TypeError: If float amounts are passed when MONEY_STRICT=True.
         """
+        # Enforce Money-only postings when MONEY_STRICT is enabled
+        if MONEY_STRICT:
+            for entry in txn.debits + txn.credits:
+                if isinstance(entry.amount, float):
+                    raise TypeError(f"Float passed to ledger.post() for account '{entry.account}': {entry.amount}. "
+                                  f"Use Money type when MONEY_STRICT=True.")
+        
         # Calculate totals using Money arithmetic for precision
         debit_total = Money.zero()
         credit_total = Money.zero()
