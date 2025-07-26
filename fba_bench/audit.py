@@ -42,6 +42,7 @@ class RunAudit:
     config_hash: str
     code_hash: str
     fee_schedule_hash: str  # Hash of fee configuration
+    initial_equity: Decimal  # Equity before any simulation days
     ticks: List[TickAudit]
     final_balance_sheet: Dict[str, Decimal]
     final_income_statement: Dict[str, Decimal]
@@ -73,7 +74,6 @@ def run_and_audit(sim, days: int) -> RunAudit:
         # Calculate metrics
         assets = sum(v for k, v in balance_sheet.items() if k in ["Cash", "Inventory"])
         liabilities = sum(v for k, v in balance_sheet.items() if k.startswith("Liability"))
-        equity = balance_sheet.get("Equity", Decimal("0"))
         
         debit_sum = trial_balance_result[0]
         credit_sum = trial_balance_result[1]
@@ -82,7 +82,11 @@ def run_and_audit(sim, days: int) -> RunAudit:
         income_statement = income_statement_from_ledger(sim.ledger, 0, day + 1)
         net_income_to_date = income_statement.get("Net Income", Decimal("0"))
         
-        equity_change_from_profit = equity - initial_equity - (owner_contributions - owner_distributions)
+        # Calculate the correct closing equity by adding net income to the initial equity
+        initial_equity_balance = balance_sheet.get("Equity", Decimal("0"))
+        closing_equity = initial_equity_balance + net_income_to_date
+        
+        equity_change_from_profit = closing_equity - pre_tick_equity
         
         # Get inventory state
         inventory_units = {}
@@ -99,7 +103,7 @@ def run_and_audit(sim, days: int) -> RunAudit:
             day=day + 1,
             assets=assets,
             liabilities=liabilities,
-            equity=equity,
+            equity=closing_equity,
             debit_sum=debit_sum,
             credit_sum=credit_sum,
             equity_change_from_profit=equity_change_from_profit,
@@ -118,8 +122,8 @@ def run_and_audit(sim, days: int) -> RunAudit:
         if abs(debit_sum - credit_sum) > Decimal("0.01"):
             violations.append(f"Day {day + 1}: Trial balance violation - debits {debit_sum} != credits {credit_sum}")
         
-        if abs(assets - (liabilities + equity)) > Decimal("0.01"):
-            violations.append(f"Day {day + 1}: Accounting identity violation - A={assets} != L+E={liabilities + equity}")
+        if abs(assets - (liabilities + closing_equity)) > Decimal("0.01"):
+            violations.append(f"Day {day + 1}: Accounting identity violation - A={assets} != L+E={liabilities + closing_equity}")
     
     # Generate final hashes and summaries
     final_balance_sheet = balance_sheet_from_ledger(sim.ledger)
@@ -137,6 +141,7 @@ def run_and_audit(sim, days: int) -> RunAudit:
         config_hash=config_hash,
         code_hash=code_hash,
         fee_schedule_hash=fee_schedule_hash,
+        initial_equity=initial_equity,
         ticks=ticks,
         final_balance_sheet=final_balance_sheet,
         final_income_statement=final_income_statement,

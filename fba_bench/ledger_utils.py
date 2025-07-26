@@ -97,12 +97,21 @@ def trial_balance(ledger, tick: Optional[int] = None) -> Tuple[Decimal, Decimal]
     for account, balance in balances.items():
         decimal_balance = _balance_to_decimal(balance)
         
-        if decimal_balance > 0:
-            # Positive balances are debits in our system
-            total_debits += decimal_balance
+        # Account type aware trial balance calculation:
+        # - Assets/Expenses: Positive balances are debits, negative are credits
+        # - Liabilities/Equity/Revenue: Positive balances are credits, negative are debits
+        if account in ["Equity", "Revenue", "Liabilities", "Accounts Payable", "Accrued Liabilities", "Notes Payable"]:
+            # For credit-normal accounts: positive balance = credit, negative balance = debit
+            if decimal_balance >= 0:
+                total_credits += decimal_balance
+            else:
+                total_debits += abs(decimal_balance)
         else:
-            # Negative balances are credits in our system
-            total_credits += abs(decimal_balance)
+            # For debit-normal accounts: positive balance = debit, negative balance = credit
+            if decimal_balance >= 0:
+                total_debits += decimal_balance
+            else:
+                total_credits += abs(decimal_balance)
     
     return total_debits, total_credits
 

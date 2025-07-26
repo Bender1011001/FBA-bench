@@ -12,7 +12,7 @@ class Entry:
 
     Attributes:
         account (str): Account name.
-        amount (Union[float, Money]): Amount for the entry (positive for debit, negative for credit).
+        amount (Union[float, Money]): Absolute amount for the entry; side determines effect.
         timestamp (datetime): Date and time of the entry.
         memo (str): Optional memo or description.
     """
@@ -29,6 +29,10 @@ class Entry:
         # Convert float to Money during transition period
         if isinstance(self.amount, float) and not MONEY_STRICT:
             self.amount = Money.from_dollars(self.amount)
+        
+        # Guard against negative amounts
+        if isinstance(self.amount, Money) and self.amount < Money.zero():
+            raise ValueError("Negative amounts are not allowed in entries; choose the correct side (debit/credit) instead.")
     
     def get_amount_as_money(self) -> Money:
         """Get amount as Money type, converting if necessary."""
@@ -104,14 +108,31 @@ class Ledger:
         if debit_total != credit_total:
             raise ValueError(f"Debits must equal credits: {debit_total} != {credit_total}")
         
-        # Update balances
-        for entry in txn.debits + txn.credits:
+        # Update balances - account type aware credit/debit handling
+        for entry in txn.debits:
             current_balance = self._balances.get(entry.account, Money.zero())
             if isinstance(current_balance, float):
                 current_balance = Money.from_dollars(current_balance)
             
             entry_amount = entry.get_amount_as_money()
             self._balances[entry.account] = current_balance + entry_amount
+        
+        for entry in txn.credits:
+            current_balance = self._balances.get(entry.account, Money.zero())
+            if isinstance(current_balance, float):
+                current_balance = Money.from_dollars(current_balance)
+            
+            entry_amount = entry.get_amount_as_money()
+            
+            # Account type aware credit handling:
+            # - Assets/Expenses: Credits decrease balance (subtract)
+            # - Liabilities/Equity/Revenue: Credits increase balance (add)
+            if entry.account in ["Equity", "Revenue", "Liabilities", "Accounts Payable", "Accrued Liabilities", "Notes Payable"]:
+                # Credit increases these account types
+                self._balances[entry.account] = current_balance + entry_amount
+            else:
+                # Credit decreases asset and expense accounts
+                self._balances[entry.account] = current_balance - entry_amount
         
         self._transactions.append(txn)
 

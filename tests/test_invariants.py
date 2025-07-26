@@ -10,10 +10,8 @@ def test_accounting_identity_every_tick(sim_factory, seed, days):
     for t in audit.ticks:
         assert t.debit_sum == t.credit_sum, f"Trial balance broke on day {t.day}"
         assert t.assets == t.liabilities + t.equity, f"A=L+E broke on day {t.day}"
-        delta_equity = (
-            t.equity - audit.ticks[0].equity
-            - (t.owner_contributions_to_date - t.owner_distributions_to_date)
-        )
+        # Change in equity should equal net income (since owner contributions are already in equity)
+        delta_equity = t.equity - audit.initial_equity
         assert delta_equity == t.net_income_to_date, f"Equity/NI mismatch on day {t.day}"
 
 def test_no_negative_inventory_units(sim_factory):

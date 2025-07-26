@@ -566,13 +566,32 @@ class Simulation:
                 total_fees = (Money.from_dollars(fees["total"]) * sold * Decimal(str(trust_fee_multiplier))) + selling_plan_fee
                 referral = fees["referral_fee"] * sold
                 cogs = sold * prod.cost
-                # ledger entries for sales and all fees
-                self.ledger.post(Transaction(f"Sales {asin}",
-                    [Entry("Cash", revenue - total_fees, self.now),
-                     Entry("COGS", -cogs, self.now)],
-                    [Entry("Revenue", revenue, self.now),
-                     Entry("Inventory", -cogs, self.now),
-                     Entry("Fees", -total_fees, self.now)]))
+                # ledger entries for sales and all fees - corrected accounting structure
+                # All amounts are positive Money objects; accounting effect determined by debit/credit side
+                ts = self.now
+                debits = [
+                    Entry("COGS", cogs, ts),        # Cost of goods sold expense
+                    Entry("Fees", total_fees, ts),  # Fees expense
+                ]
+                credits = [
+                    Entry("Revenue", revenue, ts),   # Gross revenue earned
+                    Entry("Inventory", cogs, ts),    # Inventory asset reduced
+                ]
+                
+                # Handle cash flow based on whether net is positive or negative
+                net_cash = revenue - total_fees
+                if net_cash >= Money.zero():
+                    # Positive cash flow: debit Cash (asset increase)
+                    debits.insert(0, Entry("Cash", net_cash, ts))
+                else:
+                    # Negative cash flow: credit Cash (asset decrease) with positive amount
+                    credits.insert(0, Entry("Cash", -net_cash, ts))
+                
+                # Post balanced transaction with all positive amounts
+                self.ledger.post(Transaction(f"Sales and fees for {asin}",
+                    debits=debits,
+                    credits=credits
+                ))
                 # --- Customer Systems: Generate customer events after sale ---
                 if asin not in self.customer_events:
                     self.customer_events[asin] = []
@@ -860,8 +879,8 @@ class Simulation:
         from fba_bench.config import PROFESSIONAL_MONTHLY
         fee = Money.from_dollars(PROFESSIONAL_MONTHLY)
         self.ledger.post(Transaction("Professional Plan Monthly Fee",
-            [Entry("Fees", -fee, self.now)],
-            [Entry("Cash", -fee, self.now)]))
+            debits=[Entry("Fees", fee, self.now)],    # Fee expense (debit increases expense)
+            credits=[Entry("Cash", fee, self.now)]))  # Cash decrease (credit decreases asset)
         self.monthly_plan_fee_charged = True
         self.event_log.append(f"Day {self.now.day}: Charged Professional plan monthly fee: ${PROFESSIONAL_MONTHLY}")
 

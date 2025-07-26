@@ -235,8 +235,8 @@ class PolicyPenaltyEvent(AdversarialEvent):
                 sim.ledger.post(
                     sim.ledger.Transaction(
                         f"Policy penalty for {asin}",
-                        [sim.ledger.Entry("Fees", penalty_amount, sim.now)],
-                        [sim.ledger.Entry("Cash", -penalty_amount, sim.now)]
+                        debits=[sim.ledger.Entry("Fees", penalty_amount, sim.now)],   # Fee expense (debit increases expense)
+                        credits=[sim.ledger.Entry("Cash", penalty_amount, sim.now)]   # Cash decrease (credit decreases asset)
                     )
                 )
             if hasattr(sim, "event_log"):
