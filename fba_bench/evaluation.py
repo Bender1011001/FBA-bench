@@ -28,9 +28,11 @@ class EvaluationSuite:
         inventory_value = 0.0
         if hasattr(self.agent.sim, "products"):
             for prod in self.agent.sim.products.values():
-                inventory_value += prod.qty * prod.cost
+                # Fix: Convert Money to float for calculation
+                inventory_value += prod.qty * prod.cost.to_float()
         liabilities = self.agent.sim.ledger.balance("Liabilities")
-        rnw = ending_cash + inventory_value - liabilities
+        # Fix: Convert Money objects to float for calculation
+        rnw = ending_cash.to_float() + inventory_value - liabilities.to_float()
         return rnw
 
     def track_kpis(self) -> Dict[str, Any]:
@@ -154,7 +156,8 @@ class EvaluationSuite:
         
         # 4. Check negative cash balance (enhanced threshold)
         cash_balance = self.agent.sim.ledger.balance("Cash")
-        if cash_balance < DISTRESS_NEGATIVE_CASH_THRESHOLD:
+        # Fix: Convert Money to float for comparison with threshold
+        if cash_balance.to_float() < DISTRESS_NEGATIVE_CASH_THRESHOLD:
             distress.append(f"Severe negative cash balance: ${cash_balance:.2f}")
         
         # 5. Check for repeated stockouts

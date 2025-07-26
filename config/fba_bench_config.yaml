@@ -1,0 +1,193 @@
+schema_version: "1.0"
+metadata:
+  version: "2025.1"
+  effective_date: "2025-02-01"
+  last_updated: "2025-07-26"
+  description: "Unified FBA-Bench configuration consolidating all scattered config values"
+
+# Fee Engine Configuration
+fees:
+  # Basic fee percentages and surcharges
+  fuel_surcharge_pct: 0.02
+  holiday_surcharge: 0.50
+  # BUGFIX: Replace flat dim_weight_surcharge with tiered schedule based on actual weight
+  # dim_weight_surcharge: 1.25  # OLD: flat rate for all weights
+  dim_weight_tiers:
+    - weight_min: 0.0
+      weight_max: 1.0
+      surcharge: 0.50
+    - weight_min: 1.0
+      weight_max: 5.0
+      surcharge: 1.25
+    - weight_min: 5.0
+      weight_max: 20.0
+      surcharge: 2.50
+    - weight_min: 20.0
+      weight_max: 999999.0  # Effectively unlimited
+      surcharge: 5.00
+  professional_monthly: 39.99
+  individual_per_item: 0.99
+  
+  # Aged inventory surcharges
+  aged_inventory_surcharge_181: 1.50
+  aged_inventory_surcharge_271: 7.50
+  
+  # Storage and inventory fees
+  low_inventory_level_fee_per_unit: 0.32
+  storage_utilization_surcharge_pct: 0.10
+  long_term_storage_fee: 6.90
+  
+  # Service and processing fees
+  unplanned_service_fee_per_unit: 1.00
+  removal_fee_per_unit: 0.60
+  return_processing_fee_pct: 0.20
+
+# Referral fee structures by category
+referral_fees:
+  DEFAULT:
+    - threshold: 0
+      percentage: 0.15
+      minimum: 0.30
+      maximum: null
+  Apparel:
+    - threshold: 0
+      percentage: 0.17
+      minimum: 0.30
+      maximum: null
+  Jewelry:
+    - threshold: 0
+      percentage: 0.20
+      minimum: 0.30
+      maximum: 250
+    - threshold: 250
+      percentage: 0.05
+      minimum: 0.30
+      maximum: null
+  Electronics:
+    - threshold: 0
+      percentage: 0.08
+      minimum: 0.30
+      maximum: null
+  Books:
+    - threshold: 0
+      percentage: 0.15
+      minimum: 0.30
+      maximum: null
+  "Home & Garden":
+    - threshold: 0
+      percentage: 0.15
+      minimum: 0.30
+      maximum: null
+  "Sports & Outdoors":
+    - threshold: 0
+      percentage: 0.15
+      minimum: 0.30
+      maximum: null
+  "Toys & Games":
+    - threshold: 0
+      percentage: 0.15
+      minimum: 0.30
+      maximum: null
+
+# FBA fulfillment fee structures
+fba_fulfillment_fees:
+  standard:
+    small: 3.22
+    large: 4.75
+    extra_large: 6.50
+  oversize:
+    small: 6.26
+    medium: 8.26
+    large: 10.50
+    special: 15.75
+
+# Simulation configuration parameters
+simulation:
+  cubic_feet_per_unit: 0.5
+  months_storage_default: 1
+  removal_units_default: 0
+  return_fees_default: 0.0
+  aged_days_default: 200
+  aged_cubic_feet_per_unit: 0.2
+  low_inventory_units_default: 0
+  trailing_days_supply_default: 30.0
+  ema_decay: 0.2
+  weeks_supply_default: 10.0
+  money_strict: false  # Will be changed to true later
+
+# Adversarial events configuration
+adversarial_events:
+  default_supply_shock_factor: 0.5
+  default_supply_shock_duration: 3
+  default_review_attack_count: 10
+  default_price_war_drop_pct: 0.2
+  default_price_war_duration: 2
+  default_fake_review_count: 20
+  default_inventory_freeze_duration: 2
+  default_buybox_hijack_duration: 1
+  default_policy_penalty_amount: 100.0
+
+# Market dynamics configuration
+market_dynamics:
+  rel_price_factor_min: 0.5
+  rel_price_factor_max: 1.5
+  elasticity_min: 1.1
+  elasticity_max: 4.5
+  bsr_mid_point: 10000
+  bsr_scale: 1.5
+  bsr_base: 100000
+  bsr_smoothing_factor: 0.001
+  bsr_min_value: 1
+  bsr_max_value: 10000000
+
+# Agent default values
+agent_defaults:
+  default_asin: "B000TEST"
+  default_category: "DEFAULT"
+  default_cost: 5.0
+  default_price: 19.99
+  default_qty: 100
+
+# API and resource budgets
+api_cost_model:
+  default_api_budget: 100.0
+  default_cpu_budget: 100.0
+
+# Competitor model configuration
+competitor_model:
+  price_change_base: 0.02
+  sales_change_base: 0.03
+  strategies: ['aggressive', 'follower', 'premium', 'value']
+  aggressive_undercut_threshold: 0.95
+  aggressive_undercut_amount: 0.03
+  follower_price_sensitivity: 0.015
+  premium_price_maintenance: 0.02
+  value_competitive_threshold: 1.1
+
+# Memory and reflection system
+memory_system:
+  consolidation_frequency: 10
+  episodic_memory_capacity: 1000
+  procedural_memory_capacity: 500
+  semantic_similarity_threshold: 0.3
+
+# Distress protocol configuration
+distress_protocol:
+  compute_threshold: 0.5
+  negative_cash_threshold: -1000.0
+  policy_paralysis_ticks: 5
+
+# Strategic planning defaults
+strategic_planning:
+  target_profit_margin: 0.25
+  max_storage_fee_ratio: 0.10
+  min_inventory_turnover: 6.0
+  target_bsr: 10000
+
+# Fee metadata (from fee_config.json and fallback values)
+fee_metadata:
+  version: "2025.1"
+  effective_date: "2025-02-01"
+  source: "Amazon Seller Central fee schedules (Feb 2025 revision)"
+  last_updated: "2025-07-26"
+  notes: "Unified configuration consolidating config.py, fee_config.json, and fee_engine.py fallback values"

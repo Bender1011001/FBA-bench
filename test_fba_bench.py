@@ -6,6 +6,7 @@ from fba_bench.adversarial_events import (
 )
 from fba_bench.ledger import Ledger
 from fba_bench.evaluation import EvaluationSuite
+from fba_bench.money import Money
 
 def test_product_dataclass_fields():
     prod = Product(
@@ -160,19 +161,34 @@ def test_api_cost_model_and_budget_enforcement():
     assert initial_budget["cpu_units_remaining"] == 20.0
     
     # Test API call metering
+    assert agent.check_budget(cpu_units=5.0, usd_cost=3.0)
     agent.meter_api_call(cpu_units=5.0, usd_cost=3.0)
     updated_budget = agent.get_resource_budget()
     assert updated_budget["api_cost_remaining"] == 7.0
     assert updated_budget["cpu_units_remaining"] == 15.0
-    
-    # Test budget exceeded exception
+
+    # Test budget exceeded exception (API)
+    assert not agent.check_budget(cpu_units=1.0, usd_cost=8.0)
     with pytest.raises(RuntimeError, match="API cost budget exceeded"):
         agent.meter_api_call(cpu_units=1.0, usd_cost=8.0)
-    
+
     # Test CPU budget exceeded exception
     agent.api_cost = 0.0  # Reset API cost
+    assert not agent.check_budget(cpu_units=25.0, usd_cost=1.0)
     with pytest.raises(RuntimeError, match="CPU budget exceeded"):
         agent.meter_api_call(cpu_units=25.0, usd_cost=1.0)
+
+    # Test edge case: exact budget match
+    agent = AdvancedAgent(days=1, api_budget=10.0, cpu_budget=20.0)
+    assert agent.check_budget(cpu_units=20.0, usd_cost=10.0)
+    agent.meter_api_call(cpu_units=20.0, usd_cost=10.0)
+    assert agent.get_resource_budget()["api_cost_remaining"] == 0.0
+    assert agent.get_resource_budget()["cpu_units_remaining"] == 0.0
+    assert not agent.check_budget(cpu_units=1.0, usd_cost=1.0)
+
+    # Test negative cost edge case
+    assert not agent.check_budget(cpu_units=-1.0, usd_cost=1.0)
+    assert not agent.check_budget(cpu_units=1.0, usd_cost=-1.0)
 
 def test_dispute_file_tool_comprehensive():
     """Test the enhanced dispute filing system."""
@@ -275,8 +291,9 @@ def test_selling_plans_and_fee_structure():
     # Test ancillary and penalty fee calculation
     ancillary_fee = sim_ind._calculate_ancillary_fees("B000TEST", 1)
     penalty_fee = sim_ind._calculate_penalty_fees("B000TEST", 1)
-    assert ancillary_fee >= 0
-    assert penalty_fee >= 0
+    # Fix: Compare Money to Money.zero() instead of int
+    assert ancillary_fee >= Money.zero()
+    assert penalty_fee >= Money.zero()
 
 def test_bsr_calculation_consistency():
     """Test BSR calculation with blueprint formula using known inputs and expected outputs."""
@@ -290,9 +307,9 @@ def test_bsr_calculation_consistency():
     
     # Set known competitor values for predictable BSR calculation
     sim.competitors[0].sales_velocity = 5.0
-    sim.competitors[0].price = 20.0
+    sim.competitors[0].price = Money.from_dollars(20.0)
     sim.competitors[1].sales_velocity = 8.0
-    sim.competitors[1].price = 18.0
+    sim.competitors[1].price = Money.from_dollars(18.0)
     
     prod = sim.products["B000TEST"]
     
@@ -310,16 +327,22 @@ def test_bsr_calculation_consistency():
     # BSR = base / (ema_sales_velocity * ema_conversion * rel_sales_index * rel_price_index)
     competitors = [c for c in sim.competitors if c.asin != prod.asin]
     avg_comp_sales = max(BSR_SMOOTHING_FACTOR, sum(c.sales_velocity for c in competitors) / len(competitors))
-    avg_comp_price = sum(c.price for c in competitors) / len(competitors)
+    # Fix: Use proper Money sum instead of starting with int(0)
+    total_comp_price = Money.zero()
+    for c in competitors:
+        total_comp_price += c.price
+    avg_comp_price = total_comp_price / len(competitors)
     
     rel_sales_index = max(BSR_SMOOTHING_FACTOR, prod.ema_sales_velocity) / avg_comp_sales
-    rel_price_index = avg_comp_price / max(BSR_SMOOTHING_FACTOR, prod.price)
+    # Fix: Convert Money to float for comparison with BSR_SMOOTHING_FACTOR
+    rel_price_index = avg_comp_price / max(Money.from_dollars(BSR_SMOOTHING_FACTOR), prod.price)
     
+    # Fix: Convert all values to float for calculation
     expected_denominator = (
-        prod.ema_sales_velocity *
-        prod.ema_conversion *
-        rel_sales_index *
-        rel_price_index
+        float(prod.ema_sales_velocity) *
+        float(prod.ema_conversion) *
+        float(rel_sales_index) *
+        float(rel_price_index)
     )
     
     expected_bsr = int(BSR_BASE / max(BSR_SMOOTHING_FACTOR, expected_denominator))
@@ -411,56 +434,56 @@ def test_fee_engine_comprehensive_calculations():
     
     # Test Case 1: Referral Fee Calculations
     # Test DEFAULT category (15% with $0.30 minimum)
-    assert fee_engine.referral_fee("DEFAULT", 1.0) == 0.30, "Minimum referral fee should be $0.30"
-    assert fee_engine.referral_fee("DEFAULT", 10.0) == 1.50, "15% of $10 should be $1.50"
-    assert fee_engine.referral_fee("DEFAULT", 100.0) == 15.00, "15% of $100 should be $15.00"
+    assert fee_engine.referral_fee("DEFAULT", 1.0) == Money.from_dollars(0.30), "Minimum referral fee should be $0.30"
+    assert fee_engine.referral_fee("DEFAULT", 10.0) == Money.from_dollars(1.50), "15% of $10 should be $1.50"
+    assert fee_engine.referral_fee("DEFAULT", 100.0) == Money.from_dollars(15.00), "15% of $100 should be $15.00"
     
     # Test Apparel category (17% with $0.30 minimum)
-    assert fee_engine.referral_fee("Apparel", 1.0) == 0.30, "Minimum referral fee should be $0.30"
-    assert fee_engine.referral_fee("Apparel", 10.0) == 1.70, "17% of $10 should be $1.70"
+    assert fee_engine.referral_fee("Apparel", 1.0) == Money.from_dollars(0.30), "Minimum referral fee should be $0.30"
+    assert fee_engine.referral_fee("Apparel", 10.0) == Money.from_dollars(1.70), "17% of $10 should be $1.70"
     
     # Test Jewelry category (20% up to $250 max fee, then 5% for amounts over $250)
-    assert fee_engine.referral_fee("Jewelry", 10.0) == 2.00, "20% of $10 should be $2.00"
-    assert fee_engine.referral_fee("Jewelry", 250.0) == 50.00, "20% of $250 should be $50.00"
-    assert fee_engine.referral_fee("Jewelry", 300.0) == 52.50, "First $250 at 20% = $50, remaining $50 at 5% = $2.50, total = $52.50"
+    assert fee_engine.referral_fee("Jewelry", 10.0) == Money.from_dollars(2.00), "20% of $10 should be $2.00"
+    assert fee_engine.referral_fee("Jewelry", 250.0) == Money.from_dollars(50.00), "20% of $250 should be $50.00"
+    assert fee_engine.referral_fee("Jewelry", 300.0) == Money.from_dollars(52.50), "First $250 at 20% = $50, remaining $50 at 5% = $2.50, total = $52.50"
     
     # Test Electronics category (8% with $0.30 minimum)
-    assert fee_engine.referral_fee("Electronics", 1.0) == 0.30, "Minimum referral fee should be $0.30"
-    assert fee_engine.referral_fee("Electronics", 10.0) == 0.80, "8% of $10 should be $0.80"
+    assert fee_engine.referral_fee("Electronics", 1.0) == Money.from_dollars(0.30), "Minimum referral fee should be $0.30"
+    assert fee_engine.referral_fee("Electronics", 10.0) == Money.from_dollars(0.80), "8% of $10 should be $0.80"
     
     # Test Case 2: FBA Fulfillment Fee Calculations
-    assert fee_engine.fba_fulfillment_fee("standard", "small") == 3.22, "Standard small should be $3.22"
-    assert fee_engine.fba_fulfillment_fee("standard", "large") == 4.75, "Standard large should be $4.75"
-    assert fee_engine.fba_fulfillment_fee("oversize", "medium") == 8.26, "Oversize medium should be $8.26"
-    assert fee_engine.fba_fulfillment_fee("oversize", "large") == 10.50, "Oversize large should be $10.50"
+    assert fee_engine.fba_fulfillment_fee("standard", "small") == Money.from_dollars(3.22), "Standard small should be $3.22"
+    assert fee_engine.fba_fulfillment_fee("standard", "large") == Money.from_dollars(4.75), "Standard large should be $4.75"
+    assert fee_engine.fba_fulfillment_fee("oversize", "medium") == Money.from_dollars(8.26), "Oversize medium should be $8.26"
+    assert fee_engine.fba_fulfillment_fee("oversize", "large") == Money.from_dollars(10.50), "Oversize large should be $10.50"
     
     # Test Case 3: Surcharge Calculations
     # Fuel surcharge (2% of fulfillment fee)
-    assert fee_engine.fuel_surcharge(3.22) == 0.06, "2% of $3.22 should be $0.06"
-    assert fee_engine.fuel_surcharge(10.50) == 0.21, "2% of $10.50 should be $0.21"
+    assert fee_engine.fuel_surcharge(Money.from_dollars(3.22)) == Money.from_dollars(0.06), "2% of $3.22 should be $0.06"
+    assert fee_engine.fuel_surcharge(Money.from_dollars(10.50)) == Money.from_dollars(0.21), "2% of $10.50 should be $0.21"
     
     # Holiday surcharge
-    assert fee_engine.holiday_surcharge(True) == 0.50, "Holiday surcharge should be $0.50"
-    assert fee_engine.holiday_surcharge(False) == 0.0, "No holiday surcharge when not holiday season"
+    assert fee_engine.holiday_surcharge(True) == Money.from_dollars(0.50), "Holiday surcharge should be $0.50"
+    assert fee_engine.holiday_surcharge(False) == Money.from_dollars(0.0), "No holiday surcharge when not holiday season"
     
     # Dimensional weight surcharge
-    assert fee_engine.dim_weight_surcharge(True) == 1.25, "Dim weight surcharge should be $1.25"
-    assert fee_engine.dim_weight_surcharge(False) == 0.0, "No dim weight surcharge when not applicable"
+    assert fee_engine.dim_weight_surcharge(True) == Money.from_dollars(1.25), "Dim weight surcharge should be $1.25"
+    assert fee_engine.dim_weight_surcharge(False) == Money.from_dollars(0.0), "No dim weight surcharge when not applicable"
     
     # Test Case 4: Storage and Inventory Fees
     # Long-term storage fee (cubic_feet, months)
-    assert fee_engine.long_term_storage_fee(2.0, 1) == 13.80, "2 cubic feet * 1 month * $6.90 = $13.80"
-    assert fee_engine.long_term_storage_fee(0.5, 1) == 3.45, "0.5 cubic feet * 1 month * $6.90 = $3.45"
+    assert fee_engine.long_term_storage_fee(2.0, 1) == Money.from_dollars(13.80), "2 cubic feet * 1 month * $6.90 = $13.80"
+    assert fee_engine.long_term_storage_fee(0.5, 1) == Money.from_dollars(3.45), "0.5 cubic feet * 1 month * $6.90 = $3.45"
     
     # Aged inventory surcharge (cubic_feet, aged_days)
-    assert fee_engine.aged_inventory_surcharge(1.0, 200) == 1.50, "181-270 days: $1.50 per cubic foot"
-    assert fee_engine.aged_inventory_surcharge(1.0, 300) == 7.50, "271+ days: $7.50 per cubic foot"
-    assert fee_engine.aged_inventory_surcharge(1.0, 100) == 0.0, "Under 181 days: no surcharge"
+    assert fee_engine.aged_inventory_surcharge(1.0, 200) == Money.from_dollars(1.50), "181-270 days: $1.50 per cubic foot"
+    assert fee_engine.aged_inventory_surcharge(1.0, 300) == Money.from_dollars(7.50), "271+ days: $7.50 per cubic foot"
+    assert fee_engine.aged_inventory_surcharge(1.0, 100) == Money.from_dollars(0.0), "Under 181 days: no surcharge"
     
     # Low inventory level fee (units, trailing_days_supply)
-    assert fee_engine.low_inventory_level_fee(10, 20) == 3.20, "10 units * $0.32 = $3.20 (when supply < 28 days)"
-    assert fee_engine.low_inventory_level_fee(5, 20) == 1.60, "5 units * $0.32 = $1.60 (when supply < 28 days)"
-    assert fee_engine.low_inventory_level_fee(10, 30) == 0.0, "No fee when supply >= 28 days"
+    assert fee_engine.low_inventory_level_fee(10, 20) == Money.from_dollars(3.20), "10 units * $0.32 = $3.20 (when supply < 28 days)"
+    assert fee_engine.low_inventory_level_fee(5, 20) == Money.from_dollars(1.60), "5 units * $0.32 = $1.60 (when supply < 28 days)"
+    assert fee_engine.low_inventory_level_fee(10, 30) == Money.from_dollars(0.0), "No fee when supply >= 28 days"
     
     # Test Case 5: Total Fees Integration
     # Test a complete fee calculation with known values
@@ -774,7 +797,7 @@ def test_enhanced_competitor_dynamics():
     
     # Test competitor strategy assignment
     for comp in sim.competitors:
-        strategy = sim._assign_competitor_strategy(comp)
+        strategy = sim.competitor_manager._assign_competitor_strategy(comp)
         assert strategy in ["aggressive", "follower", "premium", "value"]
         comp.strategy = strategy
     
@@ -786,7 +809,7 @@ def test_enhanced_competitor_dynamics():
     # Prices should change (though may be small changes)
     price_changes = [abs(initial - updated) for initial, updated in zip(initial_prices, updated_prices)]
     # At least some competitors should adjust prices
-    assert any(change > 0 for change in price_changes)
+    assert any(change > Money(0, "USD") for change in price_changes)
     
     # Test competitor BSR updates
     for comp in sim.competitors:

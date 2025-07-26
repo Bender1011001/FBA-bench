@@ -15,6 +15,9 @@ from .ledger import Ledger, Transaction, Entry
 from .supply_chain import GlobalSupplyChain
 from .audit import run_and_audit, RunAudit
 from .money import Money
+from .services import CompetitorManager, SalesProcessor
+from .models import Competitor, SalesResult
+from .config_loader import load_config
 
 from fba_bench.config import (
     # Product defaults
@@ -126,12 +129,24 @@ class Simulation:
         self.disputes = []  # List of filed disputes (for Dispute.file Tool)
         # Customer systems: reviews, feedback, messages, claims
         self.customer_events = {}  # asin -> list of events
+        
+        # Load configuration and initialize services
+        self.config = load_config()
+        self.competitor_manager = CompetitorManager(self.config, self.rng)
+        self.sales_processor = SalesProcessor(
+            config=self.config,
+            ledger=self.ledger,
+            inventory=self.inventory,
+            market_dynamics=market_dynamics,
+            rng=self.rng
+        )
+        
         # seed capital
         seed_capital = Money.from_dollars(10_000)
         self.ledger.post(Transaction("Seed capital", [Entry("Cash", seed_capital, self.now)], [Entry("Equity", seed_capital, self.now)]))
         # Initialize competitors
         # Competitors are initialized after the first product is launched (see launch_product)
-        self.competitors = []
+        self.competitors: List[Competitor] = []
 
     def _init_competitors(self, num_competitors: int, asin: str = None, category: str = None):
         """
@@ -144,35 +159,29 @@ class Simulation:
 
         Populates self.competitors with mock competitor products for BSR v3 and demand calculations.
         """
-        self.competitors = []
         if asin is None or category is None or asin not in self.products:
+            self.competitors = []
             return
+            
         agent_prod = self.products[asin]
-        for i in range(num_competitors):
-            comp_asin = f"CMP{i+1:03d}{asin[-3:]}"
-            # Price: ±10% of agent's price
-            multiplier = Decimal(str(self.rng.uniform(0.9, 1.1)))
-            price = Money.from_dollars(round((agent_prod.price * multiplier).to_float(), 2))
-            # Sales velocity: ±20% of agent's base demand
-            sales_velocity = max(0.1, agent_prod.base_demand * self.rng.uniform(0.8, 1.2))
-            # Create a minimal competitor object (using Product for compatibility)
-            competitor = Product(
-                asin=comp_asin,
-                category=category,
-                cost=agent_prod.cost,  # Assume similar cost
-                price=price,
-                base_demand=agent_prod.base_demand,
-                bsr=agent_prod.bsr
-            )
-            competitor.sales_velocity = sales_velocity
-            self.competitors.append(competitor)
+        self.competitors = self.competitor_manager.initialize_competitors(
+            num_competitors=num_competitors,
+            agent_asin=asin,
+            agent_category=category,
+            agent_price=agent_prod.price,
+            agent_cost=agent_prod.cost,
+            agent_base_demand=agent_prod.base_demand,
+            agent_bsr=agent_prod.bsr
+        )
 
     def update_competitors(self):
         """
-        Enhanced competitor model with dynamic and reactive behavior.
-        Competitors respond to market conditions, agent actions, and seasonal factors.
+        Update competitor behavior using the CompetitorManager service.
+        
+        This method delegates all competitor update logic to the CompetitorManager,
+        maintaining the same external interface while using the new service architecture.
         """
-        if not self.products:
+        if not self.products or not self.competitors:
             return
         
         # Get agent product (assume single product for now)
@@ -185,139 +194,19 @@ class Simulation:
         is_holiday_season = self.now.month in [11, 12]
         market_demand_multiplier = 1.5 if is_holiday_season else 1.0
         
-        for comp in self.competitors:
-            # --- Enhanced Price Strategy ---
-            # Competitors use different pricing strategies
-            comp_strategy = getattr(comp, 'strategy', self._assign_competitor_strategy(comp))
-            comp.strategy = comp_strategy
-            
-            price_change = self._calculate_competitor_price_change(
-                comp, agent_price, agent_sales, agent_bsr, market_demand_multiplier
-            )
-            
-            # Apply price change with bounds
-            multiplier = Decimal(str(1 + price_change))
-            new_price = comp.price * multiplier
-            comp.price = Money.from_dollars(max(1.0, min(999.99, round(new_price.to_float(), 2))))
-            
-            # --- Enhanced Sales Velocity ---
-            # Sales velocity depends on price competitiveness, market conditions, and competitor performance
-            sales_change = self._calculate_competitor_sales_change(
-                comp, agent_price, agent_sales, market_demand_multiplier
-            )
-            
-            # Update sales velocity with bounds
-            new_sales_velocity = comp.sales_velocity * (1 + sales_change)
-            comp.sales_velocity = max(0.1, min(100.0, new_sales_velocity))
-            
-            # --- Update Competitor BSR ---
-            # Competitors also have dynamic BSR based on their performance
-            self._update_competitor_bsr(comp, market_demand_multiplier)
+        # Delegate to CompetitorManager
+        self.competitor_manager.update_competitors(
+            competitors=self.competitors,
+            agent_price=agent_price,
+            agent_sales=int(agent_sales),
+            agent_bsr=agent_bsr,
+            market_demand_multiplier=market_demand_multiplier,
+            current_date=self.now
+        )
+        
+        # Update market share calculations
+        self.competitor_manager.calculate_market_share(self.competitors, agent_sales)
 
-    def _assign_competitor_strategy(self, comp):
-        """Assign a pricing strategy to a competitor."""
-        # Use competitor ASIN hash for consistent strategy assignment
-        strategy_index = hash(comp.asin) % len(COMPETITOR_STRATEGIES)
-        return COMPETITOR_STRATEGIES[strategy_index]
-
-    def _calculate_competitor_price_change(self, comp, agent_price, agent_sales, agent_bsr, market_multiplier):
-        """Calculate price change for a competitor based on strategy and market conditions."""
-        base_change = self.rng.uniform(-COMPETITOR_PRICE_CHANGE_BASE, COMPETITOR_PRICE_CHANGE_BASE)
-        
-        strategy = comp.strategy
-        price_ratio = agent_price / comp.price
-        
-        if strategy == 'aggressive':
-            # Aggressive competitors try to undercut
-            if price_ratio < AGGRESSIVE_UNDERCUT_THRESHOLD:  # Agent is significantly cheaper
-                base_change -= AGGRESSIVE_UNDERCUT_AMOUNT  # Lower price aggressively
-            elif price_ratio > 1.05:  # Agent is more expensive
-                base_change += 0.01  # Raise price slightly
-                
-        elif strategy == 'follower':
-            # Followers mimic agent pricing with delay
-            if price_ratio < 0.98:
-                base_change -= FOLLOWER_PRICE_SENSITIVITY  # Follow price down slowly
-            elif price_ratio > 1.02:
-                base_change += FOLLOWER_PRICE_SENSITIVITY  # Follow price up slowly
-                
-        elif strategy == 'premium':
-            # Premium competitors maintain higher prices
-            if price_ratio > 0.9:  # Agent is close to their price
-                base_change += PREMIUM_PRICE_MAINTENANCE  # Maintain premium
-            else:
-                base_change -= 0.005  # Small adjustment down
-                
-        elif strategy == 'value':
-            # Value competitors focus on low prices
-            if price_ratio < VALUE_COMPETITIVE_THRESHOLD:  # Agent is competitive
-                base_change -= 0.025  # Stay competitive
-            else:
-                base_change += 0.005  # Small increase if agent is expensive
-        
-        # Market condition adjustments
-        if market_multiplier > 1.2:  # High demand period
-            base_change += 0.01  # Increase prices in high demand
-        
-        # BSR-based adjustments (better BSR = more pricing power)
-        if agent_bsr > 50000:  # Agent has poor BSR
-            base_change += 0.005  # Competitors can raise prices
-        elif agent_bsr < 10000:  # Agent has good BSR
-            base_change -= 0.005  # Competitors need to be more competitive
-        
-        return base_change
-
-    def _calculate_competitor_sales_change(self, comp, agent_price, agent_sales, market_multiplier):
-        """Calculate sales velocity change for a competitor."""
-        base_change = self.rng.uniform(-COMPETITOR_SALES_CHANGE_BASE, COMPETITOR_SALES_CHANGE_BASE)
-        
-        # Price competitiveness effect
-        price_ratio = comp.price / agent_price
-        if price_ratio < 0.9:  # Competitor is much cheaper
-            base_change += 0.04  # Higher sales
-        elif price_ratio > 1.1:  # Competitor is much more expensive
-            base_change -= 0.04  # Lower sales
-        
-        # Market share competition
-        total_sales = agent_sales + sum(c.sales_velocity for c in self.competitors)
-        if total_sales > 0:
-            market_share = comp.sales_velocity / total_sales
-            if market_share < 0.1:  # Low market share
-                base_change += 0.02  # Try to gain share
-            elif market_share > 0.3:  # High market share
-                base_change -= 0.01  # Natural decline
-        
-        # Market conditions
-        base_change *= market_multiplier
-        
-        return base_change
-
-    def _update_competitor_bsr(self, comp, market_multiplier):
-        """Update competitor BSR based on their performance."""
-        # Simple BSR model for competitors
-        # Better sales velocity and price competitiveness = better BSR
-        
-        # Get average competitor price for comparison
-        total_price = Money.zero()
-        for c in self.competitors:
-            total_price += c.price
-        avg_comp_price = total_price / len(self.competitors)
-        price_competitiveness = avg_comp_price / max(Money.from_dollars(0.01), comp.price)
-        
-        # BSR improves with sales velocity and price competitiveness
-        bsr_factor = comp.sales_velocity * float(price_competitiveness) * market_multiplier
-        
-        if bsr_factor > 1.0:
-            # Improve BSR (lower number)
-            comp.bsr = max(BSR_MIN_VALUE, int(comp.bsr * 0.95))
-        elif bsr_factor < 0.5:
-            # Worsen BSR (higher number)
-            comp.bsr = min(BSR_MAX_VALUE, int(comp.bsr * 1.05))
-        
-        # Add some randomness
-        if self.rng.random() < 0.1:  # 10% chance of random BSR change
-            comp.bsr = max(BSR_MIN_VALUE, min(BSR_MAX_VALUE,
-                          int(comp.bsr * self.rng.uniform(0.9, 1.1))))
 
     # Tool‑like API
     def launch_product(self, asin: str, category: str, cost, price, qty: int, base_demand: float = DEFAULT_QTY, bsr: int = 100000, dimensions=None, weight=None):
@@ -389,77 +278,24 @@ class Simulation:
         # --- Adversarial Events ---
         if self.adversarial_events:
             self.adversarial_events.run_events(self, self.now.timetuple().tm_yday)
-        decay = 0.2  # EMA decay factor for BSR v2
+        # Process sales for each product using the SalesProcessor
         for asin, prod in self.products.items():
             # --- Competitor Set for this product ---
             competitors = [c for c in self.competitors if c.asin != asin]
-
-            # --- Calculate dynamic size tier and dim weight ---
-            dims = prod.dimensions
-            weight = prod.weight
-            cubic_inches = dims["L"] * dims["W"] * dims["H"]
-            dim_weight = cubic_inches / 139
-            dim_weight_applies = dim_weight > weight
-            size_tier = "standard"
-            if max(dims["L"], dims["W"], dims["H"]) > 18 or weight > 20:
-                size_tier = "oversize"
-
-            # --- Compute Seller Trust Score from customer events ---
-            trust_score = 1.0
-            if asin in self.customer_events:
-                events = self.customer_events[asin]
-                cancellations = sum(1 for e in events if e.get("type") == "a_to_z_claim")
-                policy_violations = getattr(self, 'policy_violations', 0)  # Track policy violations
-                review_manipulation = getattr(self, 'review_manipulation_count', 0)  # Track review manipulation
-                customer_issues = sum(1 for e in events if e.get("type") in ["negative_review", "negative_feedback"])
-                trust_score = market_dynamics.calculate_trust_score(
-                    cancellations=cancellations,
-                    policy_violations=policy_violations,
-                    review_manipulation=review_manipulation,
-                    customer_issues=customer_issues,
-                    base_score=1.0
-                )
             
-            # Store trust score on product for evaluation
-            prod.trust_score = trust_score
-            
-            # Apply trust score effects on fees and listing suppression
-            trust_fee_multiplier = self._calculate_trust_fee_multiplier(trust_score)
-            suppression_info = self._check_listing_suppression(trust_score)
-            
-            # --- START: Dynamic Elasticity Demand Model ---
-            current_elasticity = market_dynamics.calculate_dynamic_elasticity(prod.bsr)
-            seasonality_multiplier = market_dynamics.get_seasonality_multiplier(self.now, prod.category)
-            demand = market_dynamics.calculate_demand(
-                base_demand=prod.base_demand,
-                price=prod.price,
-                elasticity=current_elasticity,
-                seasonality_multiplier=seasonality_multiplier,
+            # Process sales using the dedicated service
+            sales_result = self.sales_processor.process_product_sales(
+                asin=asin,
+                product=prod,
                 competitors=competitors,
-                trust_score=trust_score
+                customer_events=self.customer_events,
+                current_date=self.now,
+                fee_engine=self.fees,
+                selling_plan=self.selling_plan,
+                event_log=self.event_log
             )
-            
-            # Apply graduated listing suppression based on trust score
-            if suppression_info["suppressed"]:
-                # Apply demand reduction based on suppression level
-                demand = int(demand * suppression_info["demand_multiplier"])
-                
-                # Apply search ranking penalty (affects BSR negatively)
-                search_penalty = suppression_info["search_penalty"]
-                if search_penalty > 0:
-                    # Worsen BSR by the penalty factor (higher BSR = worse ranking)
-                    prod.bsr = min(BSR_MAX_VALUE, int(prod.bsr * (1 + search_penalty)))
-                
-                # Log suppression with severity level
-                level = suppression_info["level"]
-                multiplier = suppression_info["demand_multiplier"]
-                self.event_log.append(
-                    f"Day {self.now.day}: Listing {asin} suppressed ({level} level) - "
-                    f"trust score {trust_score:.2f}, demand reduced to {multiplier*100:.0f}%"
-                )
-            
-            # --- END: Dynamic Elasticity Demand Model ---
-            sold = self.inventory.remove(asin, demand)
+            sold = sales_result.units_sold
+            demand = sales_result.demand
             # --- BSR v2: Track sales and demand history ---
             prod.sales_history.append(sold)
             prod.demand_history.append(demand)
@@ -532,6 +368,10 @@ class Simulation:
                 weeks_supply = WEEKS_SUPPLY_DEFAULT
                 unplanned_units = 0  # No unplanned service in this tick
 
+                # Determine size tier and dimensional weight
+                size_tier = "standard"  # Default size tier
+                dim_weight_applies = False  # Default dimensional weight
+                
                 # Calculate ancillary and penalty fees based on current state
                 ancillary_fee = self._calculate_ancillary_fees(asin, sold)
                 penalty_fee = self._calculate_penalty_fees(asin, sold)
@@ -542,6 +382,15 @@ class Simulation:
                     from fba_bench.config import INDIVIDUAL_PER_ITEM
                     selling_plan_fee = Money.from_dollars(INDIVIDUAL_PER_ITEM) * sold
 
+                # Calculate trust score fee multiplier
+                trust_score = getattr(prod, 'trust_score', 1.0)
+                trust_fee_multiplier = max(1.0, 1.0 + (1.0 - trust_score) * 0.5)  # Higher fees for lower trust
+                
+                # BUGFIX: Convert total ancillary/penalty fees to per-unit amounts before passing to fee engine
+                # The fee engine expects per-unit fees, but ancillary_fee and penalty_fee are calculated as totals
+                ancillary_fee_per_unit = ancillary_fee.to_float() / max(1, sold) if ancillary_fee > Money.zero() else 0.0
+                penalty_fee_per_unit = penalty_fee.to_float() / max(1, sold) if penalty_fee > Money.zero() else 0.0
+                
                 # All fee calculations are now handled by FeeEngine.total_fees
                 fees = self.fees.total_fees(
                     category=prod.category,
@@ -560,9 +409,10 @@ class Simulation:
                     trailing_days_supply=trailing_days_supply,
                     weeks_supply=weeks_supply,
                     unplanned_units=unplanned_units,
-                    penalty_fee=penalty_fee,
-                    ancillary_fee=ancillary_fee
+                    penalty_fee=penalty_fee_per_unit,
+                    ancillary_fee=ancillary_fee_per_unit
                 )
+                # BUGFIX: fee_engine.total_fees() returns per-unit fees, so multiply by sold only once
                 total_fees = (Money.from_dollars(fees["total"]) * sold * Decimal(str(trust_fee_multiplier))) + selling_plan_fee
                 referral = fees["referral_fee"] * sold
                 cogs = sold * prod.cost
@@ -906,7 +756,7 @@ class Simulation:
                 # Return processing fee based on returned units
                 estimated_return_rate = min(0.3, len(returns) / max(1, units_sold * 4))  # Max 30% return rate
                 returned_units = int(units_sold * estimated_return_rate)
-                ancillary_fee += Money.from_dollars(returned_units) * prod.price * Money.from_dollars(RETURN_PROCESSING_FEE_PCT)
+                ancillary_fee += Money.from_dollars(returned_units * prod.price.to_float() * RETURN_PROCESSING_FEE_PCT)
         
         # 2. Prep service fees (based on product characteristics and category)
         prep_fee_probability = 0.02  # Base 2% chance

@@ -261,21 +261,32 @@ def calculate_demand(
         # Assume very high demand for a free product to avoid division by zero
         return int(round(base_demand * 2 * seasonality_multiplier))
 
+    # BUGFIX: Add price floor validation to prevent elasticity explosion at very low prices
+    MIN_PRICE = 0.50  # $0.50 minimum price floor to prevent mathematical explosion
+    safe_price = max(price_value, MIN_PRICE)
+    
+    # Log warning if price floor was applied
+    if price_value < MIN_PRICE:
+        import warnings
+        warnings.warn(f"Price ${price_value:.2f} below minimum floor ${MIN_PRICE:.2f}. "
+                     f"Using floor price to prevent elasticity explosion.", UserWarning)
+
     # Relative price effect: compare to average competitor price
     rel_price_factor = 1.0
     if competitors and len(competitors) > 0:
         competitor_prices = [float(c.price.to_decimal()) if hasattr(c.price, 'to_decimal') else c.price for c in competitors]
         avg_competitor_price = np.mean(competitor_prices)
         if avg_competitor_price > 0:
-            rel_price_factor = avg_competitor_price / price_value
+            rel_price_factor = avg_competitor_price / safe_price  # Use safe_price for calculation
             # Clamp to [REL_PRICE_FACTOR_MIN, REL_PRICE_FACTOR_MAX] to avoid extreme effects
             rel_price_factor = max(REL_PRICE_FACTOR_MIN, min(REL_PRICE_FACTOR_MAX, rel_price_factor))
 
     # Trust score effect: linearly scale demand (0.0 = suppressed, 1.0 = full)
     trust_factor = max(0.0, min(1.0, trust_score))
 
+    # BUGFIX: Use safe_price in elasticity calculation to prevent explosion
     # Demand formula: Demand = Base * (Price ^ -Elasticity) * Seasonality * RelativePrice * Trust
-    demand = base_demand * (price_value ** -elasticity) * seasonality_multiplier * rel_price_factor * trust_factor
+    demand = base_demand * (safe_price ** -elasticity) * seasonality_multiplier * rel_price_factor * trust_factor
 
     # Return as an integer, as we can't sell fractional units
     return int(round(demand))

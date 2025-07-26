@@ -1,16 +1,28 @@
 # FBA-Bench Python dependencies
-numpy
-sp-api>=0.22.0  # Required for Live Pilot phase Amazon SP-API integration
+# All versions are pinned for reproducible builds and dependency stability
+
+# Core numerical computing
+numpy==1.24.3  # Pinned to stable version with good performance for financial calculations
+
+# Amazon SP-API integration
+sp-api==0.22.0  # Required for Live Pilot phase Amazon SP-API integration, latest stable
 
 # Dashboard dependencies
-fastapi>=0.104.0
-uvicorn>=0.24.0
-websockets>=12.0
-pydantic>=2.5.0
+fastapi==0.104.1  # Pinned to specific version for API stability and security
+uvicorn==0.24.0  # ASGI server, pinned for compatibility with FastAPI 0.104.1
+websockets==12.0  # WebSocket support for real-time dashboard updates
+pydantic==2.5.0  # Data validation, pinned to v2.5.0 for FastAPI compatibility
 
 # Testing framework dependencies
-pytest>=7.0.0
-hypothesis>=6.0.0
-pytest-regressions>=2.4.0
-mypy>=1.0.0
-interrogate>=1.5.0
+pytest==7.4.2  # Test framework, pinned to stable 7.x series
+hypothesis==6.82.0  # Property-based testing, pinned to stable version
+pytest-regressions==2.5.0  # Regression testing plugin
+mypy==1.5.1  # Static type checker, pinned for consistent type checking
+interrogate==1.5.0  # Documentation coverage tool
+
+# Development dependencies (also available via pyproject.toml[dev])
+# These are included here for environments that don't support optional dependencies
+black==23.7.0  # Code formatter, pinned to stable version
+isort==5.12.0  # Import sorter, compatible with black profile
+ruff==0.0.287  # Fast Python linter, pinned to stable version
+pre-commit==3.3.3  # Git hooks framework for code quality

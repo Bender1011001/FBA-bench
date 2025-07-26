@@ -13,9 +13,11 @@ This agent is designed for extensibility and research on advanced agent architec
 import time
 from collections import deque
 from typing import Any, Dict, List, Optional, Callable
+from decimal import Decimal
 
 from .simulation import Simulation
 from fba_bench.config import DEFAULT_CATEGORY, DEFAULT_COST, DEFAULT_PRICE, DEFAULT_QTY
+from fba_bench.money import Money
 
 class AdvancedAgent:
     """
@@ -57,7 +59,10 @@ class AdvancedAgent:
         self.compute_budget = compute_budget  # seconds per OODA loop
         self.api_cost = 0.0
         self.api_budget = api_budget
+        self.initial_api_budget = api_budget  # For percentage warnings
         self.cpu_units_used = 0.0
+        self.cpu_budget = cpu_budget
+        self._last_budget_warning = False  # For low budget warning
         self.cpu_budget = cpu_budget
         self.rng = self.sim.rng  # Use simulation's RNG for consistency
         self.goal_stack = deque()  # Hierarchical planner: stack of goals
@@ -123,6 +128,10 @@ class AdvancedAgent:
 
     def update_strategic_plan(self, updates: Dict):
         """Update strategic plan and maintain coherence with actions."""
+        # Check budget before action
+        if not self.check_budget(cpu_units=4.0, usd_cost=0.04):
+            raise RuntimeError(f"Insufficient budget: need $0.04 and 4.0 CPU, have ${self.api_budget - self.api_cost} and {self.cpu_budget - self.cpu_units_used}")
+        # Action logic here...
         self.meter_api_call(cpu_units=4.0, usd_cost=0.04)
         
         for key, value in updates.items():
@@ -180,27 +189,57 @@ class AdvancedAgent:
         self.api_cost = 0.0
         self.cpu_units_used = 0.0
 
+    def check_budget(self, cpu_units: float = 1.0, usd_cost: float = 0.01) -> bool:
+        """
+        Check if the API and CPU budgets allow for the specified costs without decrementing.
+        Returns True if both budgets are sufficient, False otherwise.
+        """
+        if usd_cost < 0 or cpu_units < 0:
+            print(f"ERROR: Negative cost or CPU units not allowed (usd_cost={usd_cost}, cpu_units={cpu_units})")
+            return False
+        if (self.api_cost + usd_cost) > self.api_budget:
+            print(f"WARNING: API budget insufficient for next call (need {usd_cost}, have {self.api_budget - self.api_cost})")
+            return False
+        if (self.cpu_units_used + cpu_units) > self.cpu_budget:
+            print(f"WARNING: CPU budget insufficient for next call (need {cpu_units}, have {self.cpu_budget - self.cpu_units_used})")
+            return False
+        return True
+
+    def get_remaining_budget(self) -> dict:
+        """
+        Get remaining API and CPU budget for introspection.
+        """
+        return {
+            "api_cost_remaining": max(0, self.api_budget - self.api_cost),
+            "cpu_units_remaining": max(0, self.cpu_budget - self.cpu_units_used),
+            "api_cost_used": self.api_cost,
+            "cpu_units_used": self.cpu_units_used
+        }
+
     def meter_api_call(self, cpu_units: float = 1.0, usd_cost: float = 0.01):
         """
-        Meter an API/tool call and enforce the daily API budget.
-        All tool calls are decorated with (cpu_units, usd_cost) as per blueprint.
-        
-        Args:
-            cpu_units (float): CPU computation units consumed
-            usd_cost (float): USD cost of the API call
-            
-        Raises RuntimeError if the budget is exceeded.
+        Decrement API and CPU budgets after a successful API/tool call.
+        Raises RuntimeError if the budget is exceeded (should not happen if pre-checked).
+        Also logs budget status and warnings.
         """
         self.api_cost += usd_cost
-        self.cpu_units_used = getattr(self, 'cpu_units_used', 0.0) + cpu_units
-        
+        self.cpu_units_used += cpu_units
+
         if self.api_cost > self.api_budget:
+            print(f"ERROR: API cost budget exceeded: {self.api_cost:.2f} > {self.api_budget:.2f}")
             raise RuntimeError(f"API cost budget exceeded: {self.api_cost:.2f} > {self.api_budget:.2f}")
-        
-        # Check CPU budget (assuming 100 CPU units per day as default)
-        cpu_budget = getattr(self, 'cpu_budget', 100.0)
-        if self.cpu_units_used > cpu_budget:
-            raise RuntimeError(f"CPU budget exceeded: {self.cpu_units_used:.2f} > {cpu_budget:.2f}")
+
+        if self.cpu_units_used > self.cpu_budget:
+            print(f"ERROR: CPU budget exceeded: {self.cpu_units_used:.2f} > {self.cpu_budget:.2f}")
+            raise RuntimeError(f"CPU budget exceeded: {self.cpu_units_used:.2f} > {self.cpu_budget:.2f}")
+
+        # Log budget status
+        remaining_pct = (self.api_budget - self.api_cost) / self.initial_api_budget * 100 if self.initial_api_budget else 0
+        if remaining_pct < 10 and not self._last_budget_warning:
+            print(f"WARNING: API budget low ({remaining_pct:.1f}% remaining)")
+            self._last_budget_warning = True
+        elif remaining_pct >= 10:
+            self._last_budget_warning = False
 
     def file_dispute(self, reason: str, details: dict = None):
         """
@@ -213,6 +252,8 @@ class AdvancedAgent:
         Returns:
             dict: Dispute record with processing outcome
         """
+        if not self.check_budget(cpu_units=8.0, usd_cost=0.08):
+            raise RuntimeError(f"Insufficient budget: need $0.08 and 8.0 CPU, have ${self.api_budget - self.api_cost} and {self.cpu_budget - self.cpu_units_used}")
         self.meter_api_call(cpu_units=8.0, usd_cost=0.08)  # High cost for dispute filing
         
         if not hasattr(self.sim, "disputes"):
@@ -341,6 +382,8 @@ class AdvancedAgent:
         Returns:
             List of subgoal dictionaries with dependency information
         """
+        if not self.check_budget(cpu_units=3.0, usd_cost=0.03):
+            raise RuntimeError(f"Insufficient budget: need $0.03 and 3.0 CPU, have ${self.api_budget - self.api_cost} and {self.cpu_budget - self.cpu_units_used}")
         self.meter_api_call(cpu_units=3.0, usd_cost=0.03)  # Planning is computationally expensive
         
         goal_type = goal.get("type")
@@ -408,7 +451,7 @@ class AdvancedAgent:
         time_horizon = params.get("time_horizon", 30)  # days
         
         # Analyze current state
-        current_profit = self.sim.ledger.balance("Cash") - 10000  # Subtract seed capital
+        current_profit = self.sim.ledger.balance("Cash") - Money(10000, "USD")  # Subtract seed capital
         subgoals = []
         
         # Phase 1: Product Launch (if needed)
@@ -526,7 +569,8 @@ class AdvancedAgent:
                 }
             ])
         
-        if current_profit < target_profit * 0.3:  # Significantly underperforming
+        target_threshold = Money.from_dollars(float(target_profit * Decimal('0.3')))
+        if current_profit < target_threshold:  # Significantly underperforming
             subgoals.append({
                 "type": "recover_from_loss",
                 "params": {"aggressive": True, "target_profit": target_profit},
@@ -535,7 +579,7 @@ class AdvancedAgent:
             })
         
         # Long-term growth strategies (if performing well)
-        if current_profit > target_profit * 0.8 and sales_velocity > 2.0:
+        if current_profit > Money.from_dollars(float(target_profit * Decimal('0.8'))) and sales_velocity > 2.0:
             subgoals.extend([
                 {
                     "type": "scale_operations",
@@ -563,10 +607,10 @@ class AdvancedAgent:
         cost = product.cost
         
         # Estimate fees (simplified)
-        estimated_fees = price * 0.15  # Rough estimate of total fees
+        estimated_fees = price * Decimal('0.15')  # Rough estimate of total fees
         profit = price - cost - estimated_fees
         
-        return profit / price if price > 0 else 0.0
+        return profit / price if price > Money(0, "USD") else Decimal('0.0')
     
     def _calculate_sales_velocity(self) -> float:
         """Calculate current sales velocity (units per day)."""
@@ -705,6 +749,8 @@ class AdvancedAgent:
         Returns:
             Any: Retrieved memory or None
         """
+        if not self.check_budget(cpu_units=1.0, usd_cost=0.01):
+            raise RuntimeError(f"Insufficient budget: need $0.01 and 1.0 CPU, have ${self.api_budget - self.api_cost} and {self.cpu_budget - self.cpu_units_used}")
         self.meter_api_call(cpu_units=1.0, usd_cost=0.01)  # Memory access has cost
         
         if partition == "episodic":
@@ -1382,7 +1428,7 @@ class AdvancedAgent:
         ending_cash = self.sim.ledger.balance("Cash")
         cogs = total_sales * self.cost
         revenue = total_sales * self.price
-        profit = ending_cash - 10000  # Seed capital is 10,000
+        profit = ending_cash.to_float() - 10000  # Seed capital is 10,000, convert Money to float
         return {
             "total_sales": total_sales,
             "revenue": revenue,
