@@ -5,6 +5,7 @@ import random
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Dict, List
+from decimal import Decimal
 
 from . import market_dynamics
 from .adversarial_events import AdversarialEventCatalog
@@ -13,6 +14,7 @@ from .inventory import InventoryManager
 from .ledger import Ledger, Transaction, Entry
 from .supply_chain import GlobalSupplyChain
 from .audit import run_and_audit, RunAudit
+from .money import Money
 
 from fba_bench.config import (
     # Product defaults
@@ -42,8 +44,8 @@ class Product:
     Fields:
         asin (str): Amazon Standard Identification Number.
         category (str): Product category, influences fees and seasonality.
-        cost (float): Wholesale cost per unit.
-        price (float): Retail price set by the agent.
+        cost (Money): Wholesale cost per unit.
+        price (Money): Retail price set by the agent.
         bsr (int): Best Seller Rank, dynamically changes (default: 100000).
         base_demand (float): Baseline average demand if price were $1 (default: 20.0).
         sales_velocity (float): Current sales velocity (default: 0.0).
@@ -58,8 +60,8 @@ class Product:
     """
     asin: str
     category: str
-    cost: float
-    price: float
+    cost: Money
+    price: Money
     base_demand: float = DEFAULT_QTY  # Use config for base_demand if available, else set in config
     bsr: int = 100000
     sales_velocity: float = 0.0
@@ -125,7 +127,8 @@ class Simulation:
         # Customer systems: reviews, feedback, messages, claims
         self.customer_events = {}  # asin -> list of events
         # seed capital
-        self.ledger.post(Transaction("Seed capital", [Entry("Cash", 10_000, self.now)], [Entry("Equity", 10_000, self.now)]))
+        seed_capital = Money.from_dollars(10_000)
+        self.ledger.post(Transaction("Seed capital", [Entry("Cash", seed_capital, self.now)], [Entry("Equity", seed_capital, self.now)]))
         # Initialize competitors
         # Competitors are initialized after the first product is launched (see launch_product)
         self.competitors = []
@@ -148,7 +151,8 @@ class Simulation:
         for i in range(num_competitors):
             comp_asin = f"CMP{i+1:03d}{asin[-3:]}"
             # Price: ±10% of agent's price
-            price = round(agent_prod.price * self.rng.uniform(0.9, 1.1), 2)
+            multiplier = Decimal(str(self.rng.uniform(0.9, 1.1)))
+            price = Money.from_dollars(round((agent_prod.price * multiplier).to_float(), 2))
             # Sales velocity: ±20% of agent's base demand
             sales_velocity = max(0.1, agent_prod.base_demand * self.rng.uniform(0.8, 1.2))
             # Create a minimal competitor object (using Product for compatibility)
@@ -192,8 +196,9 @@ class Simulation:
             )
             
             # Apply price change with bounds
-            new_price = comp.price * (1 + price_change)
-            comp.price = max(1.0, min(999.99, round(new_price, 2)))
+            multiplier = Decimal(str(1 + price_change))
+            new_price = comp.price * multiplier
+            comp.price = Money.from_dollars(max(1.0, min(999.99, round(new_price.to_float(), 2))))
             
             # --- Enhanced Sales Velocity ---
             # Sales velocity depends on price competitiveness, market conditions, and competitor performance
@@ -293,11 +298,14 @@ class Simulation:
         # Better sales velocity and price competitiveness = better BSR
         
         # Get average competitor price for comparison
-        avg_comp_price = sum(c.price for c in self.competitors) / len(self.competitors)
-        price_competitiveness = avg_comp_price / max(0.01, comp.price)
+        total_price = Money.zero()
+        for c in self.competitors:
+            total_price += c.price
+        avg_comp_price = total_price / len(self.competitors)
+        price_competitiveness = avg_comp_price / max(Money.from_dollars(0.01), comp.price)
         
         # BSR improves with sales velocity and price competitiveness
-        bsr_factor = comp.sales_velocity * price_competitiveness * market_multiplier
+        bsr_factor = comp.sales_velocity * float(price_competitiveness) * market_multiplier
         
         if bsr_factor > 1.0:
             # Improve BSR (lower number)
@@ -312,21 +320,27 @@ class Simulation:
                           int(comp.bsr * self.rng.uniform(0.9, 1.1))))
 
     # Tool‑like API
-    def launch_product(self, asin: str, category: str, cost: float, price: float, qty: int, base_demand: float = DEFAULT_QTY, bsr: int = 100000, dimensions=None, weight=None):
+    def launch_product(self, asin: str, category: str, cost, price, qty: int, base_demand: float = DEFAULT_QTY, bsr: int = 100000, dimensions=None, weight=None):
         """
         Launch a new product in the simulation.
 
         Args:
             asin (str): Amazon Standard Identification Number.
             category (str): Product category.
-            cost (float): Wholesale cost per unit.
-            price (float): Retail price.
+            cost (Money or float): Wholesale cost per unit.
+            price (Money or float): Retail price.
             qty (int): Initial inventory quantity.
             base_demand (float, optional): Baseline demand.
             bsr (int, optional): Initial Best Seller Rank.
             dimensions (dict, optional): Product dimensions.
             weight (float, optional): Product weight.
         """
+        # Convert float inputs to Money for backward compatibility
+        if isinstance(cost, (int, float)):
+            cost = Money.from_dollars(cost)
+        if isinstance(price, (int, float)):
+            price = Money.from_dollars(price)
+            
         prod = Product(
             asin, category, cost, price, base_demand=base_demand, bsr=bsr,
             dimensions=dimensions if dimensions is not None else {"L": 10.0, "W": 6.0, "H": 2.0},
@@ -336,22 +350,25 @@ class Simulation:
         prod._set_inventory_manager(self.inventory)
         self.products[asin] = prod
         self.inventory.add(asin, qty, cost, self.now)
-        amt = round(cost * qty, 2)
+        amt = cost * qty  # Money arithmetic
         self.ledger.post(Transaction("Inventory purchase",
             [Entry("Inventory", amt, self.now)],
-            [Entry("Cash", amt, self.now)]))
+            [Entry("Cash", amt, self.now)]))  # Credit entry (cash outflow)
         # Initialize competitors for this product (default 3 competitors)
         if len(self.competitors) == 0:
             self._init_competitors(3, asin=asin, category=category)
 
-    def set_price(self, asin: str, price: float):
+    def set_price(self, asin: str, price):
         """
         Set the price for a given product.
 
         Args:
             asin (str): Amazon Standard Identification Number.
-            price (float): New price to set.
+            price (Money or float): New price to set.
         """
+        # Convert float to Money for backward compatibility
+        if isinstance(price, (int, float)):
+            price = Money.from_dollars(price)
         self.products[asin].price = price
 
     def tick_day(self):
@@ -464,13 +481,16 @@ class Simulation:
             
             if competitors:
                 avg_comp_sales = max(BSR_SMOOTHING_FACTOR, sum(c.sales_velocity for c in competitors) / len(competitors))
-                avg_comp_price = sum(c.price for c in competitors) / len(competitors)
+                total_comp_price = Money.zero()
+                for c in competitors:
+                    total_comp_price += c.price
+                avg_comp_price = total_comp_price / len(competitors)
             
             # Relative sales index: agent's sales velocity vs. competitors
             rel_sales_index = max(BSR_SMOOTHING_FACTOR, prod.ema_sales_velocity) / avg_comp_sales
             
             # Relative price index: agent's price vs. competitors (lower price = better index)
-            rel_price_index = avg_comp_price / max(BSR_SMOOTHING_FACTOR, prod.price)
+            rel_price_index = avg_comp_price / max(Money.from_dollars(BSR_SMOOTHING_FACTOR), prod.price)
             
             # Apply blueprint BSR formula with bounds checking
             if prod.ema_sales_velocity > BSR_SMOOTHING_FACTOR and prod.ema_conversion > BSR_SMOOTHING_FACTOR:
@@ -478,7 +498,7 @@ class Simulation:
                     prod.ema_sales_velocity *
                     prod.ema_conversion *
                     rel_sales_index *
-                    rel_price_index
+                    float(rel_price_index)
                 )
                 calculated_bsr = BSR_BASE / max(BSR_SMOOTHING_FACTOR, denominator)
                 prod.bsr = max(BSR_MIN_VALUE, min(BSR_MAX_VALUE, int(calculated_bsr)))
@@ -517,10 +537,10 @@ class Simulation:
                 penalty_fee = self._calculate_penalty_fees(asin, sold)
                 
                 # Add selling plan per-item fee for Individual plan
-                selling_plan_fee = 0.0
+                selling_plan_fee = Money.zero()
                 if self.selling_plan == "Individual":
                     from fba_bench.config import INDIVIDUAL_PER_ITEM
-                    selling_plan_fee = INDIVIDUAL_PER_ITEM * sold
+                    selling_plan_fee = Money.from_dollars(INDIVIDUAL_PER_ITEM) * sold
 
                 # All fee calculations are now handled by FeeEngine.total_fees
                 fees = self.fees.total_fees(
@@ -543,7 +563,7 @@ class Simulation:
                     penalty_fee=penalty_fee,
                     ancillary_fee=ancillary_fee
                 )
-                total_fees = (fees["total"] * sold * trust_fee_multiplier) + selling_plan_fee
+                total_fees = (Money.from_dollars(fees["total"]) * sold * Decimal(str(trust_fee_multiplier))) + selling_plan_fee
                 referral = fees["referral_fee"] * sold
                 cogs = sold * prod.cost
                 # ledger entries for sales and all fees
@@ -605,8 +625,7 @@ class Simulation:
         - Price sensitivity variations
         - Review authenticity factors
         """
-        import random
-        
+        # Use the simulation's seeded RNG for determinism
         if not asin or asin not in self.products:
             return None
             
@@ -621,7 +640,7 @@ class Simulation:
         }
         
         # Select customer segment
-        segment_roll = random.random()
+        segment_roll = self.rng.random()
         cumulative = 0
         selected_segment = "price_sensitive"
         for segment, props in customer_segments.items():
@@ -693,7 +712,7 @@ class Simulation:
         prob_question = 0.025 if selected_segment == "quality_focused" else 0.01
         
         # Generate event based on probabilities
-        r = random.random()
+        r = self.rng.random()
         
         if r < prob_pos_review:
             # Generate realistic positive review
@@ -706,12 +725,12 @@ class Simulation:
                 "Works as expected, no issues.",
                 "Quick delivery and well packaged."
             ]
-            score = random.choices([4, 5], weights=[0.3, 0.7])[0]
+            score = self.rng.choices([4, 5], weights=[0.3, 0.7])[0]
             return {
                 "type": "positive_review",
                 "asin": asin,
                 "score": score,
-                "text": random.choice(positive_messages),
+                "text": self.rng.choice(positive_messages),
                 "customer_segment": selected_segment,
                 "date": self.now
             }
@@ -728,12 +747,12 @@ class Simulation:
                 "Product arrived damaged.",
                 "Doesn't work as advertised."
             ]
-            score = random.choices([1, 2, 3], weights=[0.5, 0.3, 0.2])[0]
+            score = self.rng.choices([1, 2, 3], weights=[0.5, 0.3, 0.2])[0]
             return {
                 "type": "negative_review",
                 "asin": asin,
                 "score": score,
-                "text": random.choice(negative_messages),
+                "text": self.rng.choice(negative_messages),
                 "customer_segment": selected_segment,
                 "date": self.now
             }
@@ -751,7 +770,7 @@ class Simulation:
             return {
                 "type": "a_to_z_claim",
                 "asin": asin,
-                "reason": random.choice(claim_reasons),
+                "reason": self.rng.choice(claim_reasons),
                 "customer_segment": selected_segment,
                 "date": self.now
             }
@@ -769,7 +788,7 @@ class Simulation:
             return {
                 "type": "return_request",
                 "asin": asin,
-                "reason": random.choice(return_reasons),
+                "reason": self.rng.choice(return_reasons),
                 "customer_segment": selected_segment,
                 "date": self.now
             }
@@ -787,7 +806,7 @@ class Simulation:
             return {
                 "type": "message",
                 "asin": asin,
-                "content": random.choice(message_types),
+                "content": self.rng.choice(message_types),
                 "customer_segment": selected_segment,
                 "date": self.now
             }
@@ -797,7 +816,7 @@ class Simulation:
             # Generate seller feedback
             feedback_scores = [1, 2, 3, 4, 5]
             feedback_weights = [0.05, 0.1, 0.15, 0.3, 0.4] if trust_score > 0.7 else [0.2, 0.2, 0.2, 0.2, 0.2]
-            score = random.choices(feedback_scores, weights=feedback_weights)[0]
+            score = self.rng.choices(feedback_scores, weights=feedback_weights)[0]
             
             feedback_messages = {
                 1: "Poor communication and slow shipping.",
@@ -829,7 +848,7 @@ class Simulation:
             return {
                 "type": "product_question",
                 "asin": asin,
-                "question": random.choice(questions),
+                "question": self.rng.choice(questions),
                 "customer_segment": selected_segment,
                 "date": self.now
             }
@@ -839,21 +858,22 @@ class Simulation:
     def _charge_monthly_plan_fee(self):
         """Charge the monthly Professional selling plan fee."""
         from fba_bench.config import PROFESSIONAL_MONTHLY
+        fee = Money.from_dollars(PROFESSIONAL_MONTHLY)
         self.ledger.post(Transaction("Professional Plan Monthly Fee",
-            [Entry("Fees", -PROFESSIONAL_MONTHLY, self.now)],
-            [Entry("Cash", -PROFESSIONAL_MONTHLY, self.now)]))
+            [Entry("Fees", -fee, self.now)],
+            [Entry("Cash", -fee, self.now)]))
         self.monthly_plan_fee_charged = True
         self.event_log.append(f"Day {self.now.day}: Charged Professional plan monthly fee: ${PROFESSIONAL_MONTHLY}")
 
-    def _calculate_ancillary_fees(self, asin: str, units_sold: int) -> float:
+    def _calculate_ancillary_fees(self, asin: str, units_sold: int) -> Money:
         """
         Calculate ancillary fees based on current product state and recent events.
         Enhanced with realistic Amazon FBA ancillary fee scenarios.
         """
-        ancillary_fee = 0.0
+        ancillary_fee = Money.zero()
         prod = self.products.get(asin)
         if not prod:
-            return 0.0
+            return Money.zero()
         
         # 1. Return processing fees (based on actual returns)
         if asin in self.customer_events:
@@ -867,7 +887,7 @@ class Simulation:
                 # Return processing fee based on returned units
                 estimated_return_rate = min(0.3, len(returns) / max(1, units_sold * 4))  # Max 30% return rate
                 returned_units = int(units_sold * estimated_return_rate)
-                ancillary_fee += returned_units * prod.price * RETURN_PROCESSING_FEE_PCT
+                ancillary_fee += Money.from_dollars(returned_units) * prod.price * Money.from_dollars(RETURN_PROCESSING_FEE_PCT)
         
         # 2. Prep service fees (based on product characteristics and category)
         prep_fee_probability = 0.02  # Base 2% chance
@@ -884,11 +904,11 @@ class Simulation:
         if self.rng.random() < prep_fee_probability:
             from fba_bench.config import UNPLANNED_SERVICE_FEE_PER_UNIT
             prep_units = max(1, int(units_sold * 0.1))  # 10% of units need prep
-            ancillary_fee += UNPLANNED_SERVICE_FEE_PER_UNIT * prep_units
+            ancillary_fee += Money.from_dollars(UNPLANNED_SERVICE_FEE_PER_UNIT) * prep_units
         
         # 3. Labeling and packaging fees
         if self.rng.random() < 0.03:  # 3% chance of labeling issues
-            labeling_fee = 0.55 * units_sold  # $0.55 per unit for labeling
+            labeling_fee = Money.from_dollars(0.55) * units_sold  # $0.55 per unit for labeling
             ancillary_fee += labeling_fee
         
         # 4. Disposal fees for damaged/unsellable inventory
@@ -899,7 +919,7 @@ class Simulation:
                 # Estimate disposal needs based on damage reports
                 disposal_rate = min(0.05, len(damage_events) / max(1, units_sold * 10))
                 disposal_units = int(units_sold * disposal_rate)
-                disposal_fee = 0.15 * disposal_units  # $0.15 per unit disposal
+                disposal_fee = Money.from_dollars(0.15) * disposal_units  # $0.15 per unit disposal
                 ancillary_fee += disposal_fee
         
         # 5. Repackaging fees for customer returns
@@ -909,25 +929,25 @@ class Simulation:
             if return_events:
                 repackaging_rate = min(0.15, len(return_events) / max(1, units_sold * 5))
                 repackaging_units = int(units_sold * repackaging_rate)
-                repackaging_fee = 1.00 * repackaging_units  # $1.00 per unit repackaging
+                repackaging_fee = Money.from_dollars(1.00) * repackaging_units  # $1.00 per unit repackaging
                 ancillary_fee += repackaging_fee
         
         # 6. Photography and content fees (occasional)
         if self.rng.random() < 0.01:  # 1% chance per day
-            content_fee = 50.0  # One-time content update fee
+            content_fee = Money.from_dollars(50.0)  # One-time content update fee
             ancillary_fee += content_fee
         
-        return round(ancillary_fee, 2)
+        return ancillary_fee
 
-    def _calculate_penalty_fees(self, asin: str, units_sold: int) -> float:
+    def _calculate_penalty_fees(self, asin: str, units_sold: int) -> Money:
         """
         Calculate penalty fees based on policy violations and performance issues.
         Enhanced with realistic Amazon FBA penalty scenarios.
         """
-        penalty_fee = 0.0
+        penalty_fee = Money.zero()
         prod = self.products.get(asin)
         if not prod:
-            return 0.0
+            return Money.zero()
         
         # 1. Performance-based penalties
         if asin in self.customer_events:
@@ -943,19 +963,19 @@ class Simulation:
                 
                 # Graduated penalty system based on negative feedback rate
                 if negative_rate > 0.3:  # >30% negative feedback
-                    penalty_fee += 200.0  # Severe performance penalty
+                    penalty_fee += Money.from_dollars(200.0)  # Severe performance penalty
                 elif negative_rate > 0.2:  # >20% negative feedback
-                    penalty_fee += 100.0  # Moderate performance penalty
+                    penalty_fee += Money.from_dollars(100.0)  # Moderate performance penalty
                 elif negative_rate > 0.1:  # >10% negative feedback
-                    penalty_fee += 50.0   # Warning penalty
+                    penalty_fee += Money.from_dollars(50.0)   # Warning penalty
             
             # A-to-Z claim penalties (more severe)
             a_to_z_claims = [e for e in recent_events if e["type"] == "a_to_z_claim"]
             if len(a_to_z_claims) > 0:
                 # Escalating penalty for multiple claims
-                claim_penalty = 75.0 * len(a_to_z_claims)  # $75 per claim
+                claim_penalty = Money.from_dollars(75.0) * len(a_to_z_claims)  # $75 per claim
                 if len(a_to_z_claims) > 3:
-                    claim_penalty *= 1.5  # 50% increase for excessive claims
+                    claim_penalty = claim_penalty * Money.from_dollars(1.5)  # 50% increase for excessive claims
                 penalty_fee += claim_penalty
         
         # 2. Inventory performance penalties
@@ -964,13 +984,13 @@ class Simulation:
         
         # Stockout penalty (impacts customer experience)
         if current_inventory == 0 and units_sold > 0:
-            stockout_penalty = min(100.0, units_sold * 2.0)  # $2 per lost sale, max $100
+            stockout_penalty = Money.from_dollars(min(100.0, units_sold * 2.0))  # $2 per lost sale, max $100
             penalty_fee += stockout_penalty
         
         # Excess inventory penalty (storage utilization)
         if current_inventory > units_sold * 10:  # More than 10x daily sales
-            excess_penalty = (current_inventory - units_sold * 10) * 0.10  # $0.10 per excess unit
-            penalty_fee += min(50.0, excess_penalty)  # Cap at $50
+            excess_penalty = Money.from_dollars((current_inventory - units_sold * 10) * 0.10)  # $0.10 per excess unit
+            penalty_fee += Money.from_dollars(min(50.0, excess_penalty.to_decimal()))  # Cap at $50
         
         # 3. Trust score penalties
         if asin in self.customer_events:
@@ -987,7 +1007,7 @@ class Simulation:
             )
             
             if trust_score < 0.5:  # Low trust score
-                trust_penalty = (0.5 - trust_score) * 200.0  # Up to $100 penalty
+                trust_penalty = Money.from_dollars((0.5 - trust_score) * 200.0)  # Up to $100 penalty
                 penalty_fee += trust_penalty
         else:
             trust_score = 1.0  # Default high trust score for new products
@@ -999,16 +1019,16 @@ class Simulation:
         
         # Escalating penalties for repeated violations
         for i, violation in enumerate(recent_violations):
-            base_penalty = 150.0  # Base penalty per violation
+            base_penalty = Money.from_dollars(150.0)  # Base penalty per violation
             escalation_multiplier = 1.0 + (i * 0.5)  # 50% increase per additional violation
-            penalty_fee += base_penalty * escalation_multiplier
+            penalty_fee += base_penalty * Money.from_dollars(escalation_multiplier)
         
         # 5. Category-specific penalties
         high_risk_categories = ["Health", "Beauty", "Baby", "Electronics"]
         if prod.category in high_risk_categories:
             # Higher penalties for regulated categories
-            if penalty_fee > 0:
-                penalty_fee *= 1.3  # 30% increase for high-risk categories
+            if penalty_fee > Money.zero():
+                penalty_fee = penalty_fee * Money.from_dollars(1.3)  # 30% increase for high-risk categories
         
         # 6. Pricing policy penalties
         if hasattr(self, 'competitors') and asin in self.competitors:
@@ -1017,14 +1037,14 @@ class Simulation:
                 avg_competitor_price = sum(c.price for c in competitors) / len(competitors)
                 
                 # Penalty for excessive pricing (potential price gouging)
-                if prod.price > avg_competitor_price * 2.0:
-                    pricing_penalty = min(75.0, (prod.price - avg_competitor_price) * 0.1)
+                if prod.price > Money.from_dollars(avg_competitor_price * 2.0):
+                    pricing_penalty = Money.from_dollars(min(75.0, (prod.price.to_decimal() - avg_competitor_price) * 0.1))
                     penalty_fee += pricing_penalty
         
         # 7. Late shipment penalties (simulated)
         if self.rng.random() < 0.02:  # 2% chance of late shipment issues
-            late_shipment_penalty = 25.0 * units_sold  # $25 per unit for late shipment
-            penalty_fee += min(200.0, late_shipment_penalty)  # Cap at $200
+            late_shipment_penalty = Money.from_dollars(25.0) * units_sold  # $25 per unit for late shipment
+            penalty_fee += Money.from_dollars(min(200.0, late_shipment_penalty.to_decimal()))  # Cap at $200
         
         # 8. Account health penalties (cumulative effect)
         total_recent_penalties = sum(1 for e in self.event_log
@@ -1032,10 +1052,10 @@ class Simulation:
                                    "Day " + str(max(1, self.now.day - 90)) <= e <= "Day " + str(self.now.day))
         
         if total_recent_penalties > 5:  # More than 5 penalties in 90 days
-            account_health_penalty = (total_recent_penalties - 5) * 50.0  # $50 per excess penalty
-            penalty_fee += min(300.0, account_health_penalty)  # Cap at $300
+            account_health_penalty = Money.from_dollars((total_recent_penalties - 5) * 50.0)  # $50 per excess penalty
+            penalty_fee += Money.from_dollars(min(300.0, account_health_penalty.to_decimal()))  # Cap at $300
         
-        return round(penalty_fee, 2)
+        return penalty_fee
 
 
     def run(self, days: int = 30):
@@ -1052,7 +1072,7 @@ class Simulation:
 
 def bootstrap_example():
     sim = Simulation()
-    sim.launch_product("B000TEST", "DEFAULT", cost=5.0, price=19.99, qty=100)
+    sim.launch_product("B000TEST", "DEFAULT", cost=Money.from_dollars(5.0), price=Money.from_dollars(19.99), qty=100)
     sim.run(7)
     return sim
 if __name__ == "__main__":

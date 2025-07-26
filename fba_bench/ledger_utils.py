@@ -162,7 +162,7 @@ def hash_inventory_state(inventory_manager) -> str:
             batch_data = (
                 sku,
                 batch.quantity,
-                int(batch.cost_per_unit * 100)  # Convert to cents for deterministic hashing
+                int(batch.cost_per_unit.cents) if hasattr(batch.cost_per_unit, 'cents') else int(batch.cost_per_unit * 100)  # Convert to cents for deterministic hashing
             )
             inventory_data.append(batch_data)
     

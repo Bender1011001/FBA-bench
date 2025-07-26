@@ -254,16 +254,20 @@ def calculate_demand(
     Calculates the final demand based on price, elasticity, seasonality/event multiplier,
     relative price vs. competitors, and seller trust score.
     """
-    if price <= 0:
+    # Convert price to float for calculations if it's a Money type
+    price_value = float(price.to_decimal()) if hasattr(price, 'to_decimal') else price
+    
+    if price_value <= 0:
         # Assume very high demand for a free product to avoid division by zero
         return int(round(base_demand * 2 * seasonality_multiplier))
 
     # Relative price effect: compare to average competitor price
     rel_price_factor = 1.0
     if competitors and len(competitors) > 0:
-        avg_competitor_price = np.mean([c.price for c in competitors])
+        competitor_prices = [float(c.price.to_decimal()) if hasattr(c.price, 'to_decimal') else c.price for c in competitors]
+        avg_competitor_price = np.mean(competitor_prices)
         if avg_competitor_price > 0:
-            rel_price_factor = avg_competitor_price / price
+            rel_price_factor = avg_competitor_price / price_value
             # Clamp to [REL_PRICE_FACTOR_MIN, REL_PRICE_FACTOR_MAX] to avoid extreme effects
             rel_price_factor = max(REL_PRICE_FACTOR_MIN, min(REL_PRICE_FACTOR_MAX, rel_price_factor))
 
@@ -271,7 +275,7 @@ def calculate_demand(
     trust_factor = max(0.0, min(1.0, trust_score))
 
     # Demand formula: Demand = Base * (Price ^ -Elasticity) * Seasonality * RelativePrice * Trust
-    demand = base_demand * (price ** -elasticity) * seasonality_multiplier * rel_price_factor * trust_factor
+    demand = base_demand * (price_value ** -elasticity) * seasonality_multiplier * rel_price_factor * trust_factor
 
     # Return as an integer, as we can't sell fractional units
     return int(round(demand))
