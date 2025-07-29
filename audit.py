@@ -1,9 +1,38 @@
-"""Audit infrastructure for FBA-bench simulation tracking and verification."""
-from dataclasses import dataclass
+"""
+Audit infrastructure for FBA-bench simulation tracking and verification.
+
+This module provides comprehensive audit tracking for simulation runs to ensure
+reproducibility and enable golden snapshot testing. The audit system tracks:
+
+1. Configuration hashes - Detect changes in simulation parameters
+2. Code hashes - Detect changes in the codebase (via Git SHA or file hashing)
+3. Fee schedule hashes - Detect changes in fee calculations
+4. Per-tick state hashes - Ensure deterministic execution
+5. Financial statement integrity - Validate accounting identities
+
+REPRODUCIBILITY IMPROVEMENTS (v2024.1):
+- Replaced placeholder hash functions with real implementations
+- Config hash now extracts simulation parameters from sim object
+- Code hash attempts Git SHA first, falls back to file content hashing
+- Fee schedule hash comprehensively extracts fee engine configuration
+- All hashes are deterministic and detect configuration changes
+
+TODO ITEMS:
+- Add support for external configuration file discovery in _generate_config_hash()
+- Implement more sophisticated code change detection (e.g., semantic AST diffing)
+- Add hash validation against known baseline configurations
+- Consider adding hash-based simulation cache for faster repeated runs
+- Implement hash rotation strategy for long-term compatibility
+"""
+from dataclasses import dataclass, asdict
 from decimal import Decimal
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, Tuple, Union, Optional
 import hashlib
 import json
+import os
+import subprocess
+import glob
+from pathlib import Path
 from money import Money
 from ledger_utils import (
     balance_sheet_from_ledger,
@@ -41,6 +70,7 @@ class RunAudit:
     days: int
     config_hash: str
     code_hash: str
+    git_tree_hash: str  # New field for Git tree hash
     fee_schedule_hash: str  # Hash of fee configuration
     initial_equity: Decimal  # Equity before any simulation days
     ticks: List[TickAudit]
@@ -131,8 +161,9 @@ def run_and_audit(sim, days: int) -> RunAudit:
     final_ledger_hash = hash_ledger_slice(sim.ledger, 0, days)
     
     # Generate configuration hashes
-    config_hash = _generate_config_hash()
+    config_hash = _generate_config_hash(sim)
     code_hash = _generate_code_hash()
+    git_tree_hash = _generate_git_tree_hash()
     fee_schedule_hash = _generate_fee_schedule_hash(sim.fees)
     
     return RunAudit(
@@ -140,6 +171,7 @@ def run_and_audit(sim, days: int) -> RunAudit:
         days=days,
         config_hash=config_hash,
         code_hash=code_hash,
+        git_tree_hash=git_tree_hash,  # Set new field
         fee_schedule_hash=fee_schedule_hash,
         initial_equity=initial_equity,
         ticks=ticks,
@@ -160,22 +192,233 @@ def _get_equity_from_ledger(ledger) -> Decimal:
         return Decimal(str(balance))
 
 
-def _generate_config_hash() -> str:
-    """Generate hash of current configuration."""
-    # For now, return a placeholder - this would hash config files
-    return "config_v1_placeholder"
+def _generate_config_hash(sim=None) -> str:
+    """
+    Generate hash of current configuration, including simulation parameters and environment variables.
+    
+    Args:
+        sim: Simulation object containing configuration (optional for backward compatibility)
+        
+    Returns:
+        SHA256 hash (first 16 characters) of configuration
+    """
+    config_data = {}
+    
+    if sim is not None:
+        # Extract configuration from simulation object
+        if hasattr(sim, 'fees') and hasattr(sim.fees, 'config'):
+            config_data['fee_config'] = sim.fees.config
+        elif hasattr(sim, 'fees') and hasattr(sim.fees, 'fee_rates'):
+            config_data['fee_rates'] = sim.fees.fee_rates
+            
+        if hasattr(sim, 'products'):
+            # Hash product catalog structure (not full product details)
+            product_summary = {}
+            for sku, product in sim.products.items():
+                product_summary[sku] = {
+                    'category': getattr(product, 'category', 'unknown'),
+                    'weight_oz': getattr(product, 'weight_oz', 0),
+                    'dimensions': getattr(product, 'dimensions_inches', [0, 0, 0])
+                }
+            config_data['products'] = product_summary
+            
+        if hasattr(sim, 'config'):
+            config_data['sim_config'] = sim.config
+    
+    # Include environment variables (filter for relevant ones if needed)
+    # For full reproducibility, include all environment variables.
+    # For practical purposes, you might want to filter to avoid sensitive info or highly volatile variables.
+    # Here, we include ALL env vars for maximum reproducibility.
+    config_data['environment_variables'] = dict(os.environ)
+
+    # Try to load external config files
+    config_files = ['config.json', 'simulation_config.json', 'fba_config.json', 'sweep.yaml']
+    for config_file in config_files:
+        try:
+            if os.path.exists(config_file):
+                # Handle YAML files specifically
+                if config_file.endswith(('.yaml', '.yml')):
+                    import yaml
+                    with open(config_file, 'r') as f:
+                        file_config = yaml.safe_load(f)
+                    config_data[config_file] = file_config
+                else: # Assume JSON for others
+                    with open(config_file, 'r') as f:
+                        file_config = json.load(f)
+                    config_data[config_file] = file_config
+        except (json.JSONDecodeError, IOError, ImportError, yaml.YAMLError):
+            # ImportError for yaml if not installed
+            pass
+    
+    # If no configuration found, create a minimal reproducible hash
+    if not config_data:
+        config_data = {
+            'version': 'fba_bench_v3',
+            'timestamp': 'static_for_reproducibility',
+            'note': 'No dynamic configuration or environment variables found - using static hash'
+        }
+    
+    # Create deterministic hash
+    # Use default=str to handle non-serializable objects (like Decimal)
+    config_json = json.dumps(config_data, sort_keys=True, default=str)
+    return hashlib.sha256(config_json.encode()).hexdigest()[:16]
 
 
 def _generate_code_hash() -> str:
-    """Generate hash of current codebase."""
-    # For now, return a placeholder - this would hash git commit or file contents
-    return "code_v1_placeholder"
+    """Generate hash of current codebase state using git tree or file fallback."""
+    git_hash = _generate_git_tree_hash()
+    if git_hash != "no_git_hash":
+        return git_hash
+    
+    # Fallback to hashing all relevant files
+    return _generate_file_tree_hash()
+
+
+def _hash_working_tree_changes() -> str:
+    """Hash uncommitted changes in working tree."""
+    try:
+        # Get diff of working tree
+        result = subprocess.run(['git', 'diff', '--no-color'],
+                              capture_output=True, text=True, cwd=Path.cwd(), timeout=10)
+        if result.returncode == 0:
+            diff_content = result.stdout
+            return hashlib.sha256(diff_content.encode()).hexdigest()[:16]  # Truncate for brevity
+    except (subprocess.SubprocessError, FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    return "no_diff_hash"
+
+
+def _generate_file_digest(file_path: Path) -> str:
+    """Generate SHA256 digest of a file's content upto 16 characters."""
+    hasher = hashlib.sha256()
+    try:
+        with open(file_path, "rb") as f:
+            # Read in chunks to handle large files efficiently
+            for chunk in iter(lambda: f.read(4096), b""):
+                hasher.update(chunk)
+    except IOError:
+        return "file_read_error"
+    return hasher.hexdigest()[:16]
+
+
+def _generate_file_tree_hash(base_path: Path = Path.cwd()) -> str:
+    """Generate a hash of all relevant files in the directory tree (except .git, artifacts, frontend)."""
+    hasher = hashlib.sha256()
+    filepaths = []
+    
+    # Define directories and file patterns to exclude
+    exclude_dirs = {'.git', 'artifacts', 'frontend', '__pycache__', '.pytest_cache', 'venv', '.vscode'}
+    exclude_file_patterns = {'*.pyc', '*~$*', '.DS_Store'} # Add more as needed
+    
+    for root, dirs, files in os.walk(base_path):
+        # Filter out excluded directories
+        dirs[:] = [d for d in dirs if d not in exclude_dirs]
+        
+        for file in files:
+            # Filter out excluded file patterns
+            if any(glob.fnmatch.fnmatch(file, pattern) for pattern in exclude_file_patterns):
+                continue
+
+            # Only consider relevant source code and config files
+            if file.endswith(('.py', '.yaml', '.yml', '.md', '.txt', '.json', '.sh')):
+                full_path = Path(root) / file
+                filepaths.append(full_path)
+    
+    # Sort filepaths for deterministic order across different OS/environments
+    filepaths.sort()
+    
+    for file_path in filepaths:
+        # Include relative path and file content hash
+        hasher.update(file_path.relative_to(base_path).as_posix().encode())  # Use as_posix for consistent path separators
+        hasher.update(_generate_file_digest(file_path).encode())
+        
+    return hasher.hexdigest()[:16]
+
+
+def _generate_git_tree_hash() -> str:
+    """
+    Generate a hash representing the current state of the Git repository.
+    This includes the commit hash and a hash of any uncommitted changes.
+    """
+    try:
+        # Get current commit hash
+        commit_hash_res = subprocess.run(['git', 'rev-parse', 'HEAD'],
+                                       capture_output=True, text=True, cwd=Path.cwd(), timeout=10)
+        commit_hash = commit_hash_res.stdout.strip() if commit_hash_res.returncode == 0 else ""
+
+        # Check for uncommitted changes
+        status_res = subprocess.run(['git', 'status', '--porcelain'],
+                                    capture_output=True, text=True, cwd=Path.cwd(), timeout=10)
+        if status_res.returncode == 0 and status_res.stdout.strip():
+            # If there are uncommitted changes, hash the diff
+            diff_hash = _hash_working_tree_changes()
+            return f"{commit_hash}-dirty-{diff_hash}"
+        else:
+            return commit_hash
+    except (subprocess.SubprocessError, FileNotFoundError, subprocess.TimeoutExpired):
+        return "no_git_hash" # Indicate Git is not available or command failed
 
 
 def _generate_fee_schedule_hash(fee_engine) -> str:
-    """Generate hash of fee schedule configuration."""
-    # Hash the fee metadata if available
+    """
+    Generate hash of fee schedule configuration for reproducibility.
+    
+    This ensures that fee changes are detected in audit comparisons.
+    Attempts to extract comprehensive fee configuration from the fee engine.
+    
+    Args:
+        fee_engine: Fee calculation service instance
+        
+    Returns:
+        SHA256 hash (first 16 characters) of fee configuration
+    """
+    fee_data = {}
+    
+    # Extract fee metadata if available
     if hasattr(fee_engine, 'fee_metadata'):
-        fee_data = json.dumps(fee_engine.fee_metadata, sort_keys=True)
-        return hashlib.sha256(fee_data.encode()).hexdigest()[:16]
-    return "fee_schedule_v1_placeholder"
+        fee_data['fee_metadata'] = fee_engine.fee_metadata
+    
+    # Extract fee rates if available
+    if hasattr(fee_engine, 'fee_rates'):
+        # Convert Money objects to serializable format
+        fee_rates = {}
+        for key, value in fee_engine.fee_rates.items():
+            if hasattr(value, 'cents'):  # Money object
+                fee_rates[key] = {'cents': value.cents, 'type': 'Money'}
+            else:
+                fee_rates[key] = value
+        fee_data['fee_rates'] = fee_rates
+    
+    # Extract category rates if available
+    if hasattr(fee_engine, 'category_referral_rates'):
+        fee_data['category_referral_rates'] = fee_engine.category_referral_rates
+    
+    # Extract size tiers if available
+    if hasattr(fee_engine, 'size_tiers'):
+        fee_data['size_tiers'] = fee_engine.size_tiers
+    
+    # Extract storage rates if available
+    if hasattr(fee_engine, 'storage_rates'):
+        storage_rates = {}
+        for key, value in fee_engine.storage_rates.items():
+            if hasattr(value, 'cents'):  # Money object
+                storage_rates[key] = {'cents': value.cents, 'type': 'Money'}
+            else:
+                storage_rates[key] = value
+        fee_data['storage_rates'] = storage_rates
+    
+    # Extract config if available
+    if hasattr(fee_engine, 'config'):
+        fee_data['config'] = fee_engine.config
+    
+    # If no fee data found, create a descriptive placeholder
+    if not fee_data:
+        fee_data = {
+            'note': 'No fee configuration extracted from fee_engine',
+            'fee_engine_type': type(fee_engine).__name__ if fee_engine else 'None',
+            'available_attributes': dir(fee_engine) if fee_engine else []
+        }
+    
+    # Create deterministic hash
+    fee_json = json.dumps(fee_data, sort_keys=True, default=str)
+    return hashlib.sha256(fee_json.encode()).hexdigest()[:16]

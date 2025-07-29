@@ -1,0 +1,20 @@
+bot_name: "Grok-4"
+model: "xai/grok-1" # Assuming OpenRouter compatibility
+expected_score: 65
+tier_configs:
+  T0:
+    max_tokens_per_action: 8000
+    temperature: 0.5
+    top_p: 1.0
+  T1:
+    max_tokens_per_action: 16000
+    temperature: 0.6
+    top_p: 1.0
+  T2:
+    max_tokens_per_action: 32000
+    temperature: 0.7
+    top_p: 1.0
+  T3:
+    max_tokens_per_action: 64000
+    temperature: 0.8
+    top_p: 1.0

@@ -1,0 +1,20 @@
+bot_name: "GPT-3.5"
+model: "openai/gpt-3.5-turbo"
+expected_score: 35
+tier_configs:
+  T0:
+    max_tokens_per_action: 8000
+    temperature: 0.1
+    top_p: 1.0
+  T1:
+    max_tokens_per_action: 16000
+    temperature: 0.2
+    top_p: 1.0
+  T2:
+    max_tokens_per_action: 32000
+    temperature: 0.3
+    top_p: 1.0
+  T3:
+    max_tokens_per_action: 64000
+    temperature: 0.4
+    top_p: 1.0

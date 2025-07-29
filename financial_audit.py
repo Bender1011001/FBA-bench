@@ -347,6 +347,13 @@ class FinancialAuditService:
     def get_current_position(self) -> FinancialPosition:
         """Get the current financial position."""
         return self.current_position
+
+    def get_current_net_worth(self) -> float:
+        """Calculate and return the current net worth."""
+        # For simplicity, net worth is current assets minus liabilities (assuming equity is derived from this)
+        # Or, if we consider only liquid assets + inventory as "net worth" for a quick metric
+        # Let's consider Net Worth as Cash + Inventory Value for the purpose of this metric suite.
+        return (self.current_position.cash + self.current_position.inventory_value).dollars
     
     def get_violations(self) -> List[AuditViolation]:
         """Get all recorded violations."""

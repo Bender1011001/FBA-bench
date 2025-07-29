@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Dict, Any, Optional
 from decimal import Decimal
 
-from money import Money
+from money import Money, max_money, min_money
 from events import CompetitorState
 
 
@@ -80,14 +80,7 @@ class CompetitorPersona(ABC):
     
     def _calculate_minimum_price(self) -> Money:
         """Calculate the absolute minimum price (cost basis + small margin)."""
-        print(f"DEBUG: self.cost_basis={self.cost_basis} type={type(self.cost_basis)}")
-        print(f"DEBUG: self.cost_basis._cents={getattr(self.cost_basis, '_cents', 'N/A')} type={type(getattr(self.cost_basis, '_cents', 'N/A'))}")
-        if not hasattr(self.cost_basis, "_cents") or not isinstance(self.cost_basis._cents, int):
-            print(f"WARNING: Invalid cost_basis for competitor {getattr(self, 'competitor_id', 'unknown')}: {self.cost_basis}")
-            cents = 0
-        else:
-            cents = self.cost_basis._cents
-        return (Decimal(cents) / Decimal('100')) * Decimal('1.01')  # 1% minimum margin
+        return self.cost_basis * Decimal('1.01')  # 1% minimum margin, returns Money
     
     def _get_state_value(self, key: str, default: Any = None) -> Any:
         """Safely retrieve internal state value."""
@@ -171,7 +164,7 @@ class IrrationalSlasher(CompetitorPersona):
         # Increase probability if significantly above market average
         current_price = market_conditions.current_state.price
         market_avg = market_conditions.market_average_price
-        if Decimal(str(current_price)) > Decimal(str(market_avg)) * Decimal('1.2'):  # 20% above average
+        if current_price > market_avg * Decimal('1.2'):  # 20% above average
             base_probability *= 1.5
         
         # Cap maximum probability
@@ -194,7 +187,7 @@ class IrrationalSlasher(CompetitorPersona):
             asin=current_state.asin,
             price=slash_price,
             bsr=current_state.bsr,  # BSR will improve due to low price
-            sales_velocity=float(Decimal(str(float(current_state.sales_velocity))) * Decimal('1.5'))  # Boost sales
+            sales_velocity=float(Decimal(str(current_state.sales_velocity)) * Decimal('1.5'))  # Boost sales
         )
     
     async def _rational_pricing(self, market_conditions: MarketConditions) -> CompetitorState:
@@ -207,10 +200,10 @@ class IrrationalSlasher(CompetitorPersona):
         market_avg = market_conditions.market_average_price
         
         # Price slightly below market average for competitiveness
-        rational_price = Decimal(str(market_avg)) * Decimal('0.95')  # 5% below average
+        rational_price = market_avg * Decimal('0.95')  # 5% below average, returns Money
         
         # Ensure we don't price below cost basis
-        final_price = max(rational_price, self._calculate_minimum_price())
+        final_price = max_money(rational_price, self._calculate_minimum_price())
         
         return CompetitorState(
             asin=current_state.asin,
@@ -285,7 +278,7 @@ class SlowFollower(CompetitorPersona):
         market_avg = market_conditions.market_average_price
         
         # Calculate target price (market average with slight conservative bias)
-        target_price = Decimal(str(market_avg)) * Decimal('1.02')  # 2% above average (conservative)
+        target_price = market_avg * Decimal('1.02')  # 2% above average (conservative), returns Money
         
         # Calculate maximum allowed price change
         max_increase = current_price * (Decimal('1') + self.max_price_change_percent)
@@ -294,13 +287,13 @@ class SlowFollower(CompetitorPersona):
         # Apply conservative adjustment limits
         if target_price > current_price:
             # Trending up - gradual increase
-            new_price = min(target_price, max_increase)
+            new_price = min_money(target_price, max_increase)
         else:
             # Trending down - gradual decrease
-            new_price = max(target_price, max_decrease)
+            new_price = max_money(target_price, max_decrease)
         
         # Never price below cost basis
-        final_price = max(new_price, self._calculate_minimum_price())
+        final_price = max_money(new_price, self._calculate_minimum_price())
         
         # Conservative sales velocity adjustment (slow to respond)
         velocity_adjustment = Decimal('1.0')
@@ -313,5 +306,5 @@ class SlowFollower(CompetitorPersona):
             asin=current_state.asin,
             price=final_price,
             bsr=current_state.bsr,
-            sales_velocity=float(current_state.sales_velocity * velocity_adjustment)
+            sales_velocity=float(Decimal(str(current_state.sales_velocity)) * velocity_adjustment)
         )

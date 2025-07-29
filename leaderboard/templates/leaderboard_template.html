@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>FBA-Bench Leaderboard</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol"; margin: 20px; line-height: 1.6; color: #333; }
+        .container { max-width: 960px; margin: 0 auto; background: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+        h1, h2 { color: #2c3e50; border-bottom: 2px solid #eee; padding-bottom: 10px; margin-bottom: 20px; }
+        p { margin-bottom: 10px; }
+        .summary-stats { display: flex; justify-content: space-around; margin-bottom: 30px; background: #f9f9f9; padding: 15px; border-radius: 6px; }
+        .summary-item { text-align: center; }
+        .summary-item strong { display: block; font-size: 1.8em; color: #3498db; }
+        .summary-item span { font-size: 0.9em; color: #7f8c8d; }
+        table { width: 100%; border-collapse: separate; border-spacing: 0; margin-top: 20px; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #e0e0e0; }
+        th { background-color: #3498db; color: white; font-weight: 600; text-transform: uppercase; font-size: 0.9em; }
+        tr:nth-child(even) { background-color: #f8f8f8; }
+        tr:hover { background-color: #f1f1f1; }
+        .badge-link { text-decoration: none; color: inherit; }
+        .footer { text-align: center; margin-top: 40px; font-size: 0.8em; color: #95a5a6; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>FBA-Bench Leaderboard</h1>
+        <p>Generated At: <strong>{{ leaderboard.generated_at }}</strong> (UTC) | Git SHA: <strong>{{ leaderboard.git_sha }}</strong></p>
+        
+        <div class="summary-stats">
+            <div class="summary-item">
+                <strong>{{ leaderboard.summary.total_bots }}</strong>
+                <span>Total Bots</span>
+            </div>
+            <div class="summary-item">
+                <strong>{{ leaderboard.summary.total_runs }}</strong>
+                <span>Total Runs</span>
+            </div>
+            <div class="summary-item">
+                <strong>{{ leaderboard.summary.avg_score | round(2) }}</strong>
+                <span>Average Overall Score</span>
+            </div>
+        </div>
+        
+        <h2>Rankings</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Rank</th>
+                    <th>Bot Name</th>
+                    <th>Score</th>
+                    <th>Expected Score</th>
+                    <th>Tier</th>
+                    <th>Runs Completed</th>
+                    <th>Consistency</th>
+                    <th>Last Cost (USD)</th>
+                    <th>Last Tokens</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for entry in leaderboard.rankings %}
+                <tr>
+                    <td>{{ entry.rank }}</td>
+                    <td>{{ entry.bot_name }}</td>
+                    <td><strong>{{ entry.score | round(2) }}</strong></td>
+                    <td>{{ entry.expected_score }}</td>
+                    <td>{{ entry.tier }}</td>
+                    <td>{{ entry.runs_completed }}</td>
+                    <td>{{ entry.consistency | round(3) }}</td>
+                    <td>${{ entry.last_run_details.details.cost_usd | round(2) if entry.last_run_details and entry.last_run_details.details.cost_usd is not none else 'N/A' }}</td>
+                    <td>{{ entry.last_run_details.details.token_usage if entry.last_run_details and entry.last_run_details.details.token_usage is not none else 'N/A' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <!-- Details for individual bots could go here, e.g., graphs of historical performance -->
+        
+        <div class="footer">
+            <p>FBA-Bench is a competitive framework for evaluating AI agents in a simulated e-commerce environment.</p>
+            <p>&copy; {{ now().year }} FBA-Bench. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>

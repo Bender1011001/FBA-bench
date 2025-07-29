@@ -16,6 +16,12 @@ from dataclasses import dataclass
 from money import Money
 from events import BaseEvent, SetPriceCommand, ProductPriceUpdated, TickEvent
 from event_bus import EventBus, get_event_bus
+from constraints.agent_gateway import AgentGateway
+
+# OpenTelemetry Imports
+from instrumentation.tracer import setup_tracing
+from instrumentation.agent_tracer import AgentTracer
+from opentelemetry import trace
 
 
 logger = logging.getLogger(__name__)
@@ -48,17 +54,27 @@ class AdvancedAgent:
     The WorldStore arbitrates these commands and publishes canonical updates.
     """
     
-    def __init__(self, config: AgentConfig, event_bus: Optional[EventBus] = None):
+    def __init__(self, config: AgentConfig, event_bus: Optional[EventBus] = None, gateway: Optional[AgentGateway] = None):
         """
         Initialize the AdvancedAgent.
         
         Args:
             config: Agent configuration including strategy and constraints
             event_bus: EventBus for communication (sandboxed interface)
+            gateway: AgentGateway instance for budget enforcement
         """
         self.config = config
         self.event_bus = event_bus or get_event_bus()
+        self.gateway = gateway
         
+        # OpenTelemetry setup for this agent instance
+        # Each agent gets its own tracer to better isolate spans by service/agent.
+        self.tracer = setup_tracing(service_name=f"fba-bench-agent-{config.agent_id}")
+        self.agent_tracer = AgentTracer(self.tracer)
+
+        if self.gateway is None:
+            logger.warning(f"Agent {self.config.agent_id} initialized without AgentGateway. Budget enforcement will be skipped.")
+
         # Agent state (built from events only)
         self.current_tick = 0
         self.last_action_tick = 0
@@ -99,9 +115,14 @@ class AdvancedAgent:
         """
         self.current_tick = event.tick_number
         
-        # Check if it's time to make a decision
-        if self._should_act():
-            await self._make_pricing_decision()
+        # Wrap the whole agent's turn in a span
+        with self.agent_tracer.trace_agent_turn(
+            agent_id=self.config.agent_id,
+            tick=self.current_tick
+        ):
+            # Check if it's time to make a decision
+            if self._should_act():
+                await self._make_pricing_decision()
     
     async def handle_price_updated(self, event: ProductPriceUpdated):
         """
@@ -143,17 +164,111 @@ class AdvancedAgent:
         This implements the agent's pricing strategy and demonstrates
         the command pattern for expressing agent intentions.
         """
-        try:
-            # Calculate desired price based on strategy
-            desired_price = self._calculate_desired_price()
-            
-            if desired_price and self._should_change_price(desired_price):
-                # Publish SetPriceCommand to express pricing intention
-                await self._publish_price_command(desired_price)
-                self.last_action_tick = self.current_tick
-        
-        except Exception as e:
-            logger.error(f"Agent {self.config.agent_id} decision error: {e}", exc_info=True)
+        if self.gateway:
+            # Prepare 'prompt' based on current state and market data for LLM reasoning
+            llm_input_context = self._get_llm_input_context()
+
+            try:
+                with self.agent_tracer.trace_observe_phase(current_tick=self.current_tick, event_count=0): # event_count can be dynamic
+                    # Use the gateway to preprocess the "request" (context for decision-making)
+                    processed_request = await self.gateway.preprocess_request(
+                        agent_id=self.config.agent_id,
+                        prompt=llm_input_context,
+                        action_type="pricing_decision",
+                        model_name="gpt-4" # Assuming a default model name
+                    )
+                    modified_input_context = processed_request["modified_prompt"]
+
+                llm_tokens_used = 100 # Placeholder: This would come from the actual LLM call
+                decision_confidence = 0.95 # Placeholder: This would come from the LLM's response or internal calculation
+                parsed_llm_response = {"action_type": "set_price", "product_asin": self.config.target_asin, "set_price_value": "2000"} # Placeholder
+                
+                with self.agent_tracer.trace_think_phase(
+                    current_tick=self.current_tick,
+                    llm_model="gpt-4", # Placeholder
+                    llm_tokens_used=llm_tokens_used,
+                    decision_confidence=decision_confidence,
+                    parsed_response=parsed_llm_response
+                ):
+                    # Simulate LLM's "thinking" process (current _calculate_desired_price logic)
+                    # In a real LLM-backed agent, this would be the actual LLM call using modified_input_context
+                    # For now, we simulate by simply continuing our internal logic
+                    desired_price = self._calculate_desired_price()
+                    
+                    # Simulate LLM's "response" (the actual decision or output)
+                    llm_response_output = str(desired_price.as_integer()) if desired_price else "No price change decided."
+
+
+                # Use the gateway to postprocess the "response" (the outcome of the decision)
+                await self.gateway.postprocess_response(
+                    agent_id=self.config.agent_id,
+                    action_type="pricing_decision",
+                    raw_prompt=llm_input_context, # Original prompt context
+                    llm_response=llm_response_output, # LLM's conceptual output
+                    model_name="gpt-4"
+                )
+
+                if desired_price and self._should_change_price(desired_price):
+                    tool_args = {"asin": self.config.target_asin, "price": str(desired_price)}
+                    with self.agent_tracer.trace_tool_call(
+                        tool_name="set_price",
+                        current_tick=self.current_tick,
+                        tool_args=tool_args,
+                        result="success"
+                    ):
+                        await self._publish_price_command(desired_price)
+                        self.last_action_tick = self.current_tick
+
+            except SystemExit as e:
+                logger.error(f"Agent {self.config.agent_id} budget hard-fail: {e}")
+                # Re-raise to terminate simulation if hard-fail is triggered
+                raise
+            except Exception as e:
+                logger.error(f"Agent {self.config.agent_id} decision error: {e}", exc_info=True)
+        else: # No gateway means no budget enforcement
+            try:
+                with self.agent_tracer.trace_observe_phase(current_tick=self.current_tick, event_count=0):
+                 # For agents without gateway, still create an observe span
+                    llm_input_context = self._get_llm_input_context()
+                
+                llm_tokens_used = 50 # Placeholder
+                decision_confidence = 0.8 # Placeholder
+                parsed_llm_response = {} # Placeholder
+                with self.agent_tracer.trace_think_phase(
+                    current_tick=self.current_tick,
+                    llm_model="script_bot",
+                    llm_tokens_used=llm_tokens_used,
+                    decision_confidence=decision_confidence,
+                    parsed_response=parsed_llm_response
+                ):
+                    desired_price = self._calculate_desired_price()
+                
+                if desired_price and self._should_change_price(desired_price):
+                    tool_args = {"asin": self.config.target_asin, "price": str(desired_price)}
+                    with self.agent_tracer.trace_tool_call(
+                        tool_name="set_price",
+                        current_tick=self.current_tick,
+                        tool_args=tool_args,
+                        result="success"
+                    ):
+                        await self._publish_price_command(desired_price)
+                        self.last_action_tick = self.current_tick
+            except Exception as e:
+                logger.error(f"Agent {self.config.agent_id} decision error without gateway: {e}", exc_info=True)
+
+    def _get_llm_input_context(self) -> str:
+        """Generates a text summary of current state for conceptual LLM input."""
+        with trace.get_current_span().start_as_current_span("build_observation_context"):
+            context = (
+                f"Current Tick: {self.current_tick}\n"
+                f"Your Product ASIN: {self.config.target_asin}\n"
+                f"Your Current Price: {self.current_price or 'N/A'}\n"
+                f"Market Data: {self.market_data}\n"
+                f"Competitor Prices: {[str(p) for p in self.competitor_prices]}\n"
+                f"Current Strategy: {self.config.strategy}\n"
+                f"Your Goal: Determine the optimal price for {self.config.target_asin} to maximize profit/follow market, considering current market conditions."
+            )
+            return context
     
     def _calculate_desired_price(self) -> Optional[Money]:
         """
@@ -162,67 +277,73 @@ class AdvancedAgent:
         This demonstrates different agent strategies and how they
         can lead to diverse market behaviors.
         """
-        if self.config.strategy == "profit_maximizer":
-            return self._profit_maximizer_strategy()
-        elif self.config.strategy == "market_follower":
-            return self._market_follower_strategy()
-        elif self.config.strategy == "aggressive_pricer":
-            return self._aggressive_pricer_strategy()
-        else:
-            return self._random_strategy()
+        with trace.get_current_span().start_as_current_span("calculate_price_strategy"):
+            if self.config.strategy == "profit_maximizer":
+                return self._profit_maximizer_strategy()
+            elif self.config.strategy == "market_follower":
+                return self._market_follower_strategy()
+            elif self.config.strategy == "aggressive_pricer":
+                return self._aggressive_pricer_strategy()
+            else:
+                return self._random_strategy()
     
     def _profit_maximizer_strategy(self) -> Optional[Money]:
         """Strategy that tries to maximize profit through gradual price increases."""
-        if not self.current_price:
-            return Money(2000)  # Start at $20.00
-        
-        # Gradually increase price to test market elasticity
-        increase_factor = 1.0 + (self.config.price_sensitivity * 0.5)
-        new_price = Money(int(self.current_price.cents * increase_factor))
-        
-        # Bound within agent's constraints
-        return min(max(new_price, self.config.min_price), self.config.max_price)
+        with trace.get_current_span().start_as_current_span("profit_maximizer_strategy"):
+            if not self.current_price:
+                return Money(2000)  # Start at $20.00
+            
+            # Gradually increase price to test market elasticity
+            increase_factor = 1.0 + (self.config.price_sensitivity * 0.5)
+            new_price = Money(int(self.current_price.cents * increase_factor))
+            
+            # Bound within agent's constraints
+            return min(max(new_price, self.config.min_price), self.config.max_price)
     
     def _market_follower_strategy(self) -> Optional[Money]:
         """Strategy that follows competitor pricing with slight undercut."""
-        if not self.competitor_prices:
-            return Money(2000)  # Default price
-        
-        # Calculate average competitor price
-        avg_competitor_price = Money(sum(p.cents for p in self.competitor_prices) // len(self.competitor_prices))
-        
-        # Undercut by small amount
-        undercut_factor = 1.0 - (self.config.price_sensitivity * 0.2)
-        new_price = Money(int(avg_competitor_price.cents * undercut_factor))
-        
-        return min(max(new_price, self.config.min_price), self.config.max_price)
+        with trace.get_current_span().start_as_current_span("market_follower_strategy"):
+            if not self.competitor_prices:
+                return Money(2000)  # Default price
+            
+            # Calculate average competitor price
+            avg_competitor_price = Money(sum(p.cents for p in self.competitor_prices) // len(self.competitor_prices))
+            
+            # Undercut by small amount
+            undercut_factor = 1.0 - (self.config.price_sensitivity * 0.2)
+            new_price = Money(int(avg_competitor_price.cents * undercut_factor))
+            
+            return min(max(new_price, self.config.min_price), self.config.max_price)
     
     def _aggressive_pricer_strategy(self) -> Optional[Money]:
         """Strategy that aggressively undercuts competition."""
-        if not self.competitor_prices:
-            return Money(1800)  # Start low at $18.00
-        
-        # Find minimum competitor price and undercut significantly
-        min_competitor_price = min(self.competitor_prices)
-        undercut_factor = 1.0 - (self.config.price_sensitivity * 0.3)
-        new_price = Money(int(min_competitor_price.cents * undercut_factor))
-        
-        return min(max(new_price, self.config.min_price), self.config.max_price)
+        with trace.get_current_span().start_as_current_span("aggressive_pricer_strategy"):
+            if not self.competitor_prices:
+                return Money(1800)  # Start low at $18.00
+            
+            # Find minimum competitor price and undercut significantly
+            min_competitor_price = min(self.competitor_prices)
+            undercut_factor = 1.0 - (self.config.price_sensitivity * 0.3)
+            new_price = Money(int(min_competitor_price.cents * undercut_factor))
+            
+            return min(max(new_price, self.config.min_price), self.config.max_price)
     
     def _random_strategy(self) -> Optional[Money]:
         """Random pricing strategy for chaos testing."""
-        price_range = self.config.max_price.cents - self.config.min_price.cents
-        random_cents = self.config.min_price.cents + random.randint(0, price_range)
-        return Money(random_cents)
+        with trace.get_current_span().start_as_current_span("random_strategy"):
+            price_range = self.config.max_price.cents - self.config.min_price.cents
+            random_cents = self.config.min_price.cents + random.randint(0, price_range)
+            return Money(random_cents)
     
     def _should_change_price(self, desired_price: Money) -> bool:
         """Determine if the price change is significant enough to warrant a command."""
-        if not self.current_price:
-            return True  # Always set initial price
-        
-        # Only change if difference is meaningful
-        price_diff_ratio = abs(desired_price.cents - self.current_price.cents) / self.current_price.cents
-        return price_diff_ratio >= 0.01  # 1% minimum change
+        with trace.get_current_span().start_as_current_span("should_change_price_check"):
+            if not self.current_price:
+                return True  # Always set initial price
+            
+            # Only change if difference is meaningful
+            price_diff_ratio = abs(desired_price.cents - self.current_price.cents) / self.current_price.cents
+            return price_diff_ratio >= 0.01  # 1% minimum change
     
     async def _publish_price_command(self, new_price: Money):
         """
@@ -231,29 +352,30 @@ class AdvancedAgent:
         This demonstrates the sandboxed agent pattern where agents
         can only express intentions through commands, not take direct actions.
         """
-        command = SetPriceCommand(
-            event_id=str(uuid.uuid4()),
-            timestamp=datetime.now(),
-            agent_id=self.config.agent_id,
-            asin=self.config.target_asin,
-            new_price=new_price,
-            reason=f"Strategy: {self.config.strategy}, Target: profit optimization"
-        )
-        
-        await self.event_bus.publish(command)
-        self.commands_sent += 1
-        
-        # Record decision for analysis
-        self.decision_history.append({
-            'tick': self.current_tick,
-            'command_id': command.event_id,
-            'old_price': str(self.current_price) if self.current_price else None,
-            'new_price': str(new_price),
-            'strategy': self.config.strategy,
-            'reason': command.reason
-        })
-        
-        logger.info(f"Agent {self.config.agent_id} published SetPriceCommand: price={new_price}, strategy={self.config.strategy}")
+        with trace.get_current_span().start_as_current_span("publish_price_command"):
+            command = SetPriceCommand(
+                event_id=str(uuid.uuid4()),
+                timestamp=datetime.now(),
+                agent_id=self.config.agent_id,
+                asin=self.config.target_asin,
+                new_price=new_price,
+                reason=f"Strategy: {self.config.strategy}, Target: profit optimization"
+            )
+            
+            await self.event_bus.publish(command)
+            self.commands_sent += 1
+            
+            # Record decision for analysis
+            self.decision_history.append({
+                'tick': self.current_tick,
+                'command_id': command.event_id,
+                'old_price': str(self.current_price) if self.current_price else None,
+                'new_price': str(new_price),
+                'strategy': self.config.strategy,
+                'reason': command.reason
+            })
+            
+            logger.info(f"Agent {self.config.agent_id} published SetPriceCommand: price={new_price}, strategy={self.config.strategy}")
     
     # Status and Analytics
     

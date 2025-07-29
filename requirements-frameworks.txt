@@ -1,0 +1,25 @@
+# Optional agent framework dependencies for FBA-Bench
+# Install with: pip install -r requirements-frameworks.txt
+
+# CrewAI multi-agent framework
+# Enables CrewAI runner for collaborative agent crews
+crewai>=0.28.0
+# CrewAI tools and utilities
+crewai-tools>=0.2.0
+
+# LangChain agent framework  
+# Enables LangChain runner for reasoning chains and tool use
+langchain>=0.1.0
+langchain-community>=0.0.20
+langchain-openai>=0.0.5
+langchain-anthropic>=0.1.0
+
+# Additional LLM providers (optional)
+openai>=1.12.0  # For OpenAI models
+anthropic>=0.8.0  # For Claude models
+
+# Performance and utility dependencies
+# Used by various frameworks for enhanced functionality
+tiktoken>=0.5.0  # Token counting (already in main requirements)
+aiohttp>=3.8.0  # Async HTTP for some LLM clients
+tenacity>=8.0.0  # Retry logic for API calls

@@ -1,0 +1,10 @@
+budget_constraints:
+  max_tokens_per_action: 16000
+  max_total_tokens: 500000
+  token_cost_per_1k: 0.06  # USD
+  violation_penalty_weight: 2.0
+  grace_period_percentage: 5.0
+enforcement:
+  hard_fail_on_violation: true
+  inject_budget_status: true
+  track_token_efficiency: true

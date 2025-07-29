@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List, Tuple
 from abc import ABC, abstractmethod
 
@@ -397,6 +397,291 @@ class CompetitorPricesUpdated(BaseEvent):
         }
 
 
+@dataclass
+class BudgetWarning(BaseEvent):
+    """
+    Event indicating a budget is nearing or has softly exceeded its limit.
+    """
+    agent_id: Optional[str]
+    budget_type: str # e.g., "per_tick", "total_simulation"
+    current_usage: int
+    limit: int
+    reason: str
+    
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.budget_type:
+            raise ValueError("Budget type cannot be empty")
+        if self.current_usage < 0 or self.limit < 0:
+            raise ValueError("Usage and limit must be non-negative")
+
+@dataclass
+class BudgetExceeded(BaseEvent):
+    """
+    Event indicating a budget has been hard-exceeded, leading to termination.
+    """
+    agent_id: Optional[str]
+    budget_type: str # e.g., "per_tick", "total_simulation"
+    current_usage: int
+    limit: int
+    reason: str
+    severity: str # "soft", "hard_fail"
+    
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.budget_type:
+            raise ValueError("Budget type cannot be empty")
+        if self.current_usage < 0 or self.limit < 0:
+            raise ValueError(f"Current usage ({self.current_usage}) and limit ({self.limit}) must be non-negative")
+        if self.severity not in ["soft", "hard_fail"]:
+            raise ValueError(f"Severity must be 'soft' or 'hard_fail', got {self.severity}")
+
+@dataclass
+class ConstraintViolation(BaseEvent):
+    """
+    General event for any constraint violation, could be budget or other types.
+    """
+    agent_id: Optional[str]
+    constraint_type: str # e.g., "budget", "time", "action_rate"
+    violation_details: Dict[str, Any]
+    is_critical: bool # True for hard fails, False for warnings
+    
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.constraint_type:
+            raise ValueError("Constraint type cannot be empty")
+        if not isinstance(self.violation_details, dict):
+            raise TypeError("Violation details must be a dictionary")
+
+
+@dataclass
+class AdversarialEvent(BaseEvent):
+    """
+    Base class for all adversarial/red-team events in the simulation.
+    
+    These events test agent resistance to various exploit scenarios including
+    phishing, social engineering, market manipulation, and compliance traps.
+    
+    Attributes:
+        event_id: Unique identifier for this adversarial event
+        timestamp: When this adversarial event was triggered
+        exploit_type: Type of exploit (phishing, market_manipulation, etc.)
+        difficulty_level: Difficulty rating from 1-5
+        target_action: What the agent should NOT do if resistant
+        deception_vector: How the attack attempts to deceive
+        realistic_context: Supporting context to make attack believable
+        success_criteria: Conditions that indicate agent fell for exploit
+        time_window: How long the attack remains active (hours)
+        financial_impact_limit: Maximum financial damage if agent falls for exploit
+    """
+    exploit_type: str
+    difficulty_level: int
+    target_action: str
+    deception_vector: str
+    realistic_context: Dict[str, Any] = field(default_factory=dict)
+    success_criteria: Dict[str, Any] = field(default_factory=dict)
+    time_window: int = 24  # hours
+    financial_impact_limit: Optional[Money] = None
+    
+    def __post_init__(self):
+        super().__post_init__()
+        
+        # Validate exploit type
+        valid_exploit_types = [
+            "phishing", "social_engineering", "market_manipulation",
+            "compliance_trap", "financial_exploit", "information_warfare"
+        ]
+        if self.exploit_type not in valid_exploit_types:
+            raise ValueError(f"Exploit type must be one of {valid_exploit_types}, got {self.exploit_type}")
+        
+        # Validate difficulty level
+        if not 1 <= self.difficulty_level <= 5:
+            raise ValueError("Difficulty level must be between 1 and 5")
+        
+        # Validate target action
+        if not self.target_action or not isinstance(self.target_action, str):
+            raise ValueError("Target action must be a non-empty string")
+        
+        # Validate deception vector
+        if not self.deception_vector or not isinstance(self.deception_vector, str):
+            raise ValueError("Deception vector must be a non-empty string")
+        
+        # Validate time window
+        if self.time_window <= 0:
+            raise ValueError("Time window must be positive")
+        
+        # Validate financial impact limit if provided
+        if self.financial_impact_limit is not None and not isinstance(self.financial_impact_limit, Money):
+            raise TypeError("Financial impact limit must be Money type if provided")
+
+
+@dataclass
+class PhishingEvent(AdversarialEvent):
+    """
+    Phishing/social engineering adversarial event.
+    
+    Tests agent susceptibility to fraudulent communications that attempt
+    to trick them into revealing sensitive information or taking harmful actions.
+    
+    Attributes:
+        sender_email: Fake email address of the phishing attempt
+        message_content: The deceptive message content
+        requested_action: What the phishing email is asking the agent to do
+        spoofed_domain: Domain being impersonated (if any)
+        urgency_indicators: Phrases/elements designed to create urgency
+    """
+    sender_email: str = ""
+    message_content: str = ""
+    requested_action: str = ""
+    spoofed_domain: Optional[str] = None
+    urgency_indicators: List[str] = field(default_factory=list)
+    
+    def __post_init__(self):
+        super().__post_init__()
+        # Set exploit_type for phishing events
+        object.__setattr__(self, 'exploit_type', 'phishing')
+        
+        # Validate required fields
+        if not self.sender_email or '@' not in self.sender_email:
+            raise ValueError("Sender email must be a valid email format")
+        if not self.message_content:
+            raise ValueError("Message content cannot be empty")
+        if not self.requested_action:
+            raise ValueError("Requested action cannot be empty")
+
+
+@dataclass
+class MarketManipulationEvent(AdversarialEvent):
+    """
+    Market manipulation adversarial event.
+    
+    Tests agent resistance to false market information designed to
+    influence pricing, inventory, or strategic decisions.
+    
+    Attributes:
+        false_data_type: Type of false data (pricing, sales, reviews, etc.)
+        manipulated_values: The false values being presented
+        source_credibility: How credible the source appears (1-5)
+        market_impact_claim: Claimed impact on market conditions
+    """
+    false_data_type: str = ""
+    manipulated_values: Dict[str, Any] = field(default_factory=dict)
+    source_credibility: int = 3
+    market_impact_claim: str = ""
+    
+    def __post_init__(self):
+        super().__post_init__()
+        # Set exploit_type for market manipulation events
+        object.__setattr__(self, 'exploit_type', 'market_manipulation')
+        
+        # Validate fields
+        valid_data_types = ["pricing", "sales_data", "reviews", "competitor_intel", "demand_forecast"]
+        if self.false_data_type not in valid_data_types:
+            raise ValueError(f"False data type must be one of {valid_data_types}")
+        
+        if not 1 <= self.source_credibility <= 5:
+            raise ValueError("Source credibility must be between 1 and 5")
+        
+        if not self.market_impact_claim:
+            raise ValueError("Market impact claim cannot be empty")
+
+
+@dataclass
+class ComplianceTrapEvent(AdversarialEvent):
+    """
+    Compliance trap adversarial event.
+    
+    Tests agent susceptibility to fake policy changes or compliance
+    requirements that look legitimate but are actually harmful.
+    
+    Attributes:
+        fake_policy_name: Name of the fake policy/requirement
+        policy_description: Description of the fake policy
+        compliance_deadline: Fake deadline for compliance
+        penalty_claim: Claimed penalties for non-compliance
+        official_appearance: How official the communication appears (1-5)
+    """
+    fake_policy_name: str = ""
+    policy_description: str = ""
+    compliance_deadline: datetime = field(default_factory=lambda: datetime.now() + timedelta(days=30))
+    penalty_claim: str = ""
+    official_appearance: int = 3
+    
+    def __post_init__(self):
+        super().__post_init__()
+        # Set exploit_type for compliance trap events
+        object.__setattr__(self, 'exploit_type', 'compliance_trap')
+        
+        # Validate fields
+        if not self.fake_policy_name:
+            raise ValueError("Fake policy name cannot be empty")
+        if not self.policy_description:
+            raise ValueError("Policy description cannot be empty")
+        if not isinstance(self.compliance_deadline, datetime):
+            raise TypeError("Compliance deadline must be a datetime object")
+        if not self.penalty_claim:
+            raise ValueError("Penalty claim cannot be empty")
+        if not 1 <= self.official_appearance <= 5:
+            raise ValueError("Official appearance must be between 1 and 5")
+
+
+@dataclass
+class AdversarialResponse(BaseEvent):
+    """
+    Agent response to an adversarial event, used for ARS calculation.
+    
+    Tracks how an agent responded to an adversarial attack, including
+    whether they fell for the exploit, detected it, or took protective action.
+    
+    Attributes:
+        event_id: Unique identifier for this response event
+        timestamp: When the response was recorded
+        adversarial_event_id: ID of the adversarial event this responds to
+        agent_id: ID of the agent that responded
+        fell_for_exploit: Whether the agent fell for the adversarial attack
+        detected_attack: Whether the agent detected the attack
+        reported_attack: Whether the agent reported the attack
+        protective_action_taken: What protective action was taken (if any)
+        response_time_seconds: How long it took to respond
+        financial_damage: Actual financial damage incurred (if any)
+        exploit_difficulty: Difficulty level of the exploit (copied for analysis)
+    """
+    adversarial_event_id: str
+    agent_id: str
+    fell_for_exploit: bool
+    detected_attack: bool
+    reported_attack: bool
+    protective_action_taken: Optional[str] = None
+    response_time_seconds: float = 0.0
+    financial_damage: Optional[Money] = None
+    exploit_difficulty: int = 1
+    
+    def __post_init__(self):
+        super().__post_init__()
+        
+        # Validate required fields
+        if not self.adversarial_event_id:
+            raise ValueError("Adversarial event ID cannot be empty")
+        if not self.agent_id:
+            raise ValueError("Agent ID cannot be empty")
+        
+        # Validate response time
+        if self.response_time_seconds < 0:
+            raise ValueError("Response time must be non-negative")
+        
+        # Validate exploit difficulty
+        if not 1 <= self.exploit_difficulty <= 5:
+            raise ValueError("Exploit difficulty must be between 1 and 5")
+        
+        # Validate financial damage if provided
+        if self.financial_damage is not None and not isinstance(self.financial_damage, Money):
+            raise TypeError("Financial damage must be Money type if provided")
+        
+        # Logic validation: can't both fall for exploit and detect it
+        if self.fell_for_exploit and self.detected_attack:
+            raise ValueError("Agent cannot both fall for exploit and detect it simultaneously")
+
+
 # Event type registry for serialization/deserialization
 EVENT_TYPES = {
     'TickEvent': TickEvent,
@@ -404,6 +689,15 @@ EVENT_TYPES = {
     'CompetitorPricesUpdated': CompetitorPricesUpdated,
     'SetPriceCommand': SetPriceCommand,
     'ProductPriceUpdated': ProductPriceUpdated,
+    'BudgetWarning': BudgetWarning,
+    'BudgetExceeded': BudgetExceeded,
+    'ConstraintViolation': ConstraintViolation,
+    # Adversarial/Red-team events
+    'AdversarialEvent': AdversarialEvent,
+    'PhishingEvent': PhishingEvent,
+    'MarketManipulationEvent': MarketManipulationEvent,
+    'ComplianceTrapEvent': ComplianceTrapEvent,
+    'AdversarialResponse': AdversarialResponse,
 }
 
 
