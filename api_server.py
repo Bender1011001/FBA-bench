@@ -226,27 +226,48 @@ async def get_recent_events(
     Get recent events with optional filtering.
     
     Parameters:
-    - event_type: Filter by 'sales' or 'commands'
-    - limit: Maximum events to return (1-100)
-    - since_tick: Only events after this tick
+    - event_type: Filter by 'sales' or 'commands' (optional)
+    - limit: Maximum events to return (1-100, default: 20)
+    - since_tick: Only return events from this tick onwards, inclusive (optional)
+    
+    Returns:
+    A JSON response containing:
+    - events: List of filtered events with tick_number, timestamp, and event details
+    - event_type: The event type filter applied (if any)
+    - limit: The limit parameter used
+    - total_returned: Number of events in the response
+    - filtered: Boolean indicating if tick filtering was applied
+    - since_tick: The tick filter value (if filtering was applied)
+    - timestamp: Response generation timestamp
+    
+    Note: Events are stored with tick_number to enable time-based filtering.
+    Each event is tagged with the tick during which it occurred.
     """
     if not dashboard_service:
         raise HTTPException(status_code=503, detail="Dashboard service not available")
     
-    events = dashboard_service.get_recent_events(event_type=event_type, limit=limit)
+    events = dashboard_service.get_recent_events(
+        event_type=event_type,
+        limit=limit,
+        since_tick=since_tick
+    )
     
-    # Filter by tick if specified
-    if since_tick is not None:
-        # This would need tick information in events - simplified for now
-        pass
-    
-    return {
+    response = {
         "events": events,
         "event_type": event_type,
         "limit": limit,
         "total_returned": len(events),
         "timestamp": datetime.now().isoformat()
     }
+    
+    # Include filtering info in response if tick filtering was applied
+    if since_tick is not None:
+        response["since_tick"] = since_tick
+        response["filtered"] = True
+    else:
+        response["filtered"] = False
+    
+    return response
 
 
 @app.get("/api/v1/health")

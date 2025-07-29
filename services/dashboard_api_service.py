@@ -152,27 +152,35 @@ class DashboardAPIService:
         
         return dict(self.simulation_state)
     
-    def get_recent_events(self, event_type: str = None, limit: int = 20) -> List[Dict[str, Any]]:
+    def get_recent_events(self, event_type: str = None, limit: int = 20, since_tick: int = None) -> List[Dict[str, Any]]:
         """
         Get recent events of specified type.
         
         Args:
             event_type: Filter by event type (e.g., 'sales', 'commands')
             limit: Maximum number of events to return
+            since_tick: Only return events from this tick onwards (inclusive)
             
         Returns:
             List of recent events
         """
         if event_type == 'sales':
-            return self.simulation_state['sales_history'][-limit:]
+            events = self.simulation_state['sales_history']
         elif event_type == 'commands':
-            return self.simulation_state['command_history'][-limit:]
+            events = self.simulation_state['command_history']
         else:
             # Return mix of recent events
             events = []
-            events.extend(self.simulation_state['sales_history'][-limit//2:])
-            events.extend(self.simulation_state['command_history'][-limit//2:])
-            return sorted(events, key=lambda x: x.get('timestamp', ''))[-limit:]
+            events.extend(self.simulation_state['sales_history'])
+            events.extend(self.simulation_state['command_history'])
+            events = sorted(events, key=lambda x: x.get('timestamp', ''))
+        
+        # Apply tick filtering if specified
+        if since_tick is not None:
+            events = [event for event in events if event.get('tick_number', 0) >= since_tick]
+        
+        # Apply limit
+        return events[-limit:] if events else []
     
     async def _handle_tick_event(self, event: TickEvent) -> None:
         """Process TickEvent to update simulation time state."""
@@ -188,6 +196,7 @@ class DashboardAPIService:
         sale_data = {
             'event_id': event.event_id,
             'timestamp': event.timestamp.isoformat(),
+            'tick_number': self.simulation_state['current_tick'],
             'asin': event.asin,
             'units_sold': event.units_sold,
             'units_demanded': event.units_demanded,
@@ -302,6 +311,7 @@ class DashboardAPIService:
         command_data = {
             'event_id': event.event_id,
             'timestamp': event.timestamp.isoformat(),
+            'tick_number': self.simulation_state['current_tick'],
             'agent_id': event.agent_id,
             'asin': event.asin,
             'new_price': str(event.new_price),
