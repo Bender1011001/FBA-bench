@@ -61,6 +61,11 @@ class BaseEvent(ABC):
         if not isinstance(self.timestamp, datetime):
             raise TypeError("Timestamp must be a datetime object")
 
+    @abstractmethod
+    def to_summary_dict(self) -> Dict[str, Any]:
+        """Convert to a summary dictionary for logging or external use."""
+        raise NotImplementedError("Subclasses must implement to_summary_dict")
+
 
 @dataclass
 class TickEvent(BaseEvent):
@@ -87,6 +92,15 @@ class TickEvent(BaseEvent):
             raise ValueError("Tick number must be >= 0")
         if not isinstance(self.simulation_time, datetime):
             raise TypeError("Simulation time must be a datetime object")
+
+    def to_summary_dict(self) -> Dict[str, Any]:
+        return {
+            'event_id': self.event_id,
+            'timestamp': self.timestamp.isoformat(),
+            'tick_number': self.tick_number,
+            'simulation_time': self.simulation_time.isoformat(),
+            'metadata': self.metadata.copy()
+        }
 
 
 @dataclass
@@ -251,6 +265,17 @@ class SetPriceCommand(BaseEvent):
         # Validate price is positive
         if self.new_price.cents <= 0:
             raise ValueError(f"New price must be positive, got {self.new_price}")
+    
+    def to_summary_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for logging/debugging."""
+        return {
+            'event_id': self.event_id,
+            'timestamp': self.timestamp.isoformat(),
+            'agent_id': self.agent_id,
+            'asin': self.asin,
+            'new_price': str(self.new_price),
+            'reason': self.reason
+        }
 
 
 @dataclass
@@ -414,6 +439,18 @@ class BudgetWarning(BaseEvent):
             raise ValueError("Budget type cannot be empty")
         if self.current_usage < 0 or self.limit < 0:
             raise ValueError("Usage and limit must be non-negative")
+    
+    def to_summary_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for logging/debugging."""
+        return {
+            'event_id': self.event_id,
+            'timestamp': self.timestamp.isoformat(),
+            'agent_id': self.agent_id,
+            'budget_type': self.budget_type,
+            'current_usage': self.current_usage,
+            'limit': self.limit,
+            'reason': self.reason
+        }
 
 @dataclass
 class BudgetExceeded(BaseEvent):
@@ -435,6 +472,19 @@ class BudgetExceeded(BaseEvent):
             raise ValueError(f"Current usage ({self.current_usage}) and limit ({self.limit}) must be non-negative")
         if self.severity not in ["soft", "hard_fail"]:
             raise ValueError(f"Severity must be 'soft' or 'hard_fail', got {self.severity}")
+    
+    def to_summary_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for logging/debugging."""
+        return {
+            'event_id': self.event_id,
+            'timestamp': self.timestamp.isoformat(),
+            'agent_id': self.agent_id,
+            'budget_type': self.budget_type,
+            'current_usage': self.current_usage,
+            'limit': self.limit,
+            'reason': self.reason,
+            'severity': self.severity
+        }
 
 @dataclass
 class ConstraintViolation(BaseEvent):
@@ -452,6 +502,17 @@ class ConstraintViolation(BaseEvent):
             raise ValueError("Constraint type cannot be empty")
         if not isinstance(self.violation_details, dict):
             raise TypeError("Violation details must be a dictionary")
+    
+    def to_summary_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for logging/debugging."""
+        return {
+            'event_id': self.event_id,
+            'timestamp': self.timestamp.isoformat(),
+            'agent_id': self.agent_id,
+            'constraint_type': self.constraint_type,
+            'violation_details': self.violation_details,
+            'is_critical': self.is_critical
+        }
 
 
 @dataclass
@@ -513,6 +574,19 @@ class AdversarialEvent(BaseEvent):
         # Validate financial impact limit if provided
         if self.financial_impact_limit is not None and not isinstance(self.financial_impact_limit, Money):
             raise TypeError("Financial impact limit must be Money type if provided")
+    
+    def to_summary_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for logging/debugging."""
+        return {
+            'event_id': self.event_id,
+            'timestamp': self.timestamp.isoformat(),
+            'exploit_type': self.exploit_type,
+            'difficulty_level': self.difficulty_level,
+            'target_action': self.target_action,
+            'deception_vector': self.deception_vector,
+            'time_window': self.time_window,
+            'financial_impact_limit': str(self.financial_impact_limit) if self.financial_impact_limit else None
+        }
 
 
 @dataclass
@@ -548,6 +622,14 @@ class PhishingEvent(AdversarialEvent):
             raise ValueError("Message content cannot be empty")
         if not self.requested_action:
             raise ValueError("Requested action cannot be empty")
+    
+    def to_summary_dict(self) -> Dict[str, Any]:
+        return {
+            **super().to_summary_dict(), # Include base adversarial event details
+            'sender_email': self.sender_email,
+            'requested_action': self.requested_action,
+            'spoofed_domain': self.spoofed_domain
+        }
 
 
 @dataclass
@@ -584,6 +666,13 @@ class MarketManipulationEvent(AdversarialEvent):
         
         if not self.market_impact_claim:
             raise ValueError("Market impact claim cannot be empty")
+    
+    def to_summary_dict(self) -> Dict[str, Any]:
+        return {
+            **super().to_summary_dict(), # Include base adversarial event details
+            'false_data_type': self.false_data_type,
+            'source_credibility': self.source_credibility
+        }
 
 
 @dataclass
@@ -623,6 +712,14 @@ class ComplianceTrapEvent(AdversarialEvent):
             raise ValueError("Penalty claim cannot be empty")
         if not 1 <= self.official_appearance <= 5:
             raise ValueError("Official appearance must be between 1 and 5")
+
+    def to_summary_dict(self) -> Dict[str, Any]:
+        return {
+            **super().to_summary_dict(), # Include base adversarial event details
+            'fake_policy_name': self.fake_policy_name,
+            'compliance_deadline': self.compliance_deadline.isoformat(),
+            'penalty_claim': self.penalty_claim
+        }
 
 
 @dataclass
@@ -680,15 +777,119 @@ class AdversarialResponse(BaseEvent):
         # Logic validation: can't both fall for exploit and detect it
         if self.fell_for_exploit and self.detected_attack:
             raise ValueError("Agent cannot both fall for exploit and detect it simultaneously")
+    
+    def to_summary_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for logging/debugging."""
+        return {
+            'event_id': self.event_id,
+            'timestamp': self.timestamp.isoformat(),
+            'adversarial_event_id': self.adversarial_event_id,
+            'agent_id': self.agent_id,
+            'fell_for_exploit': self.fell_for_exploit,
+            'detected_attack': self.detected_attack,
+            'reported_attack': self.reported_attack,
+            'protective_action_taken': self.protective_action_taken,
+            'response_time_seconds': round(self.response_time_seconds, 2),
+            'financial_damage': str(self.financial_damage) if self.financial_damage else None,
+            'exploit_difficulty': self.exploit_difficulty
+        }
 
+
+@dataclass
+class InventoryUpdate(BaseEvent):
+    """
+    Event indicating a change in product inventory quantity.
+
+    This event is published by the WorldStore when the canonical inventory
+    quantity of a product is updated, usually as a result of sales,
+    returns, or inbound shipments.
+
+    Attributes:
+        event_id: Unique identifier for this inventory update event
+        timestamp: When the inventory was officially updated
+        asin: Product ASIN that was updated
+        new_quantity: The canonical new inventory quantity
+        previous_quantity: The previous canonical inventory quantity
+        change_reason: Reason for the inventory change (e.g., "sale", "return", "shipment")
+        agent_id: Agent that triggered this inventory change (if any)
+        command_id: The command event ID that caused this update
+    """
+    asin: str
+    new_quantity: int
+    previous_quantity: int
+    change_reason: str
+    agent_id: Optional[str] = None
+    command_id: Optional[str] = None
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        # Validate ASIN
+        if not self.asin or not isinstance(self.asin, str):
+            raise ValueError("ASIN must be a non-empty string")
+
+        # Validate quantities
+        if self.new_quantity < 0 or self.previous_quantity < 0:
+            raise ValueError("New and previous quantities must be non-negative")
+
+        # Validate change reason
+        if not self.change_reason or not isinstance(self.change_reason, str):
+            raise ValueError("Change reason must be a non-empty string")
+
+    def get_quantity_change(self) -> int:
+        """Calculate the net change in quantity."""
+        return self.new_quantity - self.previous_quantity
+
+    def to_summary_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for logging/debugging."""
+        return {
+            'event_id': self.event_id,
+            'timestamp': self.timestamp.isoformat(),
+            'asin': self.asin,
+            'new_quantity': self.new_quantity,
+            'previous_quantity': self.previous_quantity,
+            'quantity_change': self.get_quantity_change(),
+            'change_reason': self.change_reason,
+            'agent_id': self.agent_id,
+            'command_id': self.command_id,
+        }
+
+
+@dataclass
+class AgentDecisionEvent(BaseEvent):
+    """
+    Event representing a decision made by an agent.
+    """
+    agent_id: str
+    turn: int
+    tool_calls: List[Dict[str, Any]]
+    simulation_time: datetime
+    reasoning: str
+    llm_usage: Dict[str, Any]
+    prompt_metadata: Dict[str, Any]
+
+    def to_summary_dict(self) -> Dict[str, Any]:
+        return {
+            'event_id': self.event_id,
+            'timestamp': self.timestamp.isoformat(),
+            'agent_id': self.agent_id,
+            'turn': self.turn,
+            'tool_calls': self.tool_calls,
+            'simulation_time': self.simulation_time.isoformat(),
+            'reasoning': self.reasoning,
+            'llm_usage': self.llm_usage,
+            'prompt_metadata': self.prompt_metadata,
+        }
 
 # Event type registry for serialization/deserialization
 EVENT_TYPES = {
+    'AgentDecisionEvent': AgentDecisionEvent,
     'TickEvent': TickEvent,
     'SaleOccurred': SaleOccurred,
     'CompetitorPricesUpdated': CompetitorPricesUpdated,
     'SetPriceCommand': SetPriceCommand,
     'ProductPriceUpdated': ProductPriceUpdated,
+    'InventoryUpdate': InventoryUpdate, # New: Inventory update event
     'BudgetWarning': BudgetWarning,
     'BudgetExceeded': BudgetExceeded,
     'ConstraintViolation': ConstraintViolation,

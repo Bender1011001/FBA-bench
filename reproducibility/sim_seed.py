@@ -1,6 +1,7 @@
 import random
+import hashlib
 import numpy as np
-from typing import Optional
+from typing import Optional, Union
 
 class SimSeed:
     """

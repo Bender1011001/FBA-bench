@@ -184,7 +184,8 @@ class IntegrationTestRunner:
         logger.info("🧪 Running Performance Benchmarks...")
         
         try:
-            test_suite = TestPerformanceBenchmarks()
+            from integration_tests.test_performance_benchmarks import TestPerformanceIntegration
+            test_suite = TestPerformanceIntegration()
             results = await test_suite.test_complete_performance_validation()
             
             success = all(results.values()) if results else False

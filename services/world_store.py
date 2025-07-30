@@ -13,7 +13,7 @@ from datetime import datetime
 from dataclasses import dataclass, field
 
 from money import Money
-from events import BaseEvent, SetPriceCommand, ProductPriceUpdated
+from events import BaseEvent, SetPriceCommand, ProductPriceUpdated, InventoryUpdate
 from event_bus import EventBus, get_event_bus
 
 
@@ -30,9 +30,9 @@ class ProductState:
     """
     asin: str
     price: Money
+    last_updated: datetime
     inventory_quantity: int = 0 # New: Current inventory level
     cost_basis: Money = field(default_factory=Money.zero) # New: Average cost basis of existing inventory
-    last_updated: datetime
     last_agent_id: Optional[str] = None
     last_command_id: Optional[str] = None
     version: int = 1
@@ -292,43 +292,6 @@ class WorldStore:
         if asin in self._product_state:
             return False
         
-from events import BaseEvent, SetPriceCommand, ProductPriceUpdated, InventoryUpdate # Add InventoryUpdate
-from event_bus import EventBus, get_event_bus
-
-logger = logging.getLogger(__name__)
-
-
-@dataclass
-class ProductState:
-    """
-    Canonical product state managed by WorldStore.
-    
-    Contains the authoritative values for all product attributes
-    that can be modified by agents.
-    """
-    asin: str
-    price: Money
-    inventory_quantity: int = 0
-    cost_basis: Money = field(default_factory=Money.zero)
-    last_updated: datetime
-    last_agent_id: Optional[str] = None
-    last_command_id: Optional[str] = None
-    version: int = 1
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for logging/debugging."""
-        return {
-            'asin': self.asin,
-            'price': str(self.price),
-            'inventory_quantity': self.inventory_quantity,
-            'cost_basis': str(self.cost_basis),
-            'last_updated': self.last_updated.isoformat(),
-            'last_agent_id': self.last_agent_id,
-            'last_command_id': self.last_command_id,
-            'version': self.version,
-            'metadata': self.metadata
-        }
 
 
 @dataclass

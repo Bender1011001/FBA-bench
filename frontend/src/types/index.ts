@@ -1,120 +1,173 @@
-// Core simulation types matching backend Pydantic models
-
-export interface Money {
-  amount: string; // String representation from Python Money class
-}
-
-export interface CompetitorState {
-  competitor_id: string;
-  current_price: Money;
-  last_updated: string; // ISO timestamp
-}
-
 export interface SimulationSnapshot {
-  current_tick: number;
-  total_sales: Money;
-  our_product_price: Money;
-  competitor_states: CompetitorState[];
-  recent_sales: SalesResult[];
-  trust_score: number;
-  timestamp: string; // ISO timestamp
+    current_tick: number;
+    simulation_time: string;
+    last_update: string;
+    uptime_seconds: number;
+    products: Record<string, any>;
+    competitors: Record<string, any>;
+    market_summary: Record<string, any>;
+    financial_summary: Record<string, any>;
+    agents: Record<string, any>;
+    command_stats: Record<string, any>;
+    event_stats: Record<string, any>;
+    metadata: Record<string, any>;
 }
 
-export interface Product {
-  asin: string;
-  title: string;
-  category: string;
-  brand: string;
-  price: Money;
-  rating: number;
-  review_count: number;
-  is_prime: boolean;
-  seller_name: string;
-  listing_url: string;
-}
-
-export interface Competitor {
-  competitor_id: string;
-  name: string;
-  products: Product[];
-  trust_score: number;
-}
-
-export interface SalesResult {
-  timestamp: string; // ISO timestamp
-  product_asin: string;
-  sale_price: Money;
-  quantity: number;
-  buyer_id: string;
-  competitor_id?: string;
-}
-
-// Event types matching backend events
-export interface TickEvent {
-  type: 'tick';
-  tick_number: number;
-  timestamp: string;
-}
-
-export interface SaleOccurred {
-  type: 'sale_occurred';
-  sale: SalesResult;
-  timestamp: string;
-}
-
-export interface SetPriceCommand {
-  type: 'set_price_command';
-  product_asin: string;
-  new_price: Money;
-  timestamp: string;
-}
-
-export interface ProductPriceUpdated {
-  type: 'product_price_updated';
-  product_asin: string;
-  old_price: Money;
-  new_price: Money;
-  timestamp: string;
-}
-
-export interface CompetitorPricesUpdated {
-  type: 'competitor_prices_updated';
-  competitor_states: CompetitorState[];
-  timestamp: string;
-}
-
-// Union type for all possible events
-export type SimulationEvent = 
-  | TickEvent
-  | SaleOccurred
-  | SetPriceCommand
-  | ProductPriceUpdated
-  | CompetitorPricesUpdated;
-
-// WebSocket message types
-export interface WebSocketMessage {
-  type: string;
-  data: SimulationEvent;
-}
-
-// API response types
 export interface ApiResponse<T> {
-  success: boolean;
-  data?: T;
-  error?: string;
-  timestamp: string;
+    success: boolean;
+    message: string;
+    data: T;
 }
 
-// Dashboard-specific types
-export interface DashboardMetric {
-  label: string;
-  value: string | number;
-  trend?: 'up' | 'down' | 'neutral';
-  formatType?: 'currency' | 'percentage' | 'number';
+// 1. Configuration Management API Types
+export interface SimulationSettings {
+    simulationName: string;
+    description: string;
+    duration: number; // in ticks
+    randomSeed: number;
+    metricsInterval: number;
+    snapshotInterval: number;
 }
 
-export interface ConnectionStatus {
-  connected: boolean;
-  lastHeartbeat?: string;
-  reconnectAttempts: number;
+// Existing LLMConfig updated with max_tokens
+export interface LLMConfig {
+    provider?: string;
+    model?: string;
+    temperature?: number;
+    api_key?: string;
+    max_tokens?: number; // Added for template consistency
+}
+
+export interface TemplateAgentConfig {
+  agentName: string;
+  agentType: string; // Maps to framework in AgentRunnerConfig
+  model: string; // Maps to llm_config.model
+  max_tokens: number; // Maps to llm_config.max_tokens
+  temperature: number; // Maps to llm_config.temperature
+  llmInterface: string; // Maps to llm_config.provider
+  role: string;
+  behavior: string;
+  // Add other common agent config fields if necessary that are not covered by AgentRunnerConfig directly
+}
+
+export interface Constraints {
+    maxBudget: number;
+    maxTime: number; // in milliseconds
+    tokenLimits: Record<string, number>; // e.g., { grok4: 1000000 }
+}
+
+export interface ExperimentParameter {
+  name: string;
+  values: (string | number)[];
+}
+
+// Existing ExperimentConfig updated to use ExperimentParameter
+export interface ExperimentConfig {
+    experimentName?: string; // Changed from experiment_name for consistency if needed
+    description?: string;
+    baseParameters?: Record<string, unknown>; // Changed from base_parameters
+    parameters?: ExperimentParameter[]; // Using new interface
+    outputConfig?: { // Changed from output_config
+        saveEvents?: boolean; // Changed from save_events
+        saveSnapshots?: boolean; // Changed from save_snapshots
+        snapshotIntervalHours?: number; // Changed from snapshot_interval_hours
+        metricsToTrack?: string[]; // Changed from metrics_to_track
+        [key: string]: unknown;
+    };
+    parallelRuns?: number; // Changed from parallel_workers
+    iterations?: number; // Changed from max_runs as per template usage
+    [key: string]: unknown;
+}
+
+export interface Configuration {
+    simulationSettings: SimulationSettings;
+    agentConfigs: TemplateAgentConfig[];
+    llmSettings: LLMConfig;
+    constraints: Constraints;
+    experimentSettings: ExperimentConfig;
+}
+
+// Remaining existing interfaces below this line
+export interface SimulationConfig {
+    config_id?: string;
+    name?: string;
+    description?: string;
+    tick_interval_seconds?: number;
+    max_ticks?: number;
+    start_time?: string; // Represent as string for simplicity in form, convert to Date when sending
+    time_acceleration?: number;
+    seed?: number;
+    // Common simulation parameters
+    duration_hours?: number;
+    initial_price?: number;
+    cost_basis?: number;
+    initial_inventory?: number;
+    base_parameters?: Record<string, unknown>;
+    created_at?: string;
+    updated_at?: string;
+}
+
+export interface Template {
+  id: string;
+  name: string;
+  description: string;
+  useCase: string;
+  configuration: Configuration;
+}
+
+export interface AgentRunnerConfig {
+    agent_id?: string;
+    framework?: string;
+    agent_config?: AgentConfig;
+    llm_config?: LLMConfig;
+    memory_config?: MemoryConfig;
+    max_iterations?: number;
+    timeout_seconds?: number;
+    verbose?: boolean;
+    crew_config?: CrewConfig; // Specific to CrewAI
+    custom_config?: CustomAgentConfig; // For DIY framework custom settings
+    [key: string]: unknown; // Allow for arbitrary top-level fields
+}
+
+export interface AgentConfig {
+    agent_type?: string;
+    target_asin?: string;
+    strategy?: string;
+    price_sensitivity?: number;
+    reaction_speed?: number;
+    [key: string]: unknown; // Allow for arbitrary agent config fields
+}
+
+export interface CrewConfig {
+    process?: string;
+    crew_size?: number;
+    roles?: string[];
+    collaboration_mode?: string;
+    allow_delegation?: boolean;
+}
+
+export interface CustomAgentConfig {
+    llm_type?: string;
+    model_name?: string;
+    api_key?: string;
+    bot_type?: string;
+    reorder_threshold?: number;
+    reorder_quantity?: number;
+    [key: string]: unknown; // Allow for arbitrary custom config fields
+}
+
+export interface MemoryConfig {
+    type?: string;
+    window_size?: number;
+}
+
+export interface FrameworkData {
+    frameworks: string[];
+}
+
+export interface AgentConfigurationResponse {
+    agent_framework: string;
+    agent_type: string;
+    description: string;
+    example_config: AgentRunnerConfig; // Using AgentRunnerConfig as example type
 }

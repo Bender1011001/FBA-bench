@@ -40,7 +40,7 @@ from reproducibility.event_snapshots import EventSnapshot
 
 # Agent framework imports
 from agent_runners.runner_factory import RunnerFactory
-from agent_runners.configs.framework_configs import FrameworkConfig
+from agent_runners.configs.config_schema import AgentRunnerConfig
 from baseline_bots.bot_factory import BotFactory
 
 # Services imports
@@ -100,6 +100,11 @@ class TestPerformanceBenchmarks(IntegrationTestSuite):
         super().__init__(self.config)
         self.profiler = PerformanceProfiler()
         
+        # Reset the master seed before each test to ensure fresh state
+        SimSeed.reset_master_seed()
+        # Set the master seed explicitly for this test run
+        SimSeed.set_master_seed(self.config.seed)
+
         # Force garbage collection before tests
         gc.collect()
         
@@ -143,6 +148,14 @@ class TestPerformanceBenchmarks(IntegrationTestSuite):
             
             orchestrator = SimulationOrchestrator(sim_config)
             event_bus = env["event_bus"]
+
+            # Start event bus and services - CRITICAL ORDERING
+            await event_bus.start() # Ensure event bus is started FIRST
+            await env["world_store"].start() # No event_bus argument for WorldStore.start()
+            await env["services"]["sales"].start(event_bus)
+            await env["services"]["trust"].start(event_bus)
+            financial_audit_service = env["services"]["financial_audit"] # Get instance from env["services"]
+            await financial_audit_service.start(event_bus)
             
             # Measure simulation speed
             start_time = time.time()
@@ -155,6 +168,13 @@ class TestPerformanceBenchmarks(IntegrationTestSuite):
             await asyncio.sleep(test_duration_seconds)
             
             await orchestrator.stop()
+
+            # Stop services and event bus
+            await financial_audit_service.stop()
+            await env["services"]["sales"].stop()
+            await env["services"]["trust"].stop()
+            await env["world_store"].stop()
+            await event_bus.stop() # Stop event bus LAST
             
             end_time = time.time()
             tick_count_end = orchestrator.current_tick
@@ -246,42 +266,51 @@ class TestPerformanceBenchmarks(IntegrationTestSuite):
             
             # Initialize multiple agents if required
             agents = []
+            # Instantiate BotFactory once before agent creation loop
+            bot_factory = BotFactory(
+                config_dir="baseline_bots/configs",
+                world_store=env["world_store"], # Pass world_store from the environment
+                budget_enforcer=env["budget_enforcer"], # Use env's budget enforcer
+                trust_metrics=env["metric_suite"].trust_metrics, # Use trust metrics from metric_suite
+                agent_gateway=env["agent_gateway"] # Pass env's agent_gateway
+            )
             for i in range(agent_count):
                 try:
-                    bot = BotFactory.create_bot("greedy_script_bot")
+                    # Call create_bot on the instance of BotFactory
+                    bot = bot_factory.create_bot(bot_name="GreedyScript", tier=tier) # Use "GreedyScript" as direct name
                     if bot:
                         agents.append({"id": f"agent_{i}", "bot": bot})
                 except Exception as e:
                     logger.warning(f"Failed to create agent {i}: {e}")
             
             logger.info(f"  Created {len(agents)} agents")
-            
+
             # Initialize services with memory tracking
-            financial_audit = FinancialAuditService()
-            metric_suite = MetricSuite(
-                tier=tier,
-                financial_audit_service=financial_audit,
-                sales_service=env["services"]["sales"],
-                trust_score_service=env["services"]["trust"]
-            )
-            metric_suite.subscribe_to_events(env["event_bus"])
+            financial_audit_service = env["services"]["financial_audit"] # Get instance from env["services"]
+            metric_suite = env["metric_suite"] # Use existing metric_suite from env
             
+            # Start event bus and services - CRITICAL ORDERING
+            event_bus = env["event_bus"]
+            await event_bus.start() # Ensure event bus is started FIRST
+            await env["world_store"].start() # No event_bus argument for WorldStore.start()
+            await env["services"]["sales"].start(event_bus)
+            await env["services"]["trust"].start(event_bus)
+            await financial_audit_service.start(event_bus) # Start the financial audit service
+
             # Monitor memory during simulation
             memory_snapshots = []
             
-            # Start simulation
+            # Start simulation (orchestrator will publish ticks after services are ready)
             orchestrator = env["orchestrator"]
-            event_bus = env["event_bus"]
-            
             event_bus.start_recording()
             await orchestrator.start(event_bus)
             
             # Extended run for memory testing
             if scenario_name == "extended_run":
-                test_duration = 10  # 10 seconds for extended test
+                test_duration = 60  # 60 seconds for extended test
                 snapshot_interval = 1  # Every second
             else:
-                test_duration = 5   # 5 seconds for normal test
+                test_duration = 30   # 30 seconds for normal test
                 snapshot_interval = 1
             
             # Collect memory snapshots during run
@@ -296,6 +325,13 @@ class TestPerformanceBenchmarks(IntegrationTestSuite):
                 })
             
             await orchestrator.stop()
+
+            # Stop services
+            await financial_audit_service.stop()
+            await env["services"]["sales"].stop()
+            await env["services"]["trust"].stop()
+            await env["world_store"].stop()
+            await event_bus.stop() # Stop event bus LAST
             
             # Final memory measurement
             final_memory = psutil.Process().memory_info().rss / 1024 / 1024
@@ -381,11 +417,18 @@ class TestPerformanceBenchmarks(IntegrationTestSuite):
             
             # Create multiple agents
             agents = []
-            agent_tasks = []
-            
+            # Instantiate BotFactory once before agent creation loop
+            bot_factory = BotFactory(
+                config_dir="baseline_bots/configs",
+                world_store=env["world_store"], # Pass world_store from the environment
+                budget_enforcer=env["budget_enforcer"], # Use env's budget enforcer
+                trust_metrics=env["metric_suite"].trust_metrics, # Use trust metrics from metric_suite
+                agent_gateway=env["agent_gateway"] # Pass env's agent_gateway
+            )
             for i in range(agent_count):
                 try:
-                    bot = BotFactory.create_bot("greedy_script_bot")
+                    # Call create_bot on the instance of BotFactory
+                    bot = bot_factory.create_bot(bot_name="GreedyScript", tier="T1") # Use "GreedyScript" as direct name
                     if bot:
                         agents.append({
                             "id": f"concurrent_agent_{i}",
@@ -398,10 +441,16 @@ class TestPerformanceBenchmarks(IntegrationTestSuite):
             actual_agent_count = len(agents)
             logger.info(f"  Created {actual_agent_count} concurrent agents")
             
-            # Start simulation with concurrent agents
+            # Start event bus and services first, then simulation
             orchestrator = env["orchestrator"]
             event_bus = env["event_bus"]
-            
+            await event_bus.start()
+            await env["world_store"].start() # No event_bus argument for WorldStore.start()
+            await env["services"]["sales"].start(event_bus)
+            await env["services"]["trust"].start(event_bus)
+            financial_audit_service = env["services"]["financial_audit"] # Get instance from env["services"]
+            await financial_audit_service.start(event_bus)
+
             start_time = time.time()
             
             event_bus.start_recording()
@@ -416,12 +465,21 @@ class TestPerformanceBenchmarks(IntegrationTestSuite):
                     # Simulate agent decision making
                     await asyncio.sleep(0.1)
                     
-                    # Publish agent action event
-                    event_bus.publish("AgentDecisionEvent", {
-                        "agent_id": agent_id,
-                        "action_type": "concurrent_test",
-                        "timestamp": datetime.now()
-                    })
+                    # Publish agent action event - construct the event object directly
+                    from events import AgentDecisionEvent
+                    import uuid
+                    event = AgentDecisionEvent(
+                        event_id=str(uuid.uuid4()),
+                        timestamp=datetime.now(),
+                        agent_id=agent_id,
+                        turn=1,
+                        tool_calls=[],
+                        simulation_time=datetime.now(),
+                        reasoning="Concurrent test",
+                        llm_usage={},
+                        prompt_metadata={}
+                    )
+                    await event_bus.publish(event)
             
             # Start all agent tasks concurrently
             agent_tasks = [simulate_agent_activity(agent) for agent in agents]
@@ -439,6 +497,13 @@ class TestPerformanceBenchmarks(IntegrationTestSuite):
                 logger.warning(f"Concurrent agent test timed out for {agent_count} agents")
             
             await orchestrator.stop()
+
+            # Stop services and event bus
+            await financial_audit_service.stop()
+            await env["services"]["sales"].stop()
+            await env["services"]["trust"].stop()
+            await env["world_store"].stop()
+            await event_bus.stop()
             
             end_time = time.time()
             actual_duration = end_time - start_time
@@ -452,7 +517,7 @@ class TestPerformanceBenchmarks(IntegrationTestSuite):
             
             # Calculate scalability metrics
             agent_events = [e for e in events if e.get("type") == "AgentDecisionEvent"]
-            throughput = len(agent_events) / actual_duration  # Events per second
+            throughput = len(agent_events) / actual_duration if actual_duration > 0 else 0
             
             scalability_results[agent_count] = {
                 "actual_agent_count": actual_agent_count,
@@ -516,9 +581,17 @@ class TestPerformanceBenchmarks(IntegrationTestSuite):
         
         # Create test environment
         env = await self.create_test_simulation(tier="T1", seed=42)
+
+        # Start event bus and services - CRITICAL ORDERING
+        event_bus = env["event_bus"]
+        await event_bus.start() # Ensure event bus is started FIRST
+        await env["world_store"].start() # No event_bus argument for WorldStore.start()
+        await env["services"]["sales"].start(event_bus)
+        await env["services"]["trust"].start(event_bus)
+        financial_audit_service = env["services"]["financial_audit"] # Get instance from env["services"]
+        await financial_audit_service.start(event_bus)
         
         # Generate large number of events for storage testing
-        event_bus = env["event_bus"]
         orchestrator = env["orchestrator"]
         
         # Start recording for storage test
@@ -531,11 +604,16 @@ class TestPerformanceBenchmarks(IntegrationTestSuite):
         await asyncio.sleep(3)
         
         await orchestrator.stop()
+
+        # Stop services and event bus
+        await financial_audit_service.stop() # Stop financial audit first
+        await env["services"]["sales"].stop()
+        await env["services"]["trust"].stop()
+        await env["world_store"].stop()
+        await event_bus.stop() # Stop event bus LAST
         
         # Measure storage operations
         events = event_bus.get_recorded_events()
-        storage_duration = time.time() - storage_start_time
-        
         event_bus.stop_recording()
         
         # Test event snapshot generation performance
@@ -604,7 +682,7 @@ class TestPerformanceBenchmarks(IntegrationTestSuite):
         logger.info("✅ Storage performance test passed")
         
     @pytest.mark.performance
-    @pytest.mark.asyncio 
+    @pytest.mark.asyncio
     async def test_api_response_times(self):
         """
         Test dashboard and API response times.
@@ -633,6 +711,15 @@ class TestPerformanceBenchmarks(IntegrationTestSuite):
         if api_available:
             logger.info("Testing dashboard API response times...")
             
+            # Start event bus and services
+            event_bus = env["event_bus"]
+            await event_bus.start()
+            await env["world_store"].start() # No event_bus argument for WorldStore.start()
+            await env["services"]["sales"].start(event_bus)
+            await env["services"]["trust"].start(event_bus)
+            financial_audit_service = env["services"]["financial_audit"] # Get instance from env["services"]
+            await financial_audit_service.start(event_bus)
+
             # Test various API endpoints
             api_tests = [
                 {"name": "status", "target_ms": 100},
@@ -705,6 +792,14 @@ class TestPerformanceBenchmarks(IntegrationTestSuite):
                 }
             }
             logger.info("Using mock API results (dashboard not available)")
+
+        # Stop services and event bus AFTER all API tests
+        if api_available:
+            await financial_audit_service.stop()
+            await env["services"]["sales"].stop()
+            await env["services"]["trust"].stop()
+            await env["world_store"].stop() # No event_bus argument for WorldStore.stop()
+            await event_bus.stop()
         
         # Validate API performance requirements
         for endpoint, results in api_results.items():
@@ -736,8 +831,9 @@ class TestPerformanceIntegration:
         logger.info("🚀 Running complete performance validation...")
         
         performance_suite = TestPerformanceBenchmarks()
+        performance_suite.setup_method() # Explicitly call setup_method
         performance_results = {}
-        
+
         try:
             # Run all performance benchmarks
             await performance_suite.test_simulation_speed_benchmarks()

@@ -2,11 +2,13 @@
 
 import asyncio
 import logging
+import inspect
+import uuid
 from typing import Dict, List, Callable, Any, Optional, Type, Union
 from datetime import datetime
 from abc import ABC, abstractmethod
 
-from events import BaseEvent, EVENT_TYPES
+from events import BaseEvent, EVENT_TYPES # Ensure BaseEvent is imported for type hinting
 
 # OpenTelemetry Imports
 from opentelemetry import trace
@@ -26,8 +28,8 @@ class EventBusBackend(ABC):
         pass
     
     @abstractmethod
-    async def subscribe(self, event_type: str, callback: Callable[[BaseEvent], None]) -> None:
-        """Subscribe to events of a specific type."""
+    async def subscribe(self, event_type: Any, callback: Callable) -> None:
+        """Subscribe to events of a specific type (class or string name)."""
         pass
     
     @abstractmethod
@@ -44,7 +46,7 @@ class EventBusBackend(ABC):
 class AsyncioQueueBackend(EventBusBackend):
     """
     AsyncIO Queue-based EventBus backend for in-memory event processing.
-    Now includes event recording capabilities for golden snapshots.
+    Includes event recording capabilities for golden snapshots.
     """
     
     def __init__(self, max_queue_size: int = 10000):
@@ -56,7 +58,7 @@ class AsyncioQueueBackend(EventBusBackend):
         """
         self.max_queue_size = max_queue_size
         self._queue: Optional[asyncio.Queue] = None
-        self._subscribers: Dict[str, List[Callable[[BaseEvent], None]]] = {}
+        self._subscribers: Dict[str, List[Callable]] = {}
         self._running = False
         self._processor_task: Optional[asyncio.Task] = None
         self._stats = {
@@ -107,46 +109,78 @@ class AsyncioQueueBackend(EventBusBackend):
         
         logger.info("AsyncioQueueBackend stopped")
     
-    async def publish(self, event: BaseEvent) -> None:
-        """Publish an event to the queue and optionally record it."""
-        if not self._running or not self._queue:
-            raise RuntimeError("EventBus backend not started")
+    def start_recording(self) -> None:
+        """Starts recording all events that pass through the bus."""
+        self._is_recording = True
+        self._recorded_events.clear()
+        logger.info("Event recording started.")
+
+    def stop_recording(self) -> None:
+        """Stops recording events."""
+        self._is_recording = False
+        logger.info("Event recording stopped.")
+
+    def get_recorded_events(self) -> List[Dict[str, Any]]:
+        """Returns a copy of the recorded events."""
+        return self._recorded_events[:]
         
+    def clear_recorded_events(self) -> None:
+        """Clears the recorded event list."""
+        self._recorded_events.clear()
+        logger.info("Recorded events cleared.")
+
+    async def publish(self, event: BaseEvent) -> None: # Takes only the event object
+        """
+        Publishes an event to the queue and optionally records it.
+        
+        Parameters:
+            event: The event object to publish.
+        """
         with event_bus_tracer.start_as_current_span(
             f"event_bus.publish.{type(event).__name__}",
             attributes={
-                "event.id": event.event_id,
+                "event.id": event.event_id if hasattr(event, 'event_id') else "unknown", # Use unique ID
                 "event.type": type(event).__name__,
-                "event.timestamp": event.timestamp.isoformat()
+                "event.timestamp": event.timestamp.isoformat() if hasattr(event, 'timestamp') else datetime.now().isoformat()
             }
         ):
+            if not self._running or not self._queue:
+                logger.error("EventBus backend not started, cannot publish event.")
+                self._stats['dropped_events'] += 1
+                return
+            
+            # Record event if recording is enabled
             if self._is_recording:
                 # Convert BaseEvent to a serializable dictionary for recording
                 event_data = {
-                    "event_id": event.event_id,
-                    "timestamp": event.timestamp.isoformat() if hasattr(event.timestamp, 'isoformat') else str(event.timestamp),
+                    "event_id": event.event_id if hasattr(event, 'event_id') else str(uuid.uuid4()),
+                    "timestamp": event.timestamp.isoformat() if hasattr(event, 'timestamp') else datetime.now().isoformat(),
                     "event_type": type(event).__name__,
-                    "data": event.to_dict() # Assuming BaseEvent or subclasses have a to_dict method
+                    "data": event.to_summary_dict() if hasattr(event, 'to_summary_dict') and callable(event.to_summary_dict) else {k: str(v) for k,v in event.__dict__.items()} # Fallback to dict of string values
                 }
                 self._recorded_events.append(event_data)
 
             try:
                 await self._queue.put(event)
                 self._stats['events_published'] += 1
-                logger.debug(f"Published event: {event.event_id} ({type(event).__name__})")
+                logger.debug(f"Published event: {event.event_id if hasattr(event, 'event_id') else 'unknown'} ({type(event).__name__})")
             except asyncio.QueueFull:
-                logger.error(f"Event queue full, dropping event: {event.event_id}")
+                logger.error(f"Event queue full, dropping event: {event.event_id if hasattr(event, 'event_id') else 'unknown'}")
                 raise RuntimeError("Event queue is full")
     
-    async def subscribe(self, event_type: str, callback: Callable[[BaseEvent], None]) -> None:
-        """Subscribe to events of a specific type."""
-        with event_bus_tracer.start_as_current_span(f"event_bus.subscribe.{event_type}"):
-            if event_type not in self._subscribers:
-                self._subscribers[event_type] = []
+    async def subscribe(self, event_type: Any, callback: Callable) -> None: # Changed event_type to Any/Type for class support
+        """Subscribe to events of a specific type (class or string name)."""
+        if inspect.isclass(event_type) and issubclass(event_type, BaseEvent):
+            event_name = event_type.__name__
+        else:
+            event_name = str(event_type) # Handle string names
+        with event_bus_tracer.start_as_current_span(f"event_bus.subscribe.{event_name}"):
+            if event_name not in self._subscribers:
+                self._subscribers[event_name] = []
             
-            self._subscribers[event_type].append(callback)
+            self._subscribers[event_name].append(callback)
             self._stats['subscribers_count'] = sum(len(callbacks) for callbacks in self._subscribers.values())
-            logger.info(f"Subscribed to {event_type} events. Total subscribers: {self._stats['subscribers_count']}")
+            logger.info(f"Subscribed to {event_name} events. Total subscribers: {self._stats['subscribers_count']}")
     
     async def _process_events(self) -> None:
         """Process events from the queue and route to subscribers."""
@@ -157,6 +191,11 @@ class AsyncioQueueBackend(EventBusBackend):
                 try:
                     # Wait for an event with timeout to allow graceful shutdown
                     event = await asyncio.wait_for(self._queue.get(), timeout=1.0)
+                    event_type = type(event).__name__ # Get event type from instance
+                    
+                    self._stats['last_processed_event_type'] = event_type
+                    self._stats['last_processed_timestamp'] = datetime.now().isoformat()
+                    
                     await self._route_event(event) # This will create child spans for routing and callbacks
                     self._stats['events_processed'] += 1
                     
@@ -175,7 +214,7 @@ class AsyncioQueueBackend(EventBusBackend):
         
         with event_bus_tracer.start_as_current_span(
             f"event_bus.route_event.{event_type}",
-            attributes={"event.id": event.event_id, "event.type": event_type}
+            attributes={"event.id": event.event_id if hasattr(event, 'event_id') else "unknown", "event.type": event_type}
         ):
             if event_type not in self._subscribers:
                 logger.debug(f"No subscribers for event type: {event_type}")
@@ -187,231 +226,97 @@ class AsyncioQueueBackend(EventBusBackend):
             # Execute all callbacks concurrently
             tasks = []
             for callback in callbacks:
-                task = asyncio.create_task(self._execute_callback(callback, event))
+                # Check if callback is a coroutine function (async) or a regular function
+                if asyncio.iscoroutinefunction(callback):
+                    task = asyncio.create_task(callback(event)) # Await the callback
+                else:
+                    task = asyncio.create_task(run_in_executor(callback, event)) # Run sync callback in thread pool
                 tasks.append(task)
             
             # Wait for all callbacks to complete
             if tasks:
-                await asyncio.gather(*tasks, return_exceptions=True)
+                await asyncio.gather(*tasks, return_exceptions=True) # Gather with return_exceptions allows other tasks to continue even if one fails
     
-    async def _execute_callback(self, callback: Callable[[BaseEvent], None], event: BaseEvent) -> None:
-        """Execute a subscriber callback safely."""
-        callback_name = callback.__name__ if hasattr(callback, '__name__') else str(callback)
-        with event_bus_tracer.start_as_current_span(
-            f"event_bus.execute_callback.{callback_name}",
-            attributes={"event.id": event.event_id, "callback.name": callback_name}
-        ):
-            try:
-                # Check if callback is async
-                if asyncio.iscoroutinefunction(callback):
-                    await callback(event)
-                else:
-                    # Run sync callback in thread pool to avoid blocking
-                    loop = asyncio.get_event_loop()
-                    await loop.run_in_executor(None, callback, event)
-            except Exception as e:
-                logger.error(f"Error executing callback for {type(event).__name__}: {e}")
-                trace.get_current_span().set_status(trace.Status(trace.StatusCode.ERROR, description=str(e)))
-    
-    def get_stats(self) -> Dict[str, Any]:
-        """Get backend statistics."""
-        stats = self._stats.copy()
-        stats['is_recording'] = self._is_recording
-        stats['recorded_events_count'] = len(self._recorded_events)
-        return stats
+    async def _execute_callback(self, callback: Callable, event: BaseEvent) -> None:
+        """Wrapper to execute a callback with error handling."""
+        try:
+            # Check if event is expected type by callback (if type-hinted)
+            # This is more robust than simple hasattr as it respects type hints
+            callback_sig = inspect.signature(callback)
+            if 'event' in callback_sig.parameters and callback_sig.parameters['event'].annotation != inspect.Parameter.empty:
+                expected_type = callback_sig.parameters['event'].annotation
+                if not isinstance(event, expected_type):
+                    logger.warning(f"Callback {callback.__name__} for {type(event).__name__} received unexpected type: {type(event).__name__}. Expected: {expected_type.__name__}")
+            
+            if asyncio.iscoroutinefunction(callback):
+                await callback(event)
+            else:
+                callback(event) # Execute sync callbacks directly if not expected to be async
 
-    def start_recording(self) -> None:
-        """Starts recording all published events."""
-        logger.info("Event recording started.")
-        self._is_recording = True
-        self.clear_recorded_events() # Clear any previous recordings
+        except Exception as e:
+            logger.error(f"Error executing callback {callback.__name__} for event {type(event).__name__} (ID: {event.event_id if hasattr(event, 'event_id') else 'unknown'}): {e}", exc_info=True)
 
-    def stop_recording(self) -> None:
-        """Stops recording events."""
-        logger.info("Event recording stopped.")
-        self._is_recording = False
 
-    def get_recorded_events(self) -> List[Dict[str, Any]]:
-        """Returns the list of recorded events."""
-        return self._recorded_events.copy()
-
-    def clear_recorded_events(self) -> None:
-        """Clears all recorded events."""
-        logger.info("Recorded events cleared.")
-        self._recorded_events = []
+# Global instance management for EventBus
+_event_bus_instance: Optional["EventBus"] = None  # Forward reference to EventBus
 
 
 class EventBus:
-    """
-    Central event bus for FBA-Bench v3 event-driven architecture.
-    
-    Provides a clean interface for publishing and subscribing to events.
-    Designed to be easily swappable between different backends (asyncio.Queue, RabbitMQ, etc.).
-    Now includes methods to control event recording for reproducibility.
-    """
-    
+    """High-level interface for the event bus, wrapping a backend."""
+
     def __init__(self, backend: Optional[EventBusBackend] = None):
-        """
-        Initialize the EventBus.
-        
-        Args:
-            backend: Backend implementation (defaults to AsyncioQueueBackend)
-        """
-        self.backend = backend or AsyncioQueueBackend()
-        self._started = False
-        
-        # Check if the backend supports recording
-        self._supports_recording = (
-            hasattr(self.backend, 'start_recording') and
-            hasattr(self.backend, 'stop_recording') and
-            hasattr(self.backend, 'get_recorded_events') and
-            hasattr(self.backend, 'clear_recorded_events')
-        )
+        """Initialize with a specific backend, or default to AsyncioQueueBackend."""
+        self._backend = backend or AsyncioQueueBackend()
+
+    async def publish(self, event: BaseEvent) -> None:
+        """Publish an event."""
+        await self._backend.publish(event)
+
+    async def subscribe(self, event_type: Any, callback: Callable) -> None:
+        """Subscribe to an event type."""
+        await self._backend.subscribe(event_type, callback)
 
     async def start(self) -> None:
-        """Start the event bus."""
-        if self._started:
-            logger.warning("EventBus already started")
-            return
-        
-        await self.backend.start()
-        self._started = True
-        logger.info("EventBus started")
-    
+        """Start the event bus backend."""
+        await self._backend.start()
+
     async def stop(self) -> None:
-        """Stop the event bus."""
-        if not self._started:
-            return
-        
-        await self.backend.stop()
-        self._started = False
-        logger.info("EventBus stopped")
-    
-    async def publish(self, event: BaseEvent) -> None:
-        """
-        Publish an event to the bus.
-        
-        Args:
-            event: Event instance to publish
-            
-        Raises:
-            RuntimeError: If EventBus is not started
-            TypeError: If event is not a BaseEvent instance
-        """
-        if not self._started:
-            raise RuntimeError("EventBus not started. Call start() first.")
-        
-        if not isinstance(event, BaseEvent):
-            raise TypeError(f"Event must be a BaseEvent instance, got {type(event)}")
-        
-        await self.backend.publish(event)
-    
-    async def subscribe(
-        self,
-        event_type: Union[str, Type[BaseEvent]],
-        callback: Callable[[BaseEvent], None]
-    ) -> None:
-        """
-        Subscribe to events of a specific type.
-        
-        Args:
-            event_type: Event type name (string) or event class
-            callback: Callback function to execute when event is received.
-                     Can be sync or async function.
-                     
-        Raises:
-            RuntimeError: If EventBus is not started
-            ValueError: If event_type is not valid
-        """
-        if not self._started:
-            raise RuntimeError("EventBus not started. Call start() first.")
-        
-        # Convert class to string if needed
-        if isinstance(event_type, type):
-            if not issubclass(event_type, BaseEvent):
-                raise ValueError(f"Event type must be a BaseEvent subclass, got {event_type}")
-            event_type_str = event_type.__name__
-        elif isinstance(event_type, str):
-            if event_type not in EVENT_TYPES:
-                raise ValueError(f"Unknown event type: {event_type}")
-            event_type_str = event_type
-        else:
-            raise ValueError(f"event_type must be string or BaseEvent class, got {type(event_type)}")
-        
-        await self.backend.subscribe(event_type_str, callback)
-    
-    def get_stats(self) -> Dict[str, Any]:
-        """Get event bus statistics."""
-        backend_stats = self.backend.get_stats()
-        return {
-            'started': self._started,
-            'backend_type': type(self.backend).__name__,
-            **backend_stats
-        }
+        """Stop the event bus backend."""
+        await self._backend.stop()
 
     def start_recording(self) -> None:
-        """
-        Starts recording all events published through the bus.
-        Requires the backend to support recording.
-        """
-        if not self._supports_recording:
-            logger.warning("EventBus backend does not support recording.")
-            return
-        self.backend.start_recording()
+        """Start recording events."""
+        if hasattr(self._backend, "start_recording"):
+            self._backend.start_recording()
 
-    def stop_recording(self) -> None:
-        """
-        Stops recording events.
-        Requires the backend to support recording.
-        """
-        if not self._supports_recording:
-            logger.warning("EventBus backend does not support recording.")
-            return
-        self.backend.stop_recording()
+    def stop_recording(self) -> List[Dict[str, Any]]:
+        """Stop recording and return recorded events."""
+        if hasattr(self._backend, "stop_recording"):
+            return self._backend.stop_recording()
+        return []
 
     def get_recorded_events(self) -> List[Dict[str, Any]]:
-        """
-        Returns the list of recorded events.
-        Requires the backend to support recording.
-        """
-        if not self._supports_recording:
-            logger.warning("EventBus backend does not support recording. Returning empty list.")
-            return []
-        return self.backend.get_recorded_events()
-
-    def clear_recorded_events(self) -> None:
-        """
-        Clears all recorded events.
-        Requires the backend to support recording.
-        """
-        if not self._supports_recording:
-            logger.warning("EventBus backend does not support recording.")
-            return
-        self.backend.clear_recorded_events()
-    
-    async def __aenter__(self):
-        """Async context manager entry."""
-        await self.start()
-        return self
-    
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Async context manager exit."""
-        await self.stop()
+        """Get recorded events without stopping."""
+        if hasattr(self._backend, "get_recorded_events"):
+            return self._backend.get_recorded_events()
+        return []
 
 
-# Singleton instance for global access
-_global_event_bus: Optional[EventBus] = None
+def get_event_bus() -> "EventBus":
+    """Get the global EventBus instance."""
+    global _event_bus_instance
+    if _event_bus_instance is None:
+        _event_bus_instance = EventBus()
+    return _event_bus_instance
 
 
-def get_event_bus() -> EventBus:
-    """Get the global event bus instance."""
-    global _global_event_bus
-    if _global_event_bus is None:
-        _global_event_bus = EventBus()
-    return _global_event_bus
+def set_event_bus(event_bus: "EventBus"):
+    """Set the global EventBus instance."""
+    global _event_bus_instance
+    _event_bus_instance = event_bus
 
 
-def set_event_bus(event_bus: EventBus) -> None:
-    """Set the global event bus instance."""
-    global _global_event_bus
-    _global_event_bus = event_bus
+def run_in_executor(func: Callable, *args: Any, **kwargs: Any) -> Any:
+    """Helper to run synchronous functions in a thread pool executor."""
+    loop = asyncio.get_event_loop()
+    return loop.run_in_executor(None, lambda: func(*args, **kwargs))

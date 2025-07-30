@@ -15,7 +15,7 @@ from models.sales_result import SalesResult
 from events import TickEvent, SaleOccurred, CompetitorPricesUpdated, CompetitorState, ProductPriceUpdated
 from event_bus import EventBus, get_event_bus
 from services.fee_calculation_service import FeeCalculationService
-
+from services.world_store import WorldStore # Added this import
 
 logger = logging.getLogger(__name__)
 
@@ -79,9 +79,6 @@ class SalesService:
     Publishes SaleOccurred events for each transaction.
     """
     
-from services.world_store import WorldStore # Add this import
-
-class SalesService:
     def __init__(self, config: Dict, fee_service: FeeCalculationService, world_store: WorldStore):
         """
         Initialize the SalesService.
@@ -123,7 +120,7 @@ class SalesService:
         self.product_price_history: Dict[str, List[Tuple[datetime, Money]]] = {}
         
         logger.info(f"SalesService initialized with {self.demand_model.value} demand model")
-    
+
     async def start(self, event_bus: EventBus) -> None:
         """Start the sales service and subscribe to events."""
         self.event_bus = event_bus
@@ -396,147 +393,6 @@ class SalesService:
             if product_state.inventory_quantity > 0 and product_state.cost_basis is not None:
                 total_value += product_state.cost_basis * product_state.inventory_quantity
         return total_value.dollars
-
-    def get_current_inventory_value(self) -> float:
-        """Calculate the total current inventory value based on product costs."""
-        total_value = Money.zero()
-        for asin, product_state in self.world_store.get_all_product_states().items():
-            # This assumes ProductState also holds inventory quantity and cost.
-            # If not, SalesService would need access to individual Product objects,
-            # or WorldStore needs to manage inventory quantities per ASIN.
-            # For now, let's assume `world_store.get_product_cost` and `world_store.get_product_inventory` exist,
-            # or `ProductState` contains this.
-            # As ProductState only has price, not cost or inventory quantity, this is a gap.
-            # Revisit: We need a way to get *current inventory quantity* for each ASIN.
-            # A simple placeholder: assume an arbitrary inventory for existing products
-            # and use a default cost if not available.
-            
-            # Since ProductState in WorldStore doesn't have inventory quantity or actual cost basis,
-            # and `product` object in `_calculate_sales` is temporary, we need service to provide it.
-            # Best approach: Assume WorldStore holds canonical inventory levels
-            # and product costs. For now, let's mock or use a simple estimate.
-            
-            # Placeholder: Assume 10 units in stock for each product in WorldStore and a default cost.
-            # In a real scenario, this would come from `world_store.get_product_inventory(asin)`
-            # and `world_store.get_product_cost(asin)`
-            
-            # Temporary workaround: Use a fixed quantity and a placeholder cost for products in WorldStore
-            # This needs proper integration with inventory tracking.
-            
-            # If WorldStore manages Product (which contains cost and quantity), then we can do this:
-            # product_obj = self.world_store.get_product(asin) # This method doesn't exist yet
-            # if product_obj and product_obj.get_available_units() > 0:
-            #     total_value += product_obj.cost * product_obj.get_available_units()
-
-            # For now, let's use a very simplistic approach based on current understanding of available data.
-            # If SalesService has a list of 'known products' with their cost_basis and current inventory:
-            # This would require SalesService to listen to InventoryUpdate events and maintain product inventory state.
-            # Let's assume for prototype, an average inventory value (e.g. sum of all product initial values)
-            # or that get_product_state also includes initial cost and current inventory units.
-
-            # Given the current structure, `SalesService` cannot accurately calculate total inventory value
-            # without `WorldStore` also managing inventory quantity and cost_basis per product instance.
-            # The prompt says "Must work with existing inventory tracking in services layer".
-            # The `Product` object has `cost` and `get_available_units()`.
-            # If `SalesService` only processes sales, it doesn't have a persistent view of ALL products and their stock.
-            # This means `WorldStore` needs to manage inventory for `SalesService` to query it.
-            
-            # Let's work under the assumption that a dummy inventory value is sufficient for this prototype,
-            # or that `WorldStore` will eventually expose this.
-            
-            # For now, return a placeholder until actual inventory integration is clear.
-            # Or, if we assume `SalesService` is passed 'all active products' on demand:
-            # The `_get_active_products` method is currently a placeholder too.
-            # This implies a deeper re-architecture is needed if `SalesService` needs global inventory.
-
-            # Given the prompt, let's assume total inventory value across all ASINs can be queried.
-            # `WorldStore` seems to be the place for canonical state.
-            
-            # I need `WorldStore` to expose total inventory valuation based on current stock levels and product costs.
-            # This means WorldStore needs to know about units in stock for each ASIN.
-            # It only stores `ProductState(asin, price, ...)` currently, no inventory.
-
-            # For the purpose of getting OperationsMetrics to work *now*, I will add a placeholder that would be
-            # replaced by a real call to get current inventory value from `WorldStore` (if it gets expanded to manage inventory)
-            # or from another service like an `InventoryService`.
-            
-            # Let's assume `self.world_store.get_total_inventory_value()` hypothetically exists and returns a float.
-            # This is a critical dependency.
-
-            # Re-evaluating based on existing `SalesService` methods: no `get_current_inventory_value` related to WorldStore.
-            # The `product` object passed to `_calculate_sales` has `get_available_units` and `cost`.
-            # However, `OperationsMetrics` needs a *current total inventory value* across all products, not just one.
-            # This means `SalesService` itself needs to aggregate this from a source that tracks all inventory.
-            
-            # The context says "Must work with existing inventory tracking in services layer".
-            # The `SalesService` does reduce product inventory (`product.get_available_units()`), but doesn't
-            # manage a global inventory state.
-            
-            # For now, I will create a placeholder method `get_current_inventory_value` in SalesService,
-            # that returns a sum based on the initial inventory plus some basic tracking,
-            # acting as if `SalesService` had access to a global inventory.
-            
-            # A correct implementation would require `WorldStore` to have `inventory: Dict[str, int]` (asin -> quantity)
-            # and a `get_product_cost(asin)` method.
-            # For now, let's add a `get_total_inventory_value` to WorldStore assuming it tracks cost and quantity.
-            # No, `SalesService` has no business doing inventory *valuation*.
-            # It should query `WorldStore` for quantity, and a `ProductCatalog` for cost.
-            
-            # Given that SalesService is passed "product: Product", which has cost & units.
-            # The problem is that `operations_metrics.py` needs `operations_metrics.sales_service.get_current_inventory_value()`
-            # This method does not exist in SalesService.
-            
-            # Let's add it to `SalesService` and have it get data from `WorldStore`.
-            # I will need to make an assumption about how `WorldStore` exposes inventory (quantity) and cost.
-            # I'll add `get_total_inventory_value` to SalesService, and for the initial version,
-            # it will need to interact with `WorldStore` to sum values.
-
-            total_inventory_value = Money.zero()
-            for asin_str, product_state in self.world_store.get_all_product_states().items():
-                # Assuming product_state gives us `cost` and `inventory_quantity` for simplicity.
-                # Since ProductState currently only has `price`, this implies a need for Product object or more data.
-                # Given no explicit inventory service, let's expand ProductState in WorldStore to hold inventory quantity
-                # and product cost.
-                # Or, even better, WorldStore is *canonical*, so it should hold the Product objects.
-                
-                # For `get_current_inventory_value` in SalesService, I need:
-                # 1. All ASINs managed by WorldStore. -> `world_store.get_all_product_states()`
-                # 2. For each ASIN, its current inventory quantity. -> Needs new field in `ProductState`
-                # 3. For each ASIN, its cost basis. -> Needs new field in `ProductState` or separate `ProductManager` service.
-
-                # This implies modifying ProductState and WorldStore.
-                # Let's assume that WorldStore *will* manage full Product objects eventually,
-                # or at least expose a method to get `(cost, inventory_quantity)` per ASIN.
-                
-                # Temporarily, for operations_metrics, I'll pass a fixed dummy value if I can't derive it from existing interfaces.
-                # However, the prompt says "Must work with existing inventory tracking in services layer".
-                # The existing services layer includes `sales_service.py`. The `product` passed to `_calculate_sales`
-                # has `get_available_units()` and `cost`.
-                # If `SalesService` doesn't hold a global list of Product instances, it can't sum inventory.
-                
-                # I will add a placeholder `get_current_inventory_value` to SalesService that needs to be properly implemented
-                # once a canonical inventory tracking source is available globally or within WorldStore.
-                # For *now*, let's simplify and make a reasonable proxy.
-                # The assumption is that `WorldStore` will be the source for this, as it's the `canonical` state.
-                # Let's add a placeholder method to WorldStore which we would later fill in.
-                # This could be as simple as adding `inventory_quantity: int` and `cost_basis: Money` to ProductState.
-                # And a `track_inventory_update` method to `WorldStore`.
-
-                # For now, to make `OperationsMetrics` work:
-                # `SalesService` will need to query `WorldStore` for the inventory of each product.
-                # WorldStore will need a mechanism to store and retrieve inventory quantity.
-                # No inventory quantity in ProductState.
-                # I have to make a choice of how WorldStore is getting inventory data.
-                
-                # I will implement `get_current_inventory_value` in SalesService by querying WorldStore for product states.
-                # I will modify `ProductState` in `world_store.py` to include `inventory_quantity` and `cost_basis`.
-                # I will then need a way for WorldStore to get inventory updates.
-                # The prompt specifies "InventoryUpdate" as an event to subscribe to.
-                # So WorldStore should subscribe to InventoryUpdate events.
-
-                pass # Remove this line after adding logic
-        
-        return total_inventory_value.dollars
 
     async def _calculate_financial_results(
         self,

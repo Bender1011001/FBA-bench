@@ -42,14 +42,14 @@ from agent_runners.configs.framework_configs import FrameworkConfig
 from baseline_bots.bot_factory import BotFactory
 
 # Memory experiment imports
-from memory_experiments.experiment_runner import MemoryExperimentRunner
+from memory_experiments.experiment_runner import ExperimentRunner
 from memory_experiments.memory_config import MemoryConfig
 from memory_experiments.memory_modes import MemoryMode
 
 # Adversarial testing imports
 from redteam.gauntlet_runner import GauntletRunner
 from redteam.adversarial_event_injector import AdversarialEventInjector
-from redteam.resistance_scorer import ResistanceScorer
+from redteam.resistance_scorer import AdversaryResistanceScorer as ResistanceScorer
 
 # Services imports
 from services.world_store import WorldStore
@@ -348,7 +348,7 @@ class DemoScenarios:
             try:
                 adversarial_events = [e for e in events if e.get("type") == "AdversarialEvent"]
                 if adversarial_events:
-                    ars_score = resistance_scorer.calculate_ars_score(adversarial_events)
+                    ars_score, _ = resistance_scorer.calculate_ars(adversarial_events)
             except Exception:
                 pass
         

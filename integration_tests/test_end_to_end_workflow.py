@@ -31,13 +31,13 @@ from reproducibility.event_snapshots import EventSnapshot
 # Agent framework imports
 from agent_runners.runner_factory import RunnerFactory
 from agent_runners.configs.framework_configs import FrameworkConfig
-from agent_runners.base_runner import BaseAgentRunner
+from agent_runners.base_runner import AgentRunner
 
 # Baseline bot imports
 from baseline_bots.bot_factory import BotFactory
 
 # Memory experiment imports
-from memory_experiments.experiment_runner import MemoryExperimentRunner
+from memory_experiments.experiment_runner import ExperimentRunner
 from memory_experiments.memory_config import MemoryConfig
 from memory_experiments.memory_modes import MemoryMode
 

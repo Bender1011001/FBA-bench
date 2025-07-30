@@ -91,6 +91,12 @@ class _SpanContextManager:
     def __enter__(self):
         return self.span
 
+    def set_attribute(self, key: str, value: Any):
+        self.span.set_attribute(key, value)
+
+    def set_status(self, status: trace.Status):
+        self.span.set_status(status)
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         if exc_type is not None:
             self.span.set_status(trace.Status(trace.StatusCode.ERROR, description=str(exc_val)))

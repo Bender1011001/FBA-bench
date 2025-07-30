@@ -7,9 +7,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 
-from .money import Money
-from .events import SaleOccurred
-from .event_bus import EventBus
+from money import Money
+from events import SaleOccurred
+from event_bus import EventBus
 
 
 logger = logging.getLogger(__name__)

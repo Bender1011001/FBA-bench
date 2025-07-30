@@ -1,8 +1,7 @@
-import type { SimulationSnapshot, ApiResponse } from '../types';
+// Imports are no longer needed here as they are not directly used in this simplified service
 
 // Configuration
 const API_BASE_URL = 'http://localhost:8000';
-const API_VERSION = 'v1';
 
 class ApiService {
   private baseUrl: string;
@@ -56,107 +55,72 @@ class ApiService {
   }
 
   /**
-   * Build full API URL
+   * Generic request wrapper for all HTTP methods.
+   */
+  private async request<T>(
+    method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH',
+    endpoint: string,
+    data?: unknown,
+    options: RequestInit = {}
+  ): Promise<T> {
+    const url = this.getApiUrl(endpoint);
+    const config: RequestInit = {
+      method,
+      ...options,
+    };
+
+    if (data) {
+      config.body = JSON.stringify(data);
+    }
+
+    try {
+      return await this.fetchWithTimeout<T>(url, config);
+    } catch (error) {
+      console.error(`Failed to ${method} ${endpoint}:`, error);
+      throw new Error(`Failed to ${method} ${endpoint}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Build full API URL, assuming endpoint already includes versioning if needed.
    */
   private getApiUrl(endpoint: string): string {
-    return `${this.baseUrl}/api/${API_VERSION}${endpoint}`;
+    return `${this.baseUrl}${endpoint}`;
   }
 
   /**
-   * Get current simulation snapshot
+   * Generic GET request.
    */
-  async getSimulationSnapshot(): Promise<SimulationSnapshot> {
-    try {
-      const data = await this.fetchWithTimeout<SimulationSnapshot>(
-        this.getApiUrl('/simulation/snapshot')
-      );
-      return data;
-    } catch (error) {
-      console.error('Failed to fetch simulation snapshot:', error);
-      throw new Error(`Failed to fetch simulation snapshot: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
+  async get<T>(endpoint: string, options?: RequestInit): Promise<T> {
+    return this.request<T>('GET', endpoint, undefined, options);
   }
 
   /**
-   * Health check endpoint
+   * Generic POST request.
    */
-  async healthCheck(): Promise<{ status: string; timestamp: string }> {
-    try {
-      const data = await this.fetchWithTimeout<{ status: string; timestamp: string }>(
-        `${this.baseUrl}/health`
-      );
-      return data;
-    } catch (error) {
-      console.error('Health check failed:', error);
-      throw new Error(`Health check failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
+  async post<T>(endpoint: string, data?: unknown, options?: RequestInit): Promise<T> {
+    return this.request<T>('POST', endpoint, data, options);
   }
 
   /**
-   * Set product price (if this endpoint becomes available)
+   * Generic PUT request.
    */
-  async setProductPrice(asin: string, price: string): Promise<ApiResponse<void>> {
-    try {
-      const data = await this.fetchWithTimeout<ApiResponse<void>>(
-        this.getApiUrl('/simulation/set-price'),
-        {
-          method: 'POST',
-          body: JSON.stringify({ asin, price }),
-        }
-      );
-      return data;
-    } catch (error) {
-      console.error('Failed to set product price:', error);
-      throw new Error(`Failed to set product price: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
+  async put<T>(endpoint: string, data?: unknown, options?: RequestInit): Promise<T> {
+    return this.request<T>('PUT', endpoint, data, options);
   }
 
   /**
-   * Start simulation (if this endpoint becomes available)
+   * Generic DELETE request.
    */
-  async startSimulation(): Promise<ApiResponse<void>> {
-    try {
-      const data = await this.fetchWithTimeout<ApiResponse<void>>(
-        this.getApiUrl('/simulation/start'),
-        { method: 'POST' }
-      );
-      return data;
-    } catch (error) {
-      console.error('Failed to start simulation:', error);
-      throw new Error(`Failed to start simulation: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
+  async delete<T>(endpoint: string, options?: RequestInit): Promise<T> {
+    return this.request<T>('DELETE', endpoint, undefined, options);
   }
 
   /**
-   * Stop simulation (if this endpoint becomes available)
+   * Generic PATCH request.
    */
-  async stopSimulation(): Promise<ApiResponse<void>> {
-    try {
-      const data = await this.fetchWithTimeout<ApiResponse<void>>(
-        this.getApiUrl('/simulation/stop'),
-        { method: 'POST' }
-      );
-      return data;
-    } catch (error) {
-      console.error('Failed to stop simulation:', error);
-      throw new Error(`Failed to stop simulation: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  /**
-   * Reset simulation (if this endpoint becomes available)
-   */
-  async resetSimulation(): Promise<ApiResponse<void>> {
-    try {
-      const data = await this.fetchWithTimeout<ApiResponse<void>>(
-        this.getApiUrl('/simulation/reset'),
-        { method: 'POST' }
-      );
-      return data;
-    } catch (error) {
-      console.error('Failed to reset simulation:', error);
-      throw new Error(`Failed to reset simulation: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
+  async patch<T>(endpoint: string, data?: unknown, options?: RequestInit): Promise<T> {
+    return this.request<T>('PATCH', endpoint, data, options);
   }
 
   /**

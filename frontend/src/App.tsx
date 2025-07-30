@@ -2,9 +2,10 @@ import React, { useState } from 'react';
 import { KPIDashboard } from './components/KPIDashboard';
 import { EventLog } from './components/EventLog';
 import { ConnectionStatus } from './components/ConnectionStatus';
+import { ConfigurationWizard } from './pages/ConfigurationWizard';
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'events' | 'settings'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'events' | 'configure' | 'settings'>('dashboard');
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -49,6 +50,18 @@ function App() {
                 Event Log
               </button>
               <button
+                onClick={() => setActiveTab('configure')}
+                className={`
+                  px-3 py-2 rounded-md text-sm font-medium transition-colors
+                  ${activeTab === 'configure'
+                    ? 'bg-blue-100 text-blue-700'
+                    : 'text-gray-500 hover:text-gray-700'
+                  }
+                `}
+              >
+                Configure
+              </button>
+              <button
                 onClick={() => setActiveTab('settings')}
                 className={`
                   px-3 py-2 rounded-md text-sm font-medium transition-colors
@@ -85,6 +98,20 @@ function App() {
               <ConnectionStatus showDetails={false} className="w-96" />
             </div>
             <EventLog className="h-[calc(100vh-12rem)]" />
+          </div>
+        )}
+
+        {activeTab === 'configure' && (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-2xl font-bold text-gray-900">Simulation Configuration</h2>
+                <p className="text-gray-600 mt-1">
+                  Configure and launch new FBA simulation experiments
+                </p>
+              </div>
+            </div>
+            <ConfigurationWizard />
           </div>
         )}
 

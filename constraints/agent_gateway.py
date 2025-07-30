@@ -2,8 +2,8 @@ import logging
 from typing import Dict, Any, List, Optional
 from .budget_enforcer import BudgetEnforcer
 from .token_counter import TokenCounter
-from ..event_bus import EventBus
-from ..events import BaseEvent # Assuming BaseEvent and other event definitions are available in ..events
+from event_bus import EventBus
+from events import BaseEvent # Assuming BaseEvent and other event definitions are available in ..events
 
 logger = logging.getLogger(__name__)
 

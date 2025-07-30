@@ -38,13 +38,13 @@ from agent_runners.configs.framework_configs import FrameworkConfig
 from baseline_bots.bot_factory import BotFactory
 
 # Memory experiment imports
-from memory_experiments.experiment_runner import MemoryExperimentRunner
+from memory_experiments.experiment_runner import ExperimentRunner
 from memory_experiments.memory_config import MemoryConfig
 from memory_experiments.memory_modes import MemoryMode
 
 # Adversarial testing imports
 from redteam.gauntlet_runner import GauntletRunner
-from redteam.resistance_scorer import ResistanceScorer
+from redteam.resistance_scorer import AdversaryResistanceScorer as ResistanceScorer
 
 # Services imports
 from services.world_store import WorldStore
@@ -368,7 +368,7 @@ class TestTier1Requirements(IntegrationTestSuite):
             ]
             
             # Calculate ARS score
-            ars_score = resistance_scorer.calculate_ars_score(adversarial_events)
+            ars_score, _ = resistance_scorer.calculate_ars(adversarial_events)
             
             # Validate ARS scoring
             assert isinstance(ars_score, (int, float)), "ARS score should be numeric"
@@ -435,7 +435,8 @@ class TestTier1Requirements(IntegrationTestSuite):
             assert saturated_config.max_memory_days is None, "Saturated memory should be unlimited"
             
             # Test memory experiment runner
-            experiment_runner = MemoryExperimentRunner()
+            event_bus = get_event_bus()
+            experiment_runner = ExperimentRunner(event_bus)
             
             # Create test environments for comparison
             env_ablated = await self.create_test_simulation(tier="T1", seed=42)

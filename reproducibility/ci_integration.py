@@ -1,6 +1,7 @@
 import os
 import subprocess
 from pathlib import Path
+from typing import List, Dict, Any, Optional
 from reproducibility.event_snapshots import EventSnapshot
 
 class CIIntegration:

@@ -66,29 +66,31 @@ Usage:
 import asyncio
 import logging
 import time
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, TYPE_CHECKING
 from datetime import datetime
 from dataclasses import dataclass
 
 # Core imports for integration testing
 from simulation_orchestrator import SimulationOrchestrator, SimulationConfig
-from event_bus import EventBus, get_event_bus
+from event_bus import get_event_bus # Only import the getter
 from metrics.metric_suite import MetricSuite, STANDARD_WEIGHTS
+if TYPE_CHECKING:
+    from event_bus import EventBus # For type hinting only
 from constraints.budget_enforcer import BudgetEnforcer
 from reproducibility.sim_seed import SimSeed
 from reproducibility.event_snapshots import EventSnapshot
 
 # Agent framework imports
 from agent_runners.runner_factory import RunnerFactory
-from agent_runners.base_runner import BaseAgentRunner
+from agent_runners.base_runner import AgentRunner
 
 # Memory experiment imports
-from memory_experiments.experiment_runner import MemoryExperimentRunner
+from memory_experiments.experiment_runner import ExperimentRunner
 from memory_experiments.memory_config import MemoryConfig
 
 # Adversarial testing imports
 from redteam.gauntlet_runner import GauntletRunner
-from redteam.resistance_scorer import ResistanceScorer
+from redteam.resistance_scorer import AdversaryResistanceScorer
 
 # Baseline bot imports
 from baseline_bots.bot_factory import BotFactory
@@ -97,6 +99,11 @@ from baseline_bots.bot_factory import BotFactory
 from services.world_store import WorldStore
 from services.sales_service import SalesService
 from services.trust_score_service import TrustScoreService
+from services.fee_calculation_service import FeeCalculationService # New import
+from financial_audit import FinancialAuditService # New import
+
+# Constraints imports
+from constraints.agent_gateway import AgentGateway # New import
 
 # Instrumentation imports
 from instrumentation.simulation_tracer import SimulationTracer
@@ -148,17 +155,19 @@ class IntegrationTestSuite:
         # Initialize core components
         sim_config = SimulationConfig(seed=seed, max_ticks=1000)
         orchestrator = SimulationOrchestrator(sim_config)
-        event_bus = get_event_bus()
+        event_bus: 'EventBus' = get_event_bus() # Use forward reference for type hint
         
         # Initialize services
         world_store = WorldStore()
-        sales_service = SalesService(world_store)
-        trust_service = TrustScoreService()
+        fee_service = FeeCalculationService(config={}) # Assume default config for now
+        sales_service = SalesService(config={}, fee_service=fee_service, world_store=world_store) # Pass config and fee_service
+        trust_service = TrustScoreService(config={}) # Pass config
+        financial_audit_service = FinancialAuditService(config={}) # Pass config
         
         # Initialize metrics
         metric_suite = MetricSuite(
             tier=tier,
-            financial_audit_service=None,  # Will be initialized in tests
+            financial_audit_service=financial_audit_service,  # Now correctly initialized and passed
             sales_service=sales_service,
             trust_score_service=trust_service
         )
@@ -166,16 +175,21 @@ class IntegrationTestSuite:
         # Initialize constraints
         budget_enforcer = BudgetEnforcer.from_tier_config(tier, event_bus)
         
+        # Initialize agent gateway
+        agent_gateway = AgentGateway(budget_enforcer, event_bus)
+
         return {
             "orchestrator": orchestrator,
-            "event_bus": event_bus,
+            "event_bus": event_bus, # event_bus object is already correct
             "metric_suite": metric_suite,
             "budget_enforcer": budget_enforcer,
             "world_store": world_store,
             "services": {
                 "sales": sales_service,
-                "trust": trust_service
-            }
+                "trust": trust_service,
+                "financial_audit": financial_audit_service # Add financial audit service to the services dict
+            },
+            "agent_gateway": agent_gateway # Add agent_gateway to the returned dict
         }
         
     def assert_tier1_requirements(self, test_results: Dict[str, Any]):

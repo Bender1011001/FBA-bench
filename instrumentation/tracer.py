@@ -2,18 +2,21 @@ from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider, sampling
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.exporter.jaeger.thrift import JaegerExporter
 from opentelemetry.semconv.resource import ResourceAttributes
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 import os
 
 def setup_tracing(service_name="fba-bench"):
     """
-    Sets up OpenTelemetry tracing with Jaeger exporter.
+    Sets up OpenTelemetry tracing with OTLP exporter.
     """
     resource = Resource.create({
         ResourceAttributes.SERVICE_NAME: service_name,
         ResourceAttributes.SERVICE_NAMESPACE: "fba-bench",
-        ResourceAttributes.SERVICE_INSTANCE_ID: os.getenv("FBA_INSTANCE_ID", "default")
+        ResourceAttributes.SERVICE_INSTANCE_ID: os.getenv("FBA_INSTANCE_ID", "default"),
+        "telemetry.sdk.language": "python",
+        "telemetry.sdk.name": "opentelemetry",
+        "telemetry.sdk.version": os.getenv("OTEL_PYTHON_SDK_VERSION", "1.x.x") # Populate with actual version
     })
 
     # Set up a TracerProvider with a basic sampler
@@ -21,12 +24,11 @@ def setup_tracing(service_name="fba-bench"):
     trace.set_tracer_provider(provider)
     tracer = trace.get_tracer(__name__)
 
-    # Configure Jaeger Exporter
-    jaeger_exporter = JaegerExporter(
-        agent_host_name=os.getenv("JAEGER_AGENT_HOST", "localhost"),
-        agent_port=int(os.getenv("JAEGER_AGENT_PORT", 6831))
+    # Configure OTLP Exporter
+    otlp_exporter = OTLPSpanExporter(
+        endpoint=os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317"), # Default OTLP gRPC endpoint
     )
-    span_processor = BatchSpanProcessor(jaeger_exporter)
+    span_processor = BatchSpanProcessor(otlp_exporter)
     provider.add_span_processor(span_processor)
 
     return tracer

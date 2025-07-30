@@ -1,0 +1,20 @@
+bot_name: "GreedyScript"
+description: "A simple, rule-based bot that greedily optimizes for direct profit."
+expected_score: 1.0 # Baseline score, adjust based on actual performance
+tier_configs:
+  T0:
+    reorder_threshold: 10
+    reorder_quantity: 50
+    strategy_details: "Basic greedy strategy for initial tier."
+  T1:
+    reorder_threshold: 15
+    reorder_quantity: 60
+    strategy_details: "Slightly more aggressive greedy strategy for T1."
+  T2:
+    reorder_threshold: 20
+    reorder_quantity: 70
+    strategy_details: "Moderately aggressive greedy strategy for T2."
+  T3:
+    reorder_threshold: 25
+    reorder_quantity: 80
+    strategy_details: "Highly aggressive greedy strategy for T3."

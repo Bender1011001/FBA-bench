@@ -43,7 +43,10 @@ except ImportError:
     class SystemMessage: pass
     class BaseModel: pass
     def Field(*args, **kwargs): pass
-    def tool(*args, **kwargs): pass
+    def tool(*args, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
 
 
 class FBAPricingToolInput(BaseModel):

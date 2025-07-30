@@ -9,6 +9,12 @@ from typing import Dict, Any
 from .config_schema import AgentRunnerConfig, LLMConfig, MemoryConfig, AgentConfig, CrewConfig
 
 
+class FrameworkConfig:
+    """Simple configuration to specify a framework type."""
+    def __init__(self, framework_type: str):
+        self.framework_type = framework_type
+
+
 class DIYConfig:
     """Pre-built configurations for DIY agent runner."""
     

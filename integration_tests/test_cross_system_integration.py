@@ -41,10 +41,10 @@ from metrics.adversarial_metrics import AdversarialMetrics
 # Agent framework imports
 from agent_runners.runner_factory import RunnerFactory
 from agent_runners.configs.framework_configs import FrameworkConfig
-from agent_runners.base_runner import BaseAgentRunner
+from agent_runners.base_runner import AgentRunner
 
 # Memory experiment imports
-from memory_experiments.experiment_runner import MemoryExperimentRunner
+from memory_experiments.experiment_runner import ExperimentRunner
 from memory_experiments.memory_config import MemoryConfig
 from memory_experiments.memory_modes import MemoryMode
 from memory_experiments.memory_enforcer import MemoryEnforcer
@@ -52,7 +52,7 @@ from memory_experiments.memory_enforcer import MemoryEnforcer
 # Adversarial testing imports
 from redteam.gauntlet_runner import GauntletRunner
 from redteam.adversarial_event_injector import AdversarialEventInjector
-from redteam.resistance_scorer import ResistanceScorer
+from redteam.resistance_scorer import AdversaryResistanceScorer as ResistanceScorer
 
 # Leaderboard imports
 from leaderboard.leaderboard_manager import LeaderboardManager
@@ -489,7 +489,8 @@ class TestCrossSystemIntegration(IntegrationTestSuite):
             )
             
             # Initialize experiment runner
-            experiment_runner = MemoryExperimentRunner()
+            event_bus = get_event_bus()
+            experiment_runner = ExperimentRunner(event_bus)
             
             # Initialize adversarial components
             try:
