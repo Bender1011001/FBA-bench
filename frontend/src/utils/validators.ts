@@ -110,6 +110,54 @@ export const validateForm = <T extends Record<string, unknown>>(
   return errors;
 };
 
+// General-purpose input validation utilities
+export const isValidEmail = (email: string): string | undefined => {
+  // Regex from https://emailregex.com/
+  const emailRegex = new RegExp(
+    /^(([^<>()[\]\\.,;:\s@"]+(\.[^<>()[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/
+  );
+  return validateField(email, { type: 'string', pattern: emailRegex, required: true }) || undefined;
+};
+
+export const isValidPassword = (password: string): string | undefined => {
+  // Minimum 8 characters, at least one uppercase letter, one lowercase letter, one number and one special character
+  const passwordRegex = new RegExp(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/);
+  return validateField(password, {
+    type: 'string',
+    minLength: 8,
+    pattern: passwordRegex,
+    required: true,
+    custom: (value) => {
+      if (typeof value === 'string' && !passwordRegex.test(value)) {
+        return 'Password must be at least 8 characters long and include an uppercase letter, a lowercase letter, a number, and a special character.';
+      }
+      return undefined;
+    }
+  });
+};
+
+export const isPositiveNumber = (value: unknown): string | undefined => {
+  return validateField(value, { type: 'number', min: 0.0001, required: true }) || undefined;
+};
+
+export const isInRange = (value: unknown, min: number, max: number, type: 'number' | 'integer' = 'number'): string | undefined => {
+  return validateField(value, { type, min, max, required: true }) || undefined;
+};
+
+export const isNonEmptyString = (value: unknown, minLength?: number): string | undefined => {
+  return validateField(value, { type: 'string', required: true, minLength: minLength || 1 }) || undefined;
+};
+
+export const isValidURL = (url: string): string | undefined => {
+  try {
+    new URL(url);
+    return undefined;
+  } catch {
+    return 'Invalid URL format.';
+  }
+};
+
+
 // Specific validation schemas based on user requirements
 
 // Simulation validation
