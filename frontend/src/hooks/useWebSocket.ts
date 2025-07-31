@@ -25,9 +25,11 @@ interface UseWebSocketReturn {
   disconnect: () => void;
   reconnect: () => void;
   sendMessage: (message: Record<string, unknown>) => void;
+  sendJsonMessage: (message: Record<string, unknown>) => void; // Added
   isConnecting: boolean;
   isConnected: boolean;
   lastError: string | null;
+  lastMessage: MessageEvent | null; // Added
 }
 
 export const useWebSocket = (options: UseWebSocketOptions = {}): UseWebSocketReturn => {
@@ -270,8 +272,10 @@ export const useWebSocket = (options: UseWebSocketOptions = {}): UseWebSocketRet
     disconnect,
     reconnect,
     sendMessage,
+    sendJsonMessage: sendMessage, // Expose sendMessage as sendJsonMessage
     isConnecting: isConnecting.current,
     isConnected: connectionStatus.connected,
     lastError: useSimulationStore((state) => state.simulation.error),
+    lastMessage: useSimulationStore((state) => state.simulation.lastWebSocketMessage), // Access from simulation state
   };
 };

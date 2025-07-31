@@ -2,17 +2,25 @@ import React, { useState } from 'react';
 import { KPIDashboard } from './components/KPIDashboard';
 import { EventLog } from './components/EventLog';
 import { ConnectionStatus } from './components/ConnectionStatus';
+import { SimulationControls } from './components/SimulationControls';
+import { AgentMonitor } from './components/AgentMonitor';
+import { SystemHealthMonitor } from './components/SystemHealthMonitor';
+import { SimulationStats } from './components/SimulationStats';
 import { ConfigurationWizard } from './pages/ConfigurationWizard';
+import { ExperimentManagement } from './pages/ExperimentManagement';
+import ResultsAnalysis from './pages/ResultsAnalysis';
+import ErrorBoundary from './components/ErrorBoundary'; // Import the ErrorBoundary
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'events' | 'configure' | 'settings'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'controls' | 'agents' | 'system-health' | 'events' | 'configure' | 'experiments' | 'results-analysis' | 'settings' | 'stats'>('dashboard');
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white shadow-sm border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
+      <ErrorBoundary>
+        {/* Header */}
+        <header className="bg-white shadow-sm border-b border-gray-200">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="flex items-center justify-between h-16">
             {/* Logo and Title */}
             <div className="flex items-center">
               <div className="flex-shrink-0">
@@ -24,11 +32,11 @@ function App() {
             </div>
 
             {/* Navigation Tabs */}
-            <nav className="flex space-x-8">
+            <nav className="flex space-x-4 lg:space-x-8 overflow-x-auto pb-2">
               <button
                 onClick={() => setActiveTab('dashboard')}
                 className={`
-                  px-3 py-2 rounded-md text-sm font-medium transition-colors
+                  px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap
                   ${activeTab === 'dashboard'
                     ? 'bg-blue-100 text-blue-700'
                     : 'text-gray-500 hover:text-gray-700'
@@ -38,9 +46,45 @@ function App() {
                 Dashboard
               </button>
               <button
+                onClick={() => setActiveTab('controls')}
+                className={`
+                  px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap
+                  ${activeTab === 'controls'
+                    ? 'bg-blue-100 text-blue-700'
+                    : 'text-gray-500 hover:text-gray-700'
+                  }
+                `}
+              >
+                Controls
+              </button>
+              <button
+                onClick={() => setActiveTab('agents')}
+                className={`
+                  px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap
+                  ${activeTab === 'agents'
+                    ? 'bg-blue-100 text-blue-700'
+                    : 'text-gray-500 hover:text-gray-700'
+                  }
+                `}
+              >
+                Agents
+              </button>
+              <button
+                onClick={() => setActiveTab('system-health')}
+                className={`
+                  px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap
+                  ${activeTab === 'system-health'
+                    ? 'bg-blue-100 text-blue-700'
+                    : 'text-gray-500 hover:text-gray-700'
+                  }
+                `}
+              >
+                System Health
+              </button>
+              <button
                 onClick={() => setActiveTab('events')}
                 className={`
-                  px-3 py-2 rounded-md text-sm font-medium transition-colors
+                  px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap
                   ${activeTab === 'events'
                     ? 'bg-blue-100 text-blue-700'
                     : 'text-gray-500 hover:text-gray-700'
@@ -50,9 +94,21 @@ function App() {
                 Event Log
               </button>
               <button
+                onClick={() => setActiveTab('stats')}
+                className={`
+                  px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap
+                  ${activeTab === 'stats'
+                    ? 'bg-blue-100 text-blue-700'
+                    : 'text-gray-500 hover:text-gray-700'
+                  }
+                `}
+              >
+                Statistics
+              </button>
+              <button
                 onClick={() => setActiveTab('configure')}
                 className={`
-                  px-3 py-2 rounded-md text-sm font-medium transition-colors
+                  px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap
                   ${activeTab === 'configure'
                     ? 'bg-blue-100 text-blue-700'
                     : 'text-gray-500 hover:text-gray-700'
@@ -62,9 +118,33 @@ function App() {
                 Configure
               </button>
               <button
+                onClick={() => setActiveTab('experiments')}
+                className={`
+                  px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap
+                  ${activeTab === 'experiments'
+                    ? 'bg-blue-100 text-blue-700'
+                    : 'text-gray-500 hover:text-gray-700'
+                  }
+                `}
+              >
+                Experiments
+              </button>
+              <button
+                onClick={() => setActiveTab('results-analysis')}
+                className={`
+                  px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap
+                  ${activeTab === 'results-analysis'
+                    ? 'bg-blue-100 text-blue-700'
+                    : 'text-gray-500 hover:text-gray-700'
+                  }
+                `}
+              >
+                Results Analysis
+              </button>
+              <button
                 onClick={() => setActiveTab('settings')}
                 className={`
-                  px-3 py-2 rounded-md text-sm font-medium transition-colors
+                  px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap
                   ${activeTab === 'settings'
                     ? 'bg-blue-100 text-blue-700'
                     : 'text-gray-500 hover:text-gray-700'
@@ -86,6 +166,27 @@ function App() {
           </div>
         )}
 
+        {activeTab === 'controls' && (
+          <div className="space-y-6">
+            <h2 className="text-2xl font-bold text-gray-900 mb-4">Simulation Controls</h2>
+            <SimulationControls />
+          </div>
+        )}
+
+        {activeTab === 'agents' && (
+          <div className="space-y-6">
+            <h2 className="text-2xl font-bold text-gray-900 mb-4">Live Agent Monitoring</h2>
+            <AgentMonitor />
+          </div>
+        )}
+        
+        {activeTab === 'system-health' && (
+          <div className="space-y-6">
+            <h2 className="text-2xl font-bold text-gray-900 mb-4">System Health</h2>
+            <SystemHealthMonitor />
+          </div>
+        )}
+
         {activeTab === 'events' && (
           <div className="space-y-6">
             <div className="flex items-center justify-between">
@@ -101,6 +202,13 @@ function App() {
           </div>
         )}
 
+        {activeTab === 'stats' && (
+          <div className="space-y-6">
+            <h2 className="text-2xl font-bold text-gray-900 mb-4">Simulation Statistics</h2>
+            <SimulationStats />
+          </div>
+        )}
+
         {activeTab === 'configure' && (
           <div className="space-y-6">
             <div className="flex items-center justify-between">
@@ -112,6 +220,18 @@ function App() {
               </div>
             </div>
             <ConfigurationWizard />
+          </div>
+        )}
+
+        {activeTab === 'experiments' && (
+          <div className="space-y-6">
+            <ExperimentManagement />
+          </div>
+        )}
+
+        {activeTab === 'results-analysis' && (
+          <div className="space-y-6">
+            <ResultsAnalysis />
           </div>
         )}
 
@@ -211,12 +331,12 @@ function App() {
                 <h3 className="text-lg font-semibold text-gray-900 mb-4">About FBA-Bench</h3>
                 <div className="text-sm text-gray-600 space-y-2">
                   <p>
-                    FBA-Bench is a comprehensive simulation platform for Amazon FBA (Fulfillment by Amazon) 
-                    business scenarios, featuring multi-agent competition, real-time pricing dynamics, 
+                    FBA-Bench is a comprehensive simulation platform for Amazon FBA (Fulfillment by Amazon)
+                    business scenarios, featuring multi-agent competition, real-time pricing dynamics,
                     and advanced analytics.
                   </p>
                   <p>
-                    This dashboard provides real-time monitoring and control capabilities for simulation 
+                    This dashboard provides real-time monitoring and control capabilities for simulation
                     experiments, including KPI tracking, event logging, and system health monitoring.
                   </p>
                   <div className="mt-4 pt-4 border-t border-gray-200">
@@ -247,7 +367,8 @@ function App() {
             </div>
           </div>
         </div>
-      </footer>
+        </footer>
+      </ErrorBoundary>
     </div>
   );
 }

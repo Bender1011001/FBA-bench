@@ -2,24 +2,31 @@ import React, { useState } from 'react';
 import { SimulationConfigForm } from '../components/SimulationConfigForm';
 import { AgentSelectionForm } from '../components/AgentSelectionForm';
 import { ExperimentConfigForm } from '../components/ExperimentConfigForm';
-import TemplateSelectionForm from '../components/TemplateSelectionForm'; // Import the new component
-import type { Configuration, SimulationSettings, TemplateAgentConfig, Template } from '../types'; // Import only used types explicitly
+import TemplateSelectionForm from '../components/TemplateSelectionForm';
+import ConstraintConfigForm from '../components/ConstraintConfigForm';
+import TierSelector from '../components/TierSelector';
+// import ConstraintMonitor from '../components/ConstraintMonitor'; // Not directly used in wizard steps, but good for context if ever needed for live config check
+
+import type { Configuration, SimulationSettings, TemplateAgentConfig, Template, ConstraintConfig } from '../types';
+import { defaultConstraintConfig, constraintTiers } from '../data/constraintTiers'; // Import constraintTiers
 
 const WizardStep = {
   SimulationType: 0,
-  Templates: 1, // New step
-  BasicParameters: 2, // Shifted
-  AgentSelection: 3, // Shifted
-  ConstraintConfiguration: 4, // Shifted
-  OutputSettings: 5, // Shifted
-  ReviewAndLaunch: 6 // Shifted
+  Templates: 1,
+  Simulation: 2, // Renamed from BasicParameters
+  Agents: 3, // Renamed from AgentSelection
+  Constraints: 4, // New step for Constraints & Tiers - Step 5 in description for user, but step 4 in 0-indexed enum
+  Experiment: 5, // Renamed from OutputSettings
+  Review: 6 // Renamed from ReviewAndLaunch
 } as const;
 
 type WizardStep = typeof WizardStep[keyof typeof WizardStep];
 
 export function ConfigurationWizard() {
   const [currentStep, setCurrentStep] = useState<WizardStep>(WizardStep.SimulationType);
-  const [isExperiment, setIsExperiment] = useState<boolean>(false); // Explicitly define type
+  const [isExperiment, setIsExperiment] = useState<boolean>(false);
+  const [isConstraintConfigValid, setIsConstraintConfigValid] = useState<boolean>(true); // New state for validation
+
   const [currentConfiguration, setCurrentConfiguration] = useState<Configuration>({
     simulationSettings: {
       simulationName: '',
@@ -38,44 +45,72 @@ export function ConfigurationWizard() {
       max_tokens: 1000,
     },
     constraints: {
-      maxBudget: 0,
-      maxTime: 0,
-      tokenLimits: { grok4: 0 },
+      ...defaultConstraintConfig,
+      tier: defaultConstraintConfig.tier as ConstraintConfig['tier'], // Explicitly cast tier
     },
     experimentSettings: {
       experimentName: '',
       description: '',
       iterations: 1,
-      parallelRuns: 1,
+      batchSize: 1, // Changed from parallelRuns
       parameters: [],
     }
   });
 
   const handleNext = () => {
     setCurrentStep((prev) => {
-        if (prev === WizardStep.SimulationType) {
-            // After SimulationType, always go to Templates
-            return WizardStep.Templates;
-        }
-        return (prev + 1) as WizardStep;
+      // Perform validation check if moving from the Constraints step
+      if (prev === WizardStep.Constraints && !isConstraintConfigValid) {
+        alert('Please resolve all constraint configuration errors and warnings before proceeding.');
+        return prev; // Stay on the current step
+      }
+
+      // Logic for step progression based on simulation type
+      if (prev === WizardStep.SimulationType) {
+        return WizardStep.Templates;
+      }
+      return (prev + 1) as WizardStep;
     });
   };
 
   const handleBack = () => {
     setCurrentStep((prev) => {
-        if (prev === WizardStep.Templates && !isExperiment) {
-            // If coming from Templates, go back to SimulationType if not an experiment
-            return WizardStep.SimulationType;
-        }
-        return (prev - 1) as WizardStep;
+      if (prev === WizardStep.Templates && !isExperiment) {
+        return WizardStep.SimulationType;
+      }
+      return (prev - 1) as WizardStep;
     });
   };
-  
+
   const handleSelectTemplate = (config: Configuration) => {
     setCurrentConfiguration(config);
-    // After selecting a template, decide next step based on template content or force next.
-    // For now, always proceed to the next step (BasicParameters)
-    setCurrentStep(WizardStep.BasicParameters);
+    setCurrentStep(WizardStep.Simulation); // Go to the Simulation step after template selection
+  };
+
+  const handleConstraintConfigChange = (config: ConstraintConfig, isValid: boolean) => {
+    setCurrentConfiguration((prev) => ({
+      ...prev,
+      constraints: config,
+    }));
+    setIsConstraintConfigValid(isValid);
+  };
+
+  const handleTierSelect = (tierName: ConstraintConfig['tier']) => {
+    // Logic to update the tier in the current configuration and set default limits based on the selected tier
+    const newTier = constraintTiers.find(tier => tier.name === tierName);
+    if (newTier) {
+      setCurrentConfiguration(prev => ({
+        ...prev,
+        constraints: {
+          ...prev.constraints,
+          tier: newTier.name as ConstraintConfig['tier'],
+          budgetLimitUSD: newTier.budgetLimit,
+          tokenLimit: newTier.tokenLimit,
+          rateLimitPerMinute: newTier.rateLimit,
+          memoryLimitMB: newTier.memoryLimit,
+        },
+      }));
+    }
   };
 
   const handleSubmit = () => {
@@ -150,7 +185,7 @@ export function ConfigurationWizard() {
           <TemplateSelectionForm onSelectTemplate={handleSelectTemplate} onNext={handleNext} />
         )}
 
-        {currentStep === WizardStep.BasicParameters && (
+        {currentStep === WizardStep.Simulation && (
           <SimulationConfigForm
             config={currentConfiguration.simulationSettings}
             onConfigChange={(newSettings: SimulationSettings) =>
@@ -162,51 +197,57 @@ export function ConfigurationWizard() {
           />
         )}
 
-        {currentStep === WizardStep.AgentSelection && (
+        {currentStep === WizardStep.Agents && (
           <>
             {currentConfiguration.agentConfigs.length === 0 ? (
-                <div>No agents configured for this template. Please go back to select a template with agents or adjust manually.</div>
+              <div>No agents configured for this template. Please go back to select a template with agents or adjust manually.</div>
             ) : (
-                <AgentSelectionForm
-                    // Only showing the first agent for a simple demo since AgentSelectionForm expects a single agent
-                    agentConfig={currentConfiguration.agentConfigs[0]}
-                    onAgentConfigChange={(newAgentConfig: TemplateAgentConfig) =>
-                        setCurrentConfiguration((prev) => {
-                            const updatedAgentConfigs = [...prev.agentConfigs];
-                            if (updatedAgentConfigs[0]) {
-                                updatedAgentConfigs[0] = { ...newAgentConfig };
-                            }
-                            return { ...prev, agentConfigs: updatedAgentConfigs };
-                        })
+              <AgentSelectionForm
+                // Only showing the first agent for a simple demo since AgentSelectionForm expects a single agent
+                agentConfig={currentConfiguration.agentConfigs[0]}
+                onAgentConfigChange={(newAgentConfig: TemplateAgentConfig) =>
+                  setCurrentConfiguration((prev) => {
+                    const updatedAgentConfigs = [...prev.agentConfigs];
+                    if (updatedAgentConfigs[0]) {
+                      updatedAgentConfigs[0] = { ...newAgentConfig };
                     }
-                />
+                    return { ...prev, agentConfigs: updatedAgentConfigs };
+                  })
+                }
+              />
             )}
           </>
         )}
-        
-        {currentStep === WizardStep.ConstraintConfiguration && (
-          <div>
-            <h2 className="text-2xl font-semibold text-gray-800 mb-4">Constraint & Tier Configuration</h2>
-            {/* You would usually have a form component here */}
-            <p className="text-gray-600">
-              Configure budget constraints, token limits, and performance tiers for:
-              <pre>{JSON.stringify(currentConfiguration.constraints, null, 2)}</pre>
-            </p>
+
+        {currentStep === WizardStep.Constraints && (
+          <div className="space-y-6">
+            <ConstraintConfigForm
+              initialConfig={currentConfiguration.constraints}
+              onConfigChange={handleConstraintConfigChange}
+            />
+            <TierSelector
+              currentConfig={currentConfiguration.constraints}
+              onTierSelect={handleTierSelect as (tierName: string) => void}
+            />
+            {/* Optionally, display ConstraintMonitor here for immediate feedback based on current constraints */}
+            {/* <ConstraintMonitor usage={{...}} /> */}
           </div>
         )}
 
-        {currentStep === WizardStep.OutputSettings && (
-          <div>
-            <h2 className="text-2xl font-semibold text-gray-800 mb-4">Output & Monitoring Settings</h2>
-            {/* You would usually have a form component here */}
-            <p className="text-gray-600">
-              Define how simulation data and results are saved and displayed for:
-              <pre>{JSON.stringify(currentConfiguration.experimentSettings?.outputConfig, null, 2)}</pre>
-            </p>
-          </div>
+        {currentStep === WizardStep.Experiment && (
+          <ExperimentConfigForm
+            config={currentConfiguration.experimentSettings}
+            onConfigChange={(newSettings) =>
+              setCurrentConfiguration((prev) => ({
+                ...prev,
+                experimentSettings: { ...newSettings, outputConfig: newSettings.outputConfig || {} }, // Ensure outputConfig is not undefined
+              }))
+            }
+          />
         )}
 
-        {currentStep === WizardStep.ReviewAndLaunch && (
+
+        {currentStep === WizardStep.Review && (
           <div>
             <h2 className="text-2xl font-semibold text-gray-800 mb-4">Review & Launch</h2>
             <div className="bg-gray-50 p-4 rounded-md mb-6">
@@ -220,7 +261,6 @@ export function ConfigurationWizard() {
               type="button"
               className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
               onClick={() => {
-                // Save currentConfiguration to local storage
                 localStorage.setItem('fbaBenchConfiguration', JSON.stringify(currentConfiguration));
                 alert('Configuration saved to local storage!');
               }}
@@ -255,23 +295,21 @@ export function ConfigurationWizard() {
               onClick={() => {
                 const templateName = prompt("Enter a name for your template:");
                 if (templateName) {
-                    // Basic validation: Ensure minimal settings are present
-                    if (!currentConfiguration.simulationSettings.simulationName || currentConfiguration.agentConfigs.length === 0) {
-                        alert("Cannot save as template: Please provide a simulation name and at least one agent configuration.");
-                        return;
-                    }
-                    const newTemplate: Template = {
-                        id: `custom-${new Date().getTime()}`, // Use getTime() for unique id
-                        name: templateName,
-                        description: `User-saved template: ${templateName}`,
-                        useCase: 'Custom saved configuration',
-                        configuration: currentConfiguration,
-                    };
-                    // Optionally, persist user templates in local storage
-                    const userTemplates: Template[] = JSON.parse(localStorage.getItem('fbaBenchUserTemplates') || '[]');
-                    userTemplates.push(newTemplate);
-                    localStorage.setItem('fbaBenchUserTemplates', JSON.stringify(userTemplates));
-                    alert(`Template '${templateName}' saved locally.`);
+                  if (!currentConfiguration.simulationSettings.simulationName || currentConfiguration.agentConfigs.length === 0) {
+                    alert("Cannot save as template: Please provide a simulation name and at least one agent configuration.");
+                    return;
+                  }
+                  const newTemplate: Template = {
+                    id: `custom-${new Date().getTime()}`,
+                    name: templateName,
+                    description: `User-saved template: ${templateName}`,
+                    useCase: 'Custom saved configuration',
+                    configuration: currentConfiguration,
+                  };
+                  const userTemplates: Template[] = JSON.parse(localStorage.getItem('fbaBenchUserTemplates') || '[]');
+                  userTemplates.push(newTemplate);
+                  localStorage.setItem('fbaBenchUserTemplates', JSON.stringify(userTemplates));
+                  alert(`Template '${templateName}' saved locally.`);
                 }
               }}
             >
@@ -284,12 +322,12 @@ export function ConfigurationWizard() {
       <div className="flex justify-between mt-8">
         <button
           onClick={handleBack}
-          disabled={currentStep === WizardStep.SimulationType} // Disable if on the first step
+          disabled={currentStep === WizardStep.SimulationType}
           className="px-6 py-2 border border-gray-300 rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Previous
         </button>
-        {currentStep === WizardStep.ReviewAndLaunch ? (
+        {currentStep === WizardStep.Review ? (
           <button
             onClick={handleSubmit}
             className="px-6 py-2 border border-transparent rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
@@ -298,22 +336,7 @@ export function ConfigurationWizard() {
           </button>
         ) : (
           <button
-            onClick={() => {
-              if (currentStep === WizardStep.SimulationType) {
-                // After selecting simulation type, move to templates step if it's not an experiment
-                // Or directly to BasicParameters if it is an experiment (skipping templates for experiments)
-                // For now, always go to templates. We can refine this logic later.
-                if (isExperiment) {
-                  // If it's an experiment, perhaps we skip the general templates and go straight to experiment-specific setup
-                  // For now, still go to templates to allow selecting a parameter sweep template
-                  handleNext(); 
-                } else {
-                  handleNext();
-                }
-              } else {
-                handleNext();
-              }
-            }}
+            onClick={() => handleNext()}
             className="px-6 py-2 border border-transparent rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
           >
             Next

@@ -1,16 +1,71 @@
+interface Money {
+  amount: string;
+  currency: string;
+}
+
+export interface ProductState {
+    id: string;
+    name: string;
+    current_price: Money;
+    // Add other product-related fields as needed
+}
+
+export interface CompetitorState {
+    id: string;
+    name: string;
+    current_price: Money;
+    // Add other competitor-related fields as needed
+}
+
+export interface FinancialSummary {
+    total_revenue: Money;
+    total_costs: Money;
+    total_profit: Money;
+    total_sales: Money; // Added for use in metrics
+}
+
+export interface MarketSummary {
+    trust_score: number;
+    // Add other market-related fields as needed
+}
+
+export interface AgentSnapshot {
+    id: string;
+    name: string;
+    status: 'active' | 'paused' | 'error' | 'idle';
+    // Add other agent-related fields as needed for the snapshot
+}
+
+export interface RecentSale {
+    sale_id: string;
+    product_id: string;
+    quantity: number;
+    sale_price: Money;
+    timestamp: string;
+}
+
+export interface SimulationMetadata {
+    simulation_id?: string;
+    status?: 'running' | 'paused' | 'stopped' | 'error' | 'starting' | 'idle';
+    total_ticks?: number;
+    [key: string]: unknown; // For flexibility
+}
+
 export interface SimulationSnapshot {
     current_tick: number;
     simulation_time: string;
     last_update: string;
     uptime_seconds: number;
-    products: Record<string, any>;
-    competitors: Record<string, any>;
-    market_summary: Record<string, any>;
-    financial_summary: Record<string, any>;
-    agents: Record<string, any>;
-    command_stats: Record<string, any>;
-    event_stats: Record<string, any>;
-    metadata: Record<string, any>;
+    products: Record<string, ProductState>;
+    competitor_states: CompetitorState[];
+    market_summary: MarketSummary;
+    financial_summary: FinancialSummary;
+    agents: Record<string, AgentSnapshot>;
+    command_stats: Record<string, unknown>; // Keep as unknown for now if structure is unclear
+    event_stats: { ticks_per_second?: number; [key: string]: unknown; }; // Added ticks_per_second
+    metadata: SimulationMetadata;
+    recent_sales: RecentSale[]; // Added recent sales array
+    timestamp: string; // Add timestamp to snapshot for last update time
 }
 
 export interface ApiResponse<T> {
@@ -23,10 +78,14 @@ export interface ApiResponse<T> {
 export interface SimulationSettings {
     simulationName: string;
     description: string;
-    duration: number; // in ticks
+    duration: number; // in ticks (maps to 'duration' in validation)
+    tickInterval: number; // New: in seconds
     randomSeed: number;
     metricsInterval: number;
     snapshotInterval: number;
+    initialPrice: number; // New: initial trading price
+    inventory: number; // New: initial agent inventory
+    [key: string]: string | number | boolean; // Add index signature for form flexibility
 }
 
 // Existing LLMConfig updated with max_tokens
@@ -50,22 +109,57 @@ export interface TemplateAgentConfig {
   // Add other common agent config fields if necessary that are not covered by AgentRunnerConfig directly
 }
 
-export interface Constraints {
-    maxBudget: number;
-    maxTime: number; // in milliseconds
-    tokenLimits: Record<string, number>; // e.g., { grok4: 1000000 }
+export interface ConstraintConfig {
+  tier: 'T0' | 'T1' | 'T2' | 'T3';
+  budgetLimitUSD: number;
+  tokenLimit: number; // This will map to max_total_tokens from backend
+  rateLimitPerMinute: number;
+  memoryLimitMB: number;
+  dailyBudgetLimitUSD?: number;
+  monthlyBudgetLimitUSD?: number;
+}
+
+export interface TierConfig {
+  name: string;
+  budgetLimit: number; // Total budget in USD
+  tokenLimit: number; // Max total tokens
+  rateLimit: number; // API calls per minute
+  memoryLimit: number; // Agent memory size in MB
+  features: string[];
+  description: string;
+}
+
+export interface ConstraintUsage {
+  budgetUsedUSD: number;
+  budgetLimitUSD: number;
+  tokenUsed: number;
+  tokenLimit: number;
+  rateUsed: number;
+  rateLimit: number;
+  memoryUsedMB: number;
+  memoryLimitMB: number;
+  estimatedTimeUntilBudgetReached?: string;
+  estimatedTimeUntilTokensReached?: string;
+  budgetHealth: 'safe' | 'warning' | 'critical';
+  tokenHealth: 'safe' | 'warning' | 'critical';
+  rateHealth: 'safe' | 'warning' | 'critical';
+  memoryHealth: 'safe' | 'warning' | 'critical';
 }
 
 export interface ExperimentParameter {
   name: string;
-  values: (string | number)[];
+  type: 'discrete' | 'range';
+  values?: (string | number)[]; // For discrete values
+  min?: number; // For range
+  max?: number; // For range
+  step?: number; // For range
 }
 
 // Existing ExperimentConfig updated to use ExperimentParameter
 export interface ExperimentConfig {
     experimentName?: string; // Changed from experiment_name for consistency if needed
     description?: string;
-    baseParameters?: Record<string, unknown>; // Changed from base_parameters
+    baseParameters?: Record<string, (string | number)[]>; // Changed from base_parameters to align with new structure
     parameters?: ExperimentParameter[]; // Using new interface
     outputConfig?: { // Changed from output_config
         saveEvents?: boolean; // Changed from save_events
@@ -74,16 +168,78 @@ export interface ExperimentConfig {
         metricsToTrack?: string[]; // Changed from metrics_to_track
         [key: string]: unknown;
     };
-    parallelRuns?: number; // Changed from parallel_workers
+    batchSize?: number; // Renamed from parallelRuns for clarity
     iterations?: number; // Changed from max_runs as per template usage
     [key: string]: unknown;
+}
+
+export type ExperimentStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'paused';
+
+export interface ExperimentProgressUpdate {
+    experimentId: string;
+    status?: ExperimentStatus;
+    progress?: number;
+    estimatedCompletionTime?: string;
+    // Add other fields that might come from WebSocket updates
+    [key: string]: unknown;
+}
+
+export interface ExperimentRunResult {
+    experimentId: string;
+    message: string;
+    // Potentially other data like initial status, start time
+}
+
+export interface ExperimentExecution {
+    id: string;
+    experimentName: string;
+    description?: string;
+    config: ExperimentConfig;
+    status: ExperimentStatus;
+    progress?: number; // 0-100
+    startTime?: string;
+    endTime?: string;
+    estimatedCompletionTime?: string;
+    lastUpdated?: string; // Timestamp of the last update
+    resultsSummary?: Record<string, unknown>; // Basic summary of results
+    // Detailed results will be fetched by ExperimentResults component
+}
+
+export interface ExperimentResultSummary {
+    id: string;
+    experimentName: string;
+    description: string;
+    status: ExperimentStatus;
+    startTime: string;
+    endTime: string;
+    totalCombinations: number;
+    completedCombinations: number;
+    // Add key metrics/results here that can be displayed in a table
+    keyMetrics?: Record<string, number | string>;
+}
+
+export interface DetailedExperimentResult {
+    experimentId: string;
+    config: ExperimentConfig; // The full configuration used
+    summary: ExperimentResultSummary;
+    // Potentially full result data, e.g.,
+    // simulationRuns: SimulationRunData[];
+    // rawData: any; // More detailed raw output
+    // For now, keep it simple
+    resultsData: Record<string, unknown>; // Placeholder for actual detailed results
+}
+
+// Add a type for metric data if we want to visualize it
+export interface MetricDataPoint {
+    label: string;
+    value: number;
 }
 
 export interface Configuration {
     simulationSettings: SimulationSettings;
     agentConfigs: TemplateAgentConfig[];
     llmSettings: LLMConfig;
-    constraints: Constraints;
+    constraints: ConstraintConfig;
     experimentSettings: ExperimentConfig;
 }
 
@@ -170,4 +326,166 @@ export interface AgentConfigurationResponse {
     agent_type: string;
     description: string;
     example_config: AgentRunnerConfig; // Using AgentRunnerConfig as example type
+}
+
+export interface ConnectionStatus {
+  connected: boolean;
+  reconnectAttempts: number;
+  lastHeartbeat?: string;
+}
+// Specific Event Payloads
+export interface TickEventPayload {
+    tick_number: number;
+}
+
+export interface SaleEventPayload {
+    sale: {
+        quantity: number;
+        product_asin: string;
+        sale_price: Money;
+        buyer_id: string;
+        competitor_id?: string;
+    };
+}
+
+export interface SetPriceCommandPayload {
+    product_asin: string;
+    new_price: Money;
+}
+
+export interface ProductPriceUpdatedPayload {
+    product_asin: string;
+    old_price: Money;
+    new_price: Money;
+}
+
+export interface CompetitorPricesUpdatedPayload {
+    competitor_states: CompetitorState[];
+}
+
+export type SimulationEvent =
+    | { type: 'tick'; timestamp: string; payload: TickEventPayload }
+    | { type: 'sale_occurred'; timestamp: string; payload: SaleEventPayload }
+    | { type: 'set_price_command'; timestamp: string; payload: SetPriceCommandPayload }
+    | { type: 'product_price_updated'; timestamp: string; payload: ProductPriceUpdatedPayload }
+    | { type: 'competitor_prices_updated'; timestamp: string; payload: CompetitorPricesUpdatedPayload }
+    | { type: string; timestamp: string; payload: Record<string, unknown> }; // Fallback for other, unknown event types
+
+export interface SimulationStatus {
+  id: string;
+  status: 'running' | 'paused' | 'stopped' | 'error' | 'starting' | 'idle';
+  currentTick: number;
+  totalTicks: number;
+  simulationTime: string;
+  realTime: string;
+  ticksPerSecond: number;
+  revenue: number;
+  costs: number;
+  profit: number;
+  activeAgentCount: number;
+  totalAgentCount?: number; // Added for clarity, might be in snapshot metadata
+}
+
+export interface AgentStatus {
+  id: string;
+  name: string;
+  status: 'active' | 'paused' | 'error' | 'idle';
+  profit: number;
+  decisions: number;
+  lastAction: string;
+  lastActionTime: string;
+}
+
+export interface SystemHealth {
+  apiResponseTime: number;
+  wsConnectionStatus: 'connected' | 'disconnected' | 'error';
+  memoryUsage: number;
+  cpuUsage: number;
+  dbConnectionStatus: 'connected' | 'disconnected';
+  queueLength: number;
+}
+
+export interface DashboardMetric {
+  label: string;
+  value: string | number;
+  formatType?: 'currency' | 'number' | 'percentage' | 'time' | 'string'; // Added 'string'
+  trend?: 'up' | 'down' | 'neutral';
+  unit?: string;
+  description?: string;
+  color?: string; // For status indicators
+}
+
+// New Interfaces for Results Visualization and Analysis Dashboard
+export interface ResultsData {
+  experimentId: string;
+  simulationResults: SimulationResult[];
+  aggregatedMetrics: AggregatedMetrics;
+  agentPerformance: AgentPerformanceData[];
+  financialMetrics: FinancialMetrics;
+  timeSeriesData: TimeSeriesData[];
+}
+
+export interface SimulationResult {
+  timestamp: string;
+  tick: number;
+  revenue: number;
+  costs: number;
+  profit: number;
+  agentMetrics: Record<string, number>;
+  marketMetrics: MarketMetrics;
+}
+
+export interface AggregatedMetrics {
+  totalRevenue: number;
+  totalCosts: number;
+  totalProfit: number;
+  averageTicksPerSecond: number;
+  topPerformingAgent: string;
+  experimentDuration: number;
+}
+
+// Placeholder for AgentPerformanceData - define based on backend structure
+export interface AgentPerformanceData {
+  agentId: string;
+  profit: number;
+  decisionsMade: number;
+  accuracy: number;
+  // Add other agent-specific metrics
+}
+
+// Placeholder for FinancialMetrics - define based on backend structure
+export interface FinancialMetrics {
+  totalRevenue: number;
+  totalCosts: number;
+  totalProfit: number;
+  // Add other key financial metrics
+}
+
+// Placeholder for TimeSeriesData - define based on backend structure
+export interface TimeSeriesData {
+  timestamp: string;
+  tick: number;
+  revenue: number;
+  costs: number;
+  profit: number;
+  [key: string]: number | string; // For other metrics over time
+}
+
+// Placeholder for MarketMetrics - define based on backend structure
+export interface MarketMetrics {
+  priceTrend: number;
+  inventoryLevels: number;
+  // Add other market-specific metrics
+}
+
+export interface ChartConfiguration {
+  chartType: 'line' | 'bar' | 'area' | 'scatter' | 'pie' | 'gauge' | 'heatmap' | 'correlation';
+  dataSource: string; // e.g., 'financialMetrics', 'agentPerformance', 'timeSeriesData'
+  timeRange?: { start: string; end: string }; // Optional for non-time-series charts
+  metrics: string[]; // Metrics to display on the chart
+  groupBy?: string; // For grouping data, e.g., by agent type
+  filters?: Record<string, unknown>; // Additional filters
+  title?: string;
+  xAxisLabel?: string;
+  yAxisLabel?: string;
 }

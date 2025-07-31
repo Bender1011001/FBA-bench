@@ -1,6 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useSimulationStore } from '../store/simulationStore';
-import type { SimulationEvent } from '../types';
+import type {
+  SimulationEvent,
+  TickEventPayload,
+  SaleEventPayload,
+  SetPriceCommandPayload,
+  ProductPriceUpdatedPayload,
+  CompetitorPricesUpdatedPayload
+} from '../types';
 
 interface EventLogProps {
   className?: string;
@@ -16,6 +23,27 @@ const formatTimestamp = (timestamp: string): string => {
     return 'Invalid time';
   }
 };
+
+// Type guards for discriminated union
+function isTickEvent(event: SimulationEvent): event is (SimulationEvent & { type: 'tick', payload: TickEventPayload }) {
+  return event.type === 'tick';
+}
+
+function isSaleOccurredEvent(event: SimulationEvent): event is (SimulationEvent & { type: 'sale_occurred', payload: SaleEventPayload }) {
+  return event.type === 'sale_occurred';
+}
+
+function isSetPriceCommandEvent(event: SimulationEvent): event is (SimulationEvent & { type: 'set_price_command', payload: SetPriceCommandPayload }) {
+  return event.type === 'set_price_command';
+}
+
+function isProductPriceUpdatedEvent(event: SimulationEvent): event is (SimulationEvent & { type: 'product_price_updated', payload: ProductPriceUpdatedPayload }) {
+  return event.type === 'product_price_updated';
+}
+
+function isCompetitorPricesUpdatedEvent(event: SimulationEvent): event is (SimulationEvent & { type: 'competitor_prices_updated', payload: CompetitorPricesUpdatedPayload }) {
+  return event.type === 'competitor_prices_updated';
+}
 
 const getEventIcon = (eventType: string) => {
   switch (eventType) {
@@ -60,25 +88,22 @@ const getEventIcon = (eventType: string) => {
 };
 
 const getEventDescription = (event: SimulationEvent): string => {
-  switch (event.type) {
-    case 'tick':
-      return `Simulation advanced to tick ${event.tick_number}`;
-    
-    case 'sale_occurred':
-      return `Sale: ${event.sale.quantity}x ${event.sale.product_asin} for ${event.sale.sale_price.amount}`;
-    
-    case 'set_price_command':
-      return `Price command: Set ${event.product_asin} to ${event.new_price.amount}`;
-    
-    case 'product_price_updated':
-      return `Price updated: ${event.product_asin} from ${event.old_price.amount} to ${event.new_price.amount}`;
-    
-    case 'competitor_prices_updated':
-      return `Competitor prices updated (${event.competitor_states.length} competitors)`;
-    
-    default:
-      return `Unknown event: ${(event as { type: string }).type || 'undefined'}`;
+  if (isTickEvent(event)) {
+    return `Simulation advanced to tick ${event.payload.tick_number}`;
   }
+  if (isSaleOccurredEvent(event)) {
+    return `Sale: ${event.payload.sale.quantity}x ${event.payload.sale.product_asin} for ${event.payload.sale.sale_price.amount}`;
+  }
+  if (isSetPriceCommandEvent(event)) {
+    return `Price command: Set ${event.payload.product_asin} to ${event.payload.new_price.amount}`;
+  }
+  if (isProductPriceUpdatedEvent(event)) {
+    return `Price updated: ${event.payload.product_asin} from ${event.payload.old_price.amount} to ${event.payload.new_price.amount}`;
+  }
+  if (isCompetitorPricesUpdatedEvent(event)) {
+    return `Competitor prices updated (${event.payload.competitor_states.length} competitors)`;
+  }
+  return `Unknown event: ${event.type}`;
 };
 
 const getEventTypeLabel = (eventType: string): string => {
@@ -205,7 +230,7 @@ export const EventLog: React.FC<EventLogProps> = ({
       </div>
 
       {/* Event list */}
-      <div 
+      <div
         ref={scrollRef}
         className="h-96 overflow-y-auto"
       >
@@ -246,18 +271,18 @@ export const EventLog: React.FC<EventLogProps> = ({
                     </p>
                     
                     {/* Additional event details */}
-                    {event.type === 'sale_occurred' && (
+                    {isSaleOccurredEvent(event) && (
                       <div className="mt-2 text-xs text-gray-500">
-                        Buyer: {event.sale.buyer_id}
-                        {event.sale.competitor_id && ` • Competitor: ${event.sale.competitor_id}`}
+                        Buyer: {event.payload.sale.buyer_id}
+                        {event.payload.sale.competitor_id && ` • Competitor: ${event.payload.sale.competitor_id}`}
                       </div>
                     )}
                     
-                    {event.type === 'competitor_prices_updated' && (
+                    {isCompetitorPricesUpdatedEvent(event) && (
                       <div className="mt-2 text-xs text-gray-500">
-                        {event.competitor_states.map((comp) => (
-                          <div key={comp.competitor_id}>
-                            {comp.competitor_id}: {comp.current_price.amount}
+                        {event.payload.competitor_states.map((comp) => (
+                          <div key={comp.id}>
+                            {comp.name}: {comp.current_price.amount}
                           </div>
                         ))}
                       </div>
