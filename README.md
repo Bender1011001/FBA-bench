@@ -1,4 +1,4 @@
-# 🚀 FBA-Bench: A Tier-1 LLM Agent Benchmark for Amazon FBA Simulations
+# 🚀 FBA-Bench: A LLM Agent Benchmark for Amazon FBA Simulations
 
 ## Evaluating Autonomous Agents in Complex E-commerce Environments
 
