@@ -1,0 +1,37 @@
+# Example Infrastructure Configuration for Distributed Simulation
+
+infrastructure_system:
+  enabled: true
+
+  # Distributed Simulation Configuration
+  distributed_simulation:
+    enabled: true
+    event_bus_type: "redis" # Use Redis for distributed communication
+    redis_host: "redis" # Service name in docker-compose, or Redis IP/hostname
+    redis_port: 6379
+    agent_runner_concurrency: 1 # Each docker agent_runner processes one agent at a time
+    orchestrator_mode: "auto"
+
+  # LLM Orchestration (Batching and Caching)
+  llm_orchestration:
+    batching:
+      enabled: true
+      batch_size: 50 # Group up to 50 LLM requests
+      batch_interval_seconds: 0.05 # Wait max 50ms before sending batch
+      max_concurrent_batches: 10 # Allow up to 10 batches in flight
+    caching:
+      enabled: true
+      cache_backend: "sqlite"
+      cache_path: "./llm_cache_distributed.db" # Each runner will hit its own cache initially
+      cache_ttl_seconds: 86400 # 24 hours
+
+  # Performance Monitoring (for distributed environment)
+  performance_monitoring:
+    enabled: true
+    collection_interval_seconds: 10
+    export_formats: ["json"]
+    export_path: "./distributed_performance_logs/"
+    integrations:
+      grafana_prometheus:
+        enabled: false # Enable if you have Prometheus/Grafana setup
+        endpoint: "http://localhost:9090"

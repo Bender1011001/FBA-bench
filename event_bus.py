@@ -7,6 +7,7 @@ import uuid
 from typing import Dict, List, Callable, Any, Optional, Type, Union
 from datetime import datetime
 from abc import ABC, abstractmethod
+import zlib # For compression
 
 from events import BaseEvent, EVENT_TYPES # Ensure BaseEvent is imported for type hinting
 
@@ -18,6 +19,10 @@ logger = logging.getLogger(__name__)
 
 # Initialize tracer for EventBus module
 event_bus_tracer = setup_tracing(service_name="fba-bench-eventbus")
+
+# Type hinting for DistributedEventBus to avoid circular import at runtime
+if TYPE_CHECKING:
+    from infrastructure.distributed_event_bus import DistributedEventBus
 
 class EventBusBackend(ABC):
     """Abstract base class for EventBus backends."""
@@ -72,11 +77,10 @@ class AsyncioQueueBackend(EventBusBackend):
         self._is_recording = False
         self._recorded_events: List[Dict[str, Any]] = [] # Stores serialized events
 
-
     async def start(self) -> None:
         """Start the event processing loop."""
         if self._running:
-            logger.warning("EventBus backend already running")
+            logger.warning("AsyncioQueueBackend already running")
             return
         
         self._queue = asyncio.Queue(maxsize=self.max_queue_size)
@@ -257,6 +261,137 @@ class AsyncioQueueBackend(EventBusBackend):
             logger.error(f"Error executing callback {callback.__name__} for event {type(event).__name__} (ID: {event.event_id if hasattr(event, 'event_id') else 'unknown'}): {e}", exc_info=True)
 
 
+class DistributedBackend(EventBusBackend):
+    """
+    Distributed EventBus backend using a message broker (e.g., Redis Pub/Sub, Kafka).
+    Enables event sharing across processes and persistence.
+    """
+    def __init__(self, distributed_bus: "DistributedEventBus"): # Type hint for DistributedEventBus
+        self.distributed_bus = distributed_bus
+        self._subscribers: Dict[str, List[Callable]] = defaultdict(list)
+        self._running = False
+        logger.info("DistributedBackend initialized.")
+
+    async def start(self) -> None:
+        """Connects to the distributed message broker."""
+        if self._running:
+            logger.warning("DistributedBackend already running.")
+            return
+        await self.distributed_bus.start() # Start the underlying distributed bus
+        self._running = True
+        logger.info("DistributedBackend started.")
+
+    async def stop(self) -> None:
+        """Disconnects from the distributed message broker."""
+        if not self._running:
+            return
+        await self.distributed_bus.stop() # Stop the underlying distributed bus
+        self._running = False
+        logger.info("DistributedBackend stopped.")
+
+    async def publish(self, event: BaseEvent) -> None:
+        """
+        Publishes an event to the distributed bus.
+        Serializes events and sends them via the distributed_bus.
+        """
+        event_dict = event.to_summary_dict() if hasattr(event, 'to_summary_dict') and callable(event.to_summary_dict) else {k: str(v) for k,v in event.__dict__.items()}
+        await self.distributed_bus.publish_event(type(event).__name__, event_dict)
+        logger.debug(f"Published event {type(event).__name__} to distributed bus.")
+
+    async def subscribe(self, event_type: Any, callback: Callable) -> None:
+        """
+        Subscribes to events on the distributed bus.
+        Callbacks will be invoked when relevant events are received from the distributed_bus.
+        """
+        if inspect.isclass(event_type) and issubclass(event_type, BaseEvent):
+            event_name = event_type.__name__
+        else:
+            event_name = str(event_type)
+        
+        # Register a wrapper handler with the underlying distributed bus
+        # This handler will deserialize the event and then call original callbacks
+        async def distributed_event_wrapper(message: Dict):
+            if message.get("event_type") == event_name:
+                # Reconstruct BaseEvent from message. For simplicity, just pass message data
+                # In a real system, you'd deserialize to the actual BaseEvent subtype
+                # event_obj = EVENT_TYPES.get(event_name)(**message.get("event_data", {})) # Example
+                # await self._execute_callback(callback, event_obj)
+                
+                # For now, just pass the dict directly if the event cannot be re-instantiated easily
+                logger.debug(f"DistributedBackend: Received event {event_name} from distributed bus. Invoking local subscribers.")
+                # Execute all local callbacks for this event type
+                for cb in self._subscribers[event_name]:
+                    if asyncio.iscoroutinefunction(cb):
+                        asyncio.create_task(cb(message)) # Pass the raw message for simplicity
+                    else:
+                        asyncio.create_task(run_in_executor(cb, message))
+
+        await self.distributed_bus.subscribe_to_event(event_name, distributed_event_wrapper)
+        self._subscribers[event_name].append(callback)
+        logger.info(f"Subscribed to {event_name} events on distributed backend.")
+
+    async def compress_old_events(self, age_threshold_seconds: int = 3600, storage_backend: Any = None):
+        """
+        Compresses and potentially offloads old events to reduce memory usage.
+        This would typically involve reading from a primary event store, compressing,
+        and writing to an archival store.
+        """
+        logger.info(f"Compressing events older than {age_threshold_seconds} seconds (conceptual).")
+        # Example: iterate through a hypothetical in-memory event log
+        # if hasattr(self.distributed_bus, '_event_log'): # if distributed bus has a log
+        #     events_to_compress = [
+        #         e for e in self.distributed_bus._event_log if (datetime.now() - e.timestamp).total_seconds() > age_threshold_seconds
+        #     ]
+        #     for event in events_to_compress:
+        #         event_data = json.dumps(event.to_summary_dict()).encode('utf-8')
+        #         compressed_data = zlib.compress(event_data)
+        #         # Persist compressed_data to storage_backend
+        #         logger.debug(f"Compressed event {event.event_id}, original size {len(event_data)} bytes, compressed {len(compressed_data)} bytes.")
+        #         # Remove original event from active memory
+        # else:
+        logger.warning("Event compression is conceptual and requires a persistent event store to operate.")
+
+    async def persist_events_to_storage(self, storage_backend: Any):
+        """
+        Saves ongoing events to an external storage backend for durability.
+        This would usually be integrated into the publish/process pipeline.
+        """
+        logger.info(f"Persisting events to storage backend (conceptual).")
+        # This is primarily handled by the distributed message broker if it's persistent (like Kafka).
+        # If using Redis or a transient broker, you'd need a separate service consuming
+        # events from the bus and writing them to PostgreSQL or S3.
+        # Example: event_stream = await self.distributed_bus.get_event_stream("all_events")
+        # async for event in event_stream:
+        #    storage_backend.save_event(event)
+        logger.warning("Event persistence is mainly delegated to the distributed message broker's features.")
+
+
+    async def load_events_from_storage(self, time_range: Tuple[datetime, datetime]) -> List[Dict[str, Any]]:
+        """
+        Retrieves historical events from external storage for replay or analysis.
+        """
+        logger.info(f"Loading historical events from storage for time range {time_range} (conceptual).")
+        # This would read from the persistent storage (e.g., PostgreSQL, S3 archive).
+        # For a full replay, events should be loaded in chronological order.
+        return [] # Return empty list for conceptual implementation.
+
+    async def enable_distributed_mode(self, coordinator: "DistributedCoordinator"):
+        """
+        Activates distributed processing mode, integrating with the coordinator.
+        The event bus will now route relevant events via the distributed coordinator.
+        """
+        # This method is primarily for enabling on the main EventBus facade,
+        # which would then switch its backend to DistributedBackend.
+        logger.info("Distributed mode activated (functionality handled by EventBus switching to this backend).")
+
+# Global instance management for EventBus
+# Existing _event_bus_instance and get_event_bus, set_event_bus remain the same.
+# We'll modify the EventBus class to allow swapping backends.
+
+# Add to the existing EventBus class
+# No, this needs to be a new backend that EventBus can use.
+
+
 # Global instance management for EventBus
 _event_bus_instance: Optional["EventBus"] = None  # Forward reference to EventBus
 
@@ -267,6 +402,8 @@ class EventBus:
     def __init__(self, backend: Optional[EventBusBackend] = None):
         """Initialize with a specific backend, or default to AsyncioQueueBackend."""
         self._backend = backend or AsyncioQueueBackend()
+        self._distributed_mode_enabled = False
+        self._distributed_coordinator: Optional[Any] = None # Will hold DistributedCoordinator instance
 
     async def publish(self, event: BaseEvent) -> None:
         """Publish an event."""
@@ -292,7 +429,10 @@ class EventBus:
     def stop_recording(self) -> List[Dict[str, Any]]:
         """Stop recording and return recorded events."""
         if hasattr(self._backend, "stop_recording"):
-            return self._backend.stop_recording()
+            # Check if stop_recording returns a value, as AsyncioQueueBackend does
+            result = self._backend.stop_recording()
+            if result is not None:
+                return result
         return []
 
     def get_recorded_events(self) -> List[Dict[str, Any]]:
@@ -300,6 +440,47 @@ class EventBus:
         if hasattr(self._backend, "get_recorded_events"):
             return self._backend.get_recorded_events()
         return []
+    
+    # New methods for Enhanced Event Processing
+    async def compress_old_events(self, age_threshold_seconds: int = 3600, storage_backend: Any = None):
+        """Facade for backend's event compression."""
+        if hasattr(self._backend, "compress_old_events"):
+            await self._backend.compress_old_events(age_threshold_seconds, storage_backend)
+        else:
+            logger.warning("Current EventBus backend does not support event compression.")
+
+    async def persist_events_to_storage(self, storage_backend: Any):
+        """Facade for backend's event persistence."""
+        if hasattr(self._backend, "persist_events_to_storage"):
+            await self._backend.persist_events_to_storage(storage_backend)
+        else:
+            logger.warning("Current EventBus backend does not support event persistence.")
+
+    async def load_events_from_storage(self, time_range: Tuple[datetime, datetime]) -> List[Dict[str, Any]]:
+        """Facade for backend's historical event loading."""
+        if hasattr(self._backend, "load_events_from_storage"):
+            return await self._backend.load_events_from_storage(time_range)
+        else:
+            logger.warning("Current EventBus backend does not support loading historical events.")
+            return []
+
+    def enable_distributed_mode(self, coordinator: "DistributedCoordinator"):
+        """
+        Configures the EventBus to use a DistributedBackend.
+        This effectively swaps the backend if not already set.
+        """
+        # Ensure that DistributedEventBus is used here, not MockRedisBroker directly
+        from infrastructure.distributed_event_bus import DistributedEventBus, MockRedisBroker
+        if isinstance(self._backend, AsyncioQueueBackend): # Only swap if currently using in-memory
+            self._distributed_coordinator = coordinator
+            # Pass the internal broker used by the coordinator, if it's a mock or real one
+            # OR create a new one but ensure it connects to the same underlying system.
+            # Simplified: assuming coordinator's bus is the one to use internally
+            self._backend = DistributedBackend(self._distributed_coordinator.distributed_event_bus)
+            self._distributed_mode_enabled = True
+            logger.info("EventBus switched to DistributedBackend.")
+        else:
+            logger.info("EventBus is already using a non-AsyncioQueueBackend (or distributed mode is already active).")
 
 
 def get_event_bus() -> "EventBus":

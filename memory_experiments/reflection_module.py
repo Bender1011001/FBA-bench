@@ -9,16 +9,132 @@ import asyncio
 import logging
 import json
 import random
+import uuid
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any, Tuple, Union
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from enum import Enum
 
 from .memory_config import MemoryConfig, ConsolidationAlgorithm
 from .dual_memory_manager import MemoryEvent, DualMemoryManager
+from event_bus import EventBus, get_event_bus
+from events import BaseEvent
 
 
 logger = logging.getLogger(__name__)
+
+
+class ReflectionTrigger(Enum):
+    """Types of reflection triggers for structured reflection loops."""
+    PERIODIC = "periodic"
+    EVENT_DRIVEN = "event_driven"
+    PERFORMANCE_THRESHOLD = "performance_threshold"
+
+
+@dataclass
+class ReflectionInsight:
+    """A structured insight generated from reflection analysis."""
+    insight_id: str
+    category: str  # e.g., "strategy", "performance", "behavior", "environment"
+    title: str
+    description: str
+    evidence: List[str]  # Supporting evidence from analysis
+    confidence: float  # 0.0 to 1.0
+    actionability: float  # How actionable this insight is
+    priority: str  # "low", "medium", "high", "critical"
+    suggested_actions: List[str]
+    created_at: datetime
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "insight_id": self.insight_id,
+            "category": self.category,
+            "title": self.title,
+            "description": self.description,
+            "evidence": self.evidence,
+            "confidence": self.confidence,
+            "actionability": self.actionability,
+            "priority": self.priority,
+            "suggested_actions": self.suggested_actions,
+            "created_at": self.created_at.isoformat()
+        }
+
+
+@dataclass
+class PolicyAdjustment:
+    """A policy adjustment recommendation from reflection."""
+    adjustment_id: str
+    policy_area: str  # e.g., "pricing", "inventory", "marketing", "risk"
+    current_parameters: Dict[str, Any]
+    recommended_parameters: Dict[str, Any]
+    rationale: str
+    expected_impact: Dict[str, float]
+    confidence: float
+    implementation_urgency: str  # "immediate", "within_day", "within_week", "next_cycle"
+    created_at: datetime
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "adjustment_id": self.adjustment_id,
+            "policy_area": self.policy_area,
+            "current_parameters": self.current_parameters,
+            "recommended_parameters": self.recommended_parameters,
+            "rationale": self.rationale,
+            "expected_impact": self.expected_impact,
+            "confidence": self.confidence,
+            "implementation_urgency": self.implementation_urgency,
+            "created_at": self.created_at.isoformat()
+        }
+
+
+@dataclass
+class StructuredReflectionResult:
+    """Comprehensive result from structured reflection process."""
+    reflection_id: str
+    agent_id: str
+    trigger_type: ReflectionTrigger
+    reflection_timestamp: datetime
+    analysis_period_start: datetime
+    analysis_period_end: datetime
+    
+    # Analysis results
+    decisions_analyzed: int
+    events_processed: int
+    performance_metrics: Dict[str, float]
+    
+    # Generated insights
+    insights: List[ReflectionInsight]
+    critical_insights_count: int
+    
+    # Policy recommendations
+    policy_adjustments: List[PolicyAdjustment]
+    high_priority_adjustments: int
+    
+    # Reflection quality metrics
+    analysis_depth_score: float
+    insight_novelty_score: float
+    actionability_score: float
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "reflection_id": self.reflection_id,
+            "agent_id": self.agent_id,
+            "trigger_type": self.trigger_type.value,
+            "reflection_timestamp": self.reflection_timestamp.isoformat(),
+            "analysis_period_start": self.analysis_period_start.isoformat(),
+            "analysis_period_end": self.analysis_period_end.isoformat(),
+            "decisions_analyzed": self.decisions_analyzed,
+            "events_processed": self.events_processed,
+            "performance_metrics": self.performance_metrics,
+            "insights": [insight.to_dict() for insight in self.insights],
+            "critical_insights_count": self.critical_insights_count,
+            "policy_adjustments": [adj.to_dict() for adj in self.policy_adjustments],
+            "high_priority_adjustments": self.high_priority_adjustments,
+            "analysis_depth_score": self.analysis_depth_score,
+            "insight_novelty_score": self.insight_novelty_score,
+            "actionability_score": self.actionability_score
+        }
 
 
 @dataclass
@@ -207,16 +323,96 @@ class LLMReflectionAlgorithm(ConsolidationAlgorithmBase):
             fallback = ImportanceScoreAlgorithm()
             return await fallback.score_memories(memories, config)
         
-        # TODO: Implement LLM-based reflection
-        # This would involve sending memory summaries to an LLM and asking it to
-        # rate the strategic importance and relevance for long-term retention
+        prompt_template = """
+        You are an advanced cognitive reflection module for an FBA agent. Your task is to review a list of recent memories (events) and assess their strategic importance for long-term retention.
         
-        scores = {}
+        For each memory, provide a strategic importance score between 0.0 (not important) and 1.0 (critically important).
+        
+        Consider the following criteria for importance:
+        - **Impact on long-term business goals:** Does this memory influence strategic decisions, market positioning, or sustained profitability?
+        - **Novelty/Surprise:** Was this an unexpected event or observation that changes the agent's understanding of the environment?
+        - **Actionability:** Does this memory directly inform potential future actions or prevent past mistakes?
+        - **Recurrence:** Is this a pattern or trend that the agent should learn from?
+        - **Severity/Magnitude:** For negative events, how significant was the impact?
+        
+        Your output should be a JSON array of objects, each with the `event_id` of the memory and its `strategic_score`.
+        
+        ---
+        
+        MEMORIES FOR REFLECTION:
+        {memories_json}
+        
+        ---
+        
+        Provide your response as a JSON array ONLY:
+        [
+            {{
+                "event_id": "...",
+                "strategic_score": 0.X
+            }},
+            ...
+        ]
+        """
+        
+        if not self.llm_client:
+            logger.warning("No LLM client provided for reflection, falling back to ImportanceScoreAlgorithm.")
+            fallback = ImportanceScoreAlgorithm()
+            return await fallback.score_memories(memories, config)
+
+        memory_summaries = []
         for memory in memories:
-            # Placeholder implementation
-            scores[memory.event_id] = memory.importance_score
+            memory_summaries.append({
+                "event_id": memory.event_id,
+                "timestamp": memory.timestamp.isoformat(),
+                "content": memory.content,
+                "domain": memory.domain,
+                "event_type": memory.event_type
+            })
+
+        memories_json = json.dumps(memory_summaries, indent=2)
+        full_prompt = prompt_template.format(memories_json=memories_json)
+
+        try:
+            # For reflection, we consider the current action type as 'reflection'
+            llm_response = await self.llm_client.generate_response(
+                prompt=full_prompt,
+                model=config.embedding_model, # Using embedding model for reflection for consistency, or a dedicated reflection model
+                temperature=0.1, # Keep reflection deterministic for consistent scoring
+                max_tokens=config.memory_budget_tokens # Use memory budget for reflection
+            )
             
-        return scores
+            response_content = llm_response.get('choices', [{}])[0].get('message', {}).get('content')
+            
+            if not response_content:
+                raise ValueError("LLM reflection response content is empty.")
+            
+            scores_list = json.loads(response_content)
+            
+            scores = {item['event_id']: item['strategic_score'] for item in scores_list}
+            
+            # Validate scores
+            for event_id, score in scores.items():
+                if not (0.0 <= score <= 1.0):
+                    logger.warning(f"LLM returned out-of-range score {score} for {event_id}. Clamping to 0-1.")
+                    scores[event_id] = max(0.0, min(1.0, score))
+
+            if not any(scores.values()):
+                logger.warning("LLM reflection resulted in all zero scores. Falling back to ImportanceScoreAlgorithm.")
+                fallback = ImportanceScoreAlgorithm()
+                return await fallback.score_memories(memories, config)
+
+            return scores
+        
+        except json.JSONDecodeError as e:
+            logger.error(f"LLM reflection response was not valid JSON: {response_content}. Error: {e}")
+            logger.warning("Falling back to ImportanceScoreAlgorithm due to invalid LLM response.")
+            fallback = ImportanceScoreAlgorithm()
+            return await fallback.score_memories(memories, config)
+        except Exception as e:
+            logger.error(f"Error during LLM reflection: {e}")
+            logger.warning("Falling back to ImportanceScoreAlgorithm due to LLM reflection error.")
+            fallback = ImportanceScoreAlgorithm()
+            return await fallback.score_memories(memories, config)
     
     def get_algorithm_name(self) -> str:
         return "llm_reflection"
@@ -467,3 +663,770 @@ class ReflectionModule:
         self.reflection_history.clear()
         self.total_reflections = 0
         logger.info("Reflection history cleared")
+
+
+class StructuredReflectionLoop:
+    """
+    Advanced structured reflection system that provides deep cognitive analysis.
+    
+    Implements systematic reflection cycles triggered by various conditions,
+    analyzes agent performance and decisions, generates actionable insights,
+    and recommends policy adjustments for improved decision-making.
+    """
+    
+    def __init__(self, agent_id: str, memory_manager: DualMemoryManager,
+                 config: MemoryConfig, event_bus: Optional[EventBus] = None):
+        """
+        Initialize the Structured Reflection Loop.
+        
+        Args:
+            agent_id: Unique identifier for the agent
+            memory_manager: Memory management system
+            config: Memory configuration
+            event_bus: Event bus for publishing reflection events
+        """
+        self.agent_id = agent_id
+        self.memory_manager = memory_manager
+        self.config = config
+        self.event_bus = event_bus or get_event_bus()
+        
+        # Reflection state
+        self.reflection_history: List[StructuredReflectionResult] = []
+        self.last_reflection_time: Optional[datetime] = None
+        self.reflection_triggers_enabled: Dict[ReflectionTrigger, bool] = {
+            ReflectionTrigger.PERIODIC: True,
+            ReflectionTrigger.EVENT_DRIVEN: True,
+            ReflectionTrigger.PERFORMANCE_THRESHOLD: True
+        }
+        
+        # Performance tracking for threshold triggers
+        self.performance_history: List[Dict[str, float]] = []
+        self.decision_history: List[Dict[str, Any]] = []
+        self.major_events: List[Dict[str, Any]] = []
+        
+        # Reflection parameters
+        self.periodic_interval_hours = 24  # Daily reflection by default
+        self.performance_threshold_degradation = 0.2  # 20% performance drop triggers reflection
+        self.min_decisions_for_reflection = 5
+        
+        # Insight tracking
+        self.insight_categories = ["strategy", "performance", "behavior", "environment", "risk"]
+        self.policy_areas = ["pricing", "inventory", "marketing", "risk_management", "operations"]
+        
+        logger.info(f"StructuredReflectionLoop initialized for agent {agent_id}")
+    
+    async def trigger_reflection(self, tick_interval: Optional[int] = None,
+                                major_events: Optional[List[Dict[str, Any]]] = None) -> Optional[StructuredReflectionResult]:
+        """
+        Initiate a reflection cycle based on various triggers.
+        
+        Args:
+            tick_interval: Current tick interval for periodic checks
+            major_events: List of major events that might trigger reflection
+            
+        Returns:
+            StructuredReflectionResult if reflection was triggered, None otherwise
+        """
+        current_time = datetime.now()
+        
+        # Determine trigger type
+        trigger_type = await self._determine_reflection_trigger(tick_interval, major_events, current_time)
+        
+        if trigger_type is None:
+            return None
+        
+        logger.info(f"Triggering structured reflection for agent {self.agent_id} - trigger: {trigger_type.value}")
+        
+        # Perform structured reflection
+        reflection_result = await self._perform_structured_reflection(trigger_type, current_time)
+        
+        # Store reflection result
+        self.reflection_history.append(reflection_result)
+        self.last_reflection_time = current_time
+        
+        # Publish reflection completed event
+        await self._publish_reflection_completed_event(reflection_result)
+        
+        logger.info(f"Structured reflection completed - generated {len(reflection_result.insights)} insights "
+                   f"and {len(reflection_result.policy_adjustments)} policy adjustments")
+        
+        return reflection_result
+    
+    async def analyze_recent_decisions(self, event_history: List[Dict[str, Any]],
+                                      outcomes: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Analyze recent decisions and their outcomes for learning.
+        
+        Args:
+            event_history: Recent events and decisions
+            outcomes: Outcomes and results from recent decisions
+            
+        Returns:
+            Analysis results with patterns, successes, and failures
+        """
+        logger.info(f"Analyzing {len(event_history)} recent decisions for agent {self.agent_id}")
+        
+        analysis = {
+            "analysis_timestamp": datetime.now().isoformat(),
+            "decisions_analyzed": len(event_history),
+            "performance_patterns": {},
+            "decision_effectiveness": {},
+            "failure_analysis": {},
+            "success_factors": {},
+            "recommendations": []
+        }
+        
+        # Categorize decisions by type
+        decision_categories = {}
+        for event in event_history:
+            decision_type = event.get("decision_type", "unknown")
+            if decision_type not in decision_categories:
+                decision_categories[decision_type] = []
+            decision_categories[decision_type].append(event)
+        
+        # Analyze each decision category
+        for decision_type, decisions in decision_categories.items():
+            category_analysis = await self._analyze_decision_category(
+                decision_type, decisions, outcomes
+            )
+            analysis["decision_effectiveness"][decision_type] = category_analysis
+        
+        # Identify performance patterns
+        analysis["performance_patterns"] = await self._identify_performance_patterns(
+            event_history, outcomes
+        )
+        
+        # Analyze failures and successes
+        analysis["failure_analysis"] = await self._analyze_decision_failures(
+            event_history, outcomes
+        )
+        analysis["success_factors"] = await self._analyze_decision_successes(
+            event_history, outcomes
+        )
+        
+        # Generate recommendations
+        analysis["recommendations"] = await self._generate_decision_recommendations(
+            analysis
+        )
+        
+        return analysis
+    
+    async def generate_insights(self, analysis_results: Dict[str, Any]) -> List[ReflectionInsight]:
+        """
+        Generate actionable insights from analysis results.
+        
+        Args:
+            analysis_results: Results from decision and performance analysis
+            
+        Returns:
+            List of structured insights with priorities and suggested actions
+        """
+        logger.info(f"Generating insights from analysis results for agent {self.agent_id}")
+        
+        insights = []
+        current_time = datetime.now()
+        
+        # Generate insights from performance patterns
+        pattern_insights = await self._generate_pattern_insights(analysis_results, current_time)
+        insights.extend(pattern_insights)
+        
+        # Generate insights from decision effectiveness
+        decision_insights = await self._generate_decision_insights(analysis_results, current_time)
+        insights.extend(decision_insights)
+        
+        # Generate insights from failure analysis
+        failure_insights = await self._generate_failure_insights(analysis_results, current_time)
+        insights.extend(failure_insights)
+        
+        # Generate strategic insights
+        strategic_insights = await self._generate_strategic_insights(analysis_results, current_time)
+        insights.extend(strategic_insights)
+        
+        # Rank insights by priority and actionability
+        insights = await self._rank_insights_by_priority(insights)
+        
+        logger.info(f"Generated {len(insights)} insights - "
+                   f"{len([i for i in insights if i.priority == 'critical'])} critical")
+        
+        return insights
+    
+    async def update_agent_policy(self, insights: List[ReflectionInsight]) -> List[PolicyAdjustment]:
+        """
+        Generate policy adjustments based on insights.
+        
+        Args:
+            insights: List of reflection insights
+            
+        Returns:
+            List of recommended policy adjustments
+        """
+        logger.info(f"Updating agent policy based on {len(insights)} insights")
+        
+        policy_adjustments = []
+        current_time = datetime.now()
+        
+        # Group insights by policy area
+        insights_by_area = {}
+        for insight in insights:
+            policy_area = self._map_insight_to_policy_area(insight)
+            if policy_area not in insights_by_area:
+                insights_by_area[policy_area] = []
+            insights_by_area[policy_area].append(insight)
+        
+        # Generate policy adjustments for each area
+        for policy_area, area_insights in insights_by_area.items():
+            adjustments = await self._generate_policy_adjustments_for_area(
+                policy_area, area_insights, current_time
+            )
+            policy_adjustments.extend(adjustments)
+        
+        # Validate and prioritize adjustments
+        validated_adjustments = await self._validate_policy_adjustments(policy_adjustments)
+        
+        logger.info(f"Generated {len(validated_adjustments)} policy adjustments - "
+                   f"{len([a for a in validated_adjustments if a.implementation_urgency == 'immediate'])} immediate")
+        
+        return validated_adjustments
+    
+    def get_reflection_status(self) -> Dict[str, Any]:
+        """Get comprehensive status of reflection system."""
+        current_time = datetime.now()
+        
+        status = {
+            "agent_id": self.agent_id,
+            "last_reflection": self.last_reflection_time.isoformat() if self.last_reflection_time else None,
+            "total_reflections": len(self.reflection_history),
+            "enabled_triggers": [t.value for t, enabled in self.reflection_triggers_enabled.items() if enabled],
+            "periodic_interval_hours": self.periodic_interval_hours,
+            "performance_threshold": self.performance_threshold_degradation,
+            "decisions_tracked": len(self.decision_history),
+            "major_events_tracked": len(self.major_events)
+        }
+        
+        if self.reflection_history:
+            # Calculate average reflection quality
+            quality_scores = [r.analysis_depth_score for r in self.reflection_history]
+            status["average_reflection_quality"] = sum(quality_scores) / len(quality_scores)
+            
+            # Count insights and adjustments
+            total_insights = sum(len(r.insights) for r in self.reflection_history)
+            total_adjustments = sum(len(r.policy_adjustments) for r in self.reflection_history)
+            status["total_insights_generated"] = total_insights
+            status["total_policy_adjustments"] = total_adjustments
+            
+            # Recent reflection summary
+            latest_reflection = self.reflection_history[-1]
+            status["latest_reflection"] = {
+                "timestamp": latest_reflection.reflection_timestamp.isoformat(),
+                "trigger": latest_reflection.trigger_type.value,
+                "insights_count": len(latest_reflection.insights),
+                "critical_insights": latest_reflection.critical_insights_count,
+                "policy_adjustments": len(latest_reflection.policy_adjustments)
+            }
+        
+        return status
+    
+    # Private helper methods
+    
+    async def _determine_reflection_trigger(self, tick_interval: Optional[int],
+                                           major_events: Optional[List[Dict[str, Any]]],
+                                           current_time: datetime) -> Optional[ReflectionTrigger]:
+        """Determine if reflection should be triggered and which type."""
+        
+        # Check periodic trigger
+        if self.reflection_triggers_enabled[ReflectionTrigger.PERIODIC]:
+            if await self._should_trigger_periodic_reflection(current_time):
+                return ReflectionTrigger.PERIODIC
+        
+        # Check event-driven trigger
+        if self.reflection_triggers_enabled[ReflectionTrigger.EVENT_DRIVEN]:
+            if await self._should_trigger_event_driven_reflection(major_events):
+                return ReflectionTrigger.EVENT_DRIVEN
+        
+        # Check performance threshold trigger
+        if self.reflection_triggers_enabled[ReflectionTrigger.PERFORMANCE_THRESHOLD]:
+            if await self._should_trigger_performance_threshold_reflection():
+                return ReflectionTrigger.PERFORMANCE_THRESHOLD
+        
+        return None
+    
+    async def _should_trigger_periodic_reflection(self, current_time: datetime) -> bool:
+        """Check if periodic reflection should be triggered."""
+        if not self.last_reflection_time:
+            return True
+        
+        hours_since_reflection = (current_time - self.last_reflection_time).total_seconds() / 3600
+        return hours_since_reflection >= self.periodic_interval_hours
+    
+    async def _should_trigger_event_driven_reflection(self, major_events: Optional[List[Dict[str, Any]]]) -> bool:
+        """Check if event-driven reflection should be triggered."""
+        if not major_events:
+            return False
+        
+        # Check for high-impact events
+        high_impact_events = [
+            event for event in major_events
+            if event.get("severity", 0) > 0.7 or event.get("impact_level") == "high"
+        ]
+        
+        return len(high_impact_events) > 0
+    
+    async def _should_trigger_performance_threshold_reflection(self) -> bool:
+        """Check if performance degradation should trigger reflection."""
+        if len(self.performance_history) < 2:
+            return False
+        
+        # Compare recent performance to baseline
+        recent_performance = self.performance_history[-1]
+        baseline_performance = sum(
+            perf.get("overall_score", 0.5) for perf in self.performance_history[-5:]
+        ) / min(5, len(self.performance_history))
+        
+        current_performance = recent_performance.get("overall_score", 0.5)
+        performance_drop = baseline_performance - current_performance
+        
+        return performance_drop > self.performance_threshold_degradation
+    
+    async def _perform_structured_reflection(self, trigger_type: ReflectionTrigger,
+                                           current_time: datetime) -> StructuredReflectionResult:
+        """Perform comprehensive structured reflection."""
+        
+        # Define analysis period
+        analysis_period_start = current_time - timedelta(hours=self.periodic_interval_hours)
+        if self.last_reflection_time:
+            analysis_period_start = self.last_reflection_time
+        
+        # Gather data for analysis
+        event_history = await self._gather_analysis_events(analysis_period_start, current_time)
+        decision_history = await self._gather_decision_history(analysis_period_start, current_time)
+        performance_metrics = await self._calculate_performance_metrics(analysis_period_start, current_time)
+        
+        # Perform decision analysis
+        decision_analysis = await self.analyze_recent_decisions(decision_history, performance_metrics)
+        
+        # Generate insights
+        insights = await self.generate_insights(decision_analysis)
+        
+        # Generate policy adjustments
+        policy_adjustments = await self.update_agent_policy(insights)
+        
+        # Calculate reflection quality metrics
+        analysis_depth_score = await self._calculate_analysis_depth_score(decision_analysis)
+        insight_novelty_score = await self._calculate_insight_novelty_score(insights)
+        actionability_score = await self._calculate_actionability_score(insights, policy_adjustments)
+        
+        # Create reflection result
+        reflection_result = StructuredReflectionResult(
+            reflection_id=str(uuid.uuid4()),
+            agent_id=self.agent_id,
+            trigger_type=trigger_type,
+            reflection_timestamp=current_time,
+            analysis_period_start=analysis_period_start,
+            analysis_period_end=current_time,
+            decisions_analyzed=len(decision_history),
+            events_processed=len(event_history),
+            performance_metrics=performance_metrics,
+            insights=insights,
+            critical_insights_count=len([i for i in insights if i.priority == "critical"]),
+            policy_adjustments=policy_adjustments,
+            high_priority_adjustments=len([a for a in policy_adjustments if a.implementation_urgency == "immediate"]),
+            analysis_depth_score=analysis_depth_score,
+            insight_novelty_score=insight_novelty_score,
+            actionability_score=actionability_score
+        )
+        
+        return reflection_result
+    
+    async def _gather_analysis_events(self, start_time: datetime, end_time: datetime) -> List[Dict[str, Any]]:
+        """Gather events for analysis from the specified time period."""
+        # In a real implementation, this would query the memory system
+        # For now, return recent events from major_events
+        return [
+            event for event in self.major_events[-20:]  # Last 20 events
+            if start_time <= datetime.fromisoformat(event.get("timestamp", start_time.isoformat())) <= end_time
+        ]
+    
+    async def _gather_decision_history(self, start_time: datetime, end_time: datetime) -> List[Dict[str, Any]]:
+        """Gather decision history for analysis."""
+        return [
+            decision for decision in self.decision_history[-50:]  # Last 50 decisions
+            if start_time <= datetime.fromisoformat(decision.get("timestamp", start_time.isoformat())) <= end_time
+        ]
+    
+    async def _calculate_performance_metrics(self, start_time: datetime, end_time: datetime) -> Dict[str, float]:
+        """Calculate performance metrics for the analysis period."""
+        # Calculate basic performance metrics
+        metrics = {
+            "revenue_growth": 0.05,  # Placeholder
+            "profit_margin": 0.15,
+            "decision_success_rate": 0.75,
+            "response_time": 2.5,
+            "customer_satisfaction": 0.8,
+            "overall_score": 0.7
+        }
+        
+        # In a real implementation, this would calculate actual metrics
+        return metrics
+    
+    async def _analyze_decision_category(self, decision_type: str, decisions: List[Dict[str, Any]],
+                                        outcomes: Dict[str, Any]) -> Dict[str, Any]:
+        """Analyze effectiveness of decisions in a specific category."""
+        if not decisions:
+            return {"effectiveness": 0.0, "pattern": "insufficient_data"}
+        
+        # Calculate success rate for this decision type
+        successful_decisions = len([d for d in decisions if d.get("outcome", "unknown") == "success"])
+        success_rate = successful_decisions / len(decisions)
+        
+        analysis = {
+            "total_decisions": len(decisions),
+            "success_rate": success_rate,
+            "effectiveness": success_rate,
+            "average_impact": sum(d.get("impact_score", 0.5) for d in decisions) / len(decisions),
+            "pattern": "improving" if success_rate > 0.7 else "needs_attention" if success_rate < 0.4 else "stable"
+        }
+        
+        return analysis
+    
+    async def _identify_performance_patterns(self, event_history: List[Dict[str, Any]],
+                                           outcomes: Dict[str, Any]) -> Dict[str, Any]:
+        """Identify patterns in performance data."""
+        patterns = {
+            "trend": "stable",
+            "cyclical_patterns": [],
+            "performance_drivers": [],
+            "risk_factors": []
+        }
+        
+        # Analyze trends (simplified)
+        if outcomes.get("overall_score", 0.5) > 0.7:
+            patterns["trend"] = "improving"
+        elif outcomes.get("overall_score", 0.5) < 0.4:
+            patterns["trend"] = "declining"
+        
+        # Identify key performance drivers
+        if outcomes.get("decision_success_rate", 0.5) > 0.8:
+            patterns["performance_drivers"].append("strong_decision_making")
+        
+        if outcomes.get("response_time", 5.0) < 2.0:
+            patterns["performance_drivers"].append("quick_response")
+        
+        return patterns
+    
+    async def _analyze_decision_failures(self, event_history: List[Dict[str, Any]],
+                                        outcomes: Dict[str, Any]) -> Dict[str, Any]:
+        """Analyze failed decisions to identify improvement areas."""
+        failed_decisions = [
+            event for event in event_history
+            if event.get("outcome") == "failure" or event.get("success", True) == False
+        ]
+        
+        failure_analysis = {
+            "total_failures": len(failed_decisions),
+            "failure_rate": len(failed_decisions) / max(1, len(event_history)),
+            "common_failure_types": {},
+            "failure_patterns": [],
+            "mitigation_strategies": []
+        }
+        
+        # Categorize failure types
+        for failure in failed_decisions:
+            failure_type = failure.get("failure_type", "unknown")
+            failure_analysis["common_failure_types"][failure_type] = \
+                failure_analysis["common_failure_types"].get(failure_type, 0) + 1
+        
+        # Suggest mitigation strategies
+        if "timing" in failure_analysis["common_failure_types"]:
+            failure_analysis["mitigation_strategies"].append("improve_timing_analysis")
+        
+        if "market_conditions" in failure_analysis["common_failure_types"]:
+            failure_analysis["mitigation_strategies"].append("enhance_market_monitoring")
+        
+        return failure_analysis
+    
+    async def _analyze_decision_successes(self, event_history: List[Dict[str, Any]],
+                                         outcomes: Dict[str, Any]) -> Dict[str, Any]:
+        """Analyze successful decisions to identify success factors."""
+        successful_decisions = [
+            event for event in event_history
+            if event.get("outcome") == "success" or event.get("success", False) == True
+        ]
+        
+        success_analysis = {
+            "total_successes": len(successful_decisions),
+            "success_rate": len(successful_decisions) / max(1, len(event_history)),
+            "success_factors": {},
+            "high_impact_decisions": [],
+            "replicable_strategies": []
+        }
+        
+        # Identify success factors
+        for success in successful_decisions:
+            factors = success.get("success_factors", [])
+            for factor in factors:
+                success_analysis["success_factors"][factor] = \
+                    success_analysis["success_factors"].get(factor, 0) + 1
+        
+        # Identify high-impact successful decisions
+        high_impact = [d for d in successful_decisions if d.get("impact_score", 0) > 0.8]
+        success_analysis["high_impact_decisions"] = [
+            {"decision_id": d.get("decision_id"), "impact": d.get("impact_score")}
+            for d in high_impact
+        ]
+        
+        return success_analysis
+    
+    async def _generate_decision_recommendations(self, analysis: Dict[str, Any]) -> List[str]:
+        """Generate recommendations based on decision analysis."""
+        recommendations = []
+        
+        # Recommendations based on failure analysis
+        failure_rate = analysis.get("failure_analysis", {}).get("failure_rate", 0)
+        if failure_rate > 0.3:
+            recommendations.append("improve_decision_validation_process")
+            recommendations.append("implement_risk_assessment_before_decisions")
+        
+        # Recommendations based on success factors
+        success_factors = analysis.get("success_factors", {})
+        if "data_analysis" in success_factors:
+            recommendations.append("increase_data_driven_decision_making")
+        
+        # Recommendations based on performance patterns
+        trend = analysis.get("performance_patterns", {}).get("trend", "stable")
+        if trend == "declining":
+            recommendations.append("conduct_comprehensive_strategy_review")
+            recommendations.append("implement_performance_monitoring_alerts")
+        
+        return recommendations
+    
+    async def _generate_pattern_insights(self, analysis_results: Dict[str, Any],
+                                        current_time: datetime) -> List[ReflectionInsight]:
+        """Generate insights from performance patterns."""
+        insights = []
+        patterns = analysis_results.get("performance_patterns", {})
+        
+        trend = patterns.get("trend", "stable")
+        if trend == "declining":
+            insights.append(ReflectionInsight(
+                insight_id=str(uuid.uuid4()),
+                category="performance",
+                title="Performance Decline Detected",
+                description="Analysis indicates declining performance trend requiring attention",
+                evidence=[f"Performance trend: {trend}", "Multiple metrics showing downward movement"],
+                confidence=0.8,
+                actionability=0.9,
+                priority="high",
+                suggested_actions=["review_strategy", "analyze_root_causes", "implement_corrective_measures"],
+                created_at=current_time
+            ))
+        
+        return insights
+    
+    async def _generate_decision_insights(self, analysis_results: Dict[str, Any],
+                                         current_time: datetime) -> List[ReflectionInsight]:
+        """Generate insights from decision effectiveness analysis."""
+        insights = []
+        decision_effectiveness = analysis_results.get("decision_effectiveness", {})
+        
+        for decision_type, effectiveness in decision_effectiveness.items():
+            success_rate = effectiveness.get("success_rate", 0.5)
+            
+            if success_rate < 0.4:
+                insights.append(ReflectionInsight(
+                    insight_id=str(uuid.uuid4()),
+                    category="behavior",
+                    title=f"Low Success Rate in {decision_type.title()} Decisions",
+                    description=f"Success rate of {success_rate:.1%} for {decision_type} decisions is below acceptable threshold",
+                    evidence=[f"Success rate: {success_rate:.1%}", f"Total decisions analyzed: {effectiveness.get('total_decisions', 0)}"],
+                    confidence=0.85,
+                    actionability=0.8,
+                    priority="medium" if success_rate > 0.2 else "high",
+                    suggested_actions=[f"review_{decision_type}_strategy", "improve_analysis_before_decisions", "seek_additional_data"],
+                    created_at=current_time
+                ))
+        
+        return insights
+    
+    async def _generate_failure_insights(self, analysis_results: Dict[str, Any],
+                                        current_time: datetime) -> List[ReflectionInsight]:
+        """Generate insights from failure analysis."""
+        insights = []
+        failure_analysis = analysis_results.get("failure_analysis", {})
+        
+        failure_rate = failure_analysis.get("failure_rate", 0)
+        if failure_rate > 0.3:
+            insights.append(ReflectionInsight(
+                insight_id=str(uuid.uuid4()),
+                category="risk",
+                title="High Decision Failure Rate",
+                description=f"Failure rate of {failure_rate:.1%} indicates systematic issues in decision-making process",
+                evidence=[f"Failure rate: {failure_rate:.1%}", "Multiple failure types identified"],
+                confidence=0.9,
+                actionability=0.85,
+                priority="critical",
+                suggested_actions=["implement_decision_validation", "improve_risk_assessment", "enhance_data_analysis"],
+                created_at=current_time
+            ))
+        
+        return insights
+    
+    async def _generate_strategic_insights(self, analysis_results: Dict[str, Any],
+                                          current_time: datetime) -> List[ReflectionInsight]:
+        """Generate strategic-level insights."""
+        insights = []
+        
+        # Analyze overall strategic direction
+        recommendations = analysis_results.get("recommendations", [])
+        if "conduct_comprehensive_strategy_review" in recommendations:
+            insights.append(ReflectionInsight(
+                insight_id=str(uuid.uuid4()),
+                category="strategy",
+                title="Strategic Review Required",
+                description="Current performance patterns suggest need for comprehensive strategy review",
+                evidence=["Declining performance trend", "Multiple decision categories underperforming"],
+                confidence=0.75,
+                actionability=0.7,
+                priority="high",
+                suggested_actions=["strategic_planning_session", "market_analysis", "competitive_assessment"],
+                created_at=current_time
+            ))
+        
+        return insights
+    
+    async def _rank_insights_by_priority(self, insights: List[ReflectionInsight]) -> List[ReflectionInsight]:
+        """Rank insights by priority and actionability."""
+        priority_weights = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+        
+        def insight_score(insight):
+            priority_score = priority_weights.get(insight.priority, 1)
+            return priority_score * insight.confidence * insight.actionability
+        
+        return sorted(insights, key=insight_score, reverse=True)
+    
+    def _map_insight_to_policy_area(self, insight: ReflectionInsight) -> str:
+        """Map an insight to appropriate policy area."""
+        category_mapping = {
+            "performance": "operations",
+            "behavior": "operations",
+            "strategy": "operations",
+            "risk": "risk_management",
+            "environment": "marketing"
+        }
+        
+        return category_mapping.get(insight.category, "operations")
+    
+    async def _generate_policy_adjustments_for_area(self, policy_area: str,
+                                                   insights: List[ReflectionInsight],
+                                                   current_time: datetime) -> List[PolicyAdjustment]:
+        """Generate policy adjustments for a specific policy area."""
+        adjustments = []
+        
+        if policy_area == "operations" and any("success_rate" in insight.title.lower() for insight in insights):
+            adjustments.append(PolicyAdjustment(
+                adjustment_id=str(uuid.uuid4()),
+                policy_area="operations",
+                current_parameters={"decision_confidence_threshold": 0.5},
+                recommended_parameters={"decision_confidence_threshold": 0.7},
+                rationale="Increase decision confidence threshold to improve success rate",
+                expected_impact={"decision_success_rate": 0.15},
+                confidence=0.8,
+                implementation_urgency="within_day",
+                created_at=current_time
+            ))
+        
+        if policy_area == "risk_management" and any("failure" in insight.title.lower() for insight in insights):
+            adjustments.append(PolicyAdjustment(
+                adjustment_id=str(uuid.uuid4()),
+                policy_area="risk_management",
+                current_parameters={"risk_assessment_enabled": False},
+                recommended_parameters={"risk_assessment_enabled": True, "risk_threshold": 0.3},
+                rationale="Enable risk assessment to reduce decision failures",
+                expected_impact={"failure_rate": -0.2},
+                confidence=0.85,
+                implementation_urgency="immediate",
+                created_at=current_time
+            ))
+        
+        return adjustments
+    
+    async def _validate_policy_adjustments(self, adjustments: List[PolicyAdjustment]) -> List[PolicyAdjustment]:
+        """Validate and filter policy adjustments."""
+        validated = []
+        
+        for adjustment in adjustments:
+            # Validate confidence threshold
+            if adjustment.confidence >= 0.6:
+                validated.append(adjustment)
+            else:
+                logger.warning(f"Policy adjustment {adjustment.adjustment_id} excluded due to low confidence: {adjustment.confidence}")
+        
+        return validated
+    
+    async def _calculate_analysis_depth_score(self, analysis: Dict[str, Any]) -> float:
+        """Calculate how deep and comprehensive the analysis was."""
+        score = 0.0
+        
+        # Score based on different analysis components
+        if "decision_effectiveness" in analysis:
+            score += 0.3
+        if "performance_patterns" in analysis:
+            score += 0.3
+        if "failure_analysis" in analysis:
+            score += 0.2
+        if "success_factors" in analysis:
+            score += 0.2
+        
+        return min(1.0, score)
+    
+    async def _calculate_insight_novelty_score(self, insights: List[ReflectionInsight]) -> float:
+        """Calculate how novel the generated insights are."""
+        if not insights:
+            return 0.0
+        
+        # Compare with historical insights to determine novelty
+        # For now, use a simple heuristic based on insight diversity
+        categories = set(insight.category for insight in insights)
+        novelty_score = len(categories) / len(self.insight_categories)
+        
+        return min(1.0, novelty_score)
+    
+    async def _calculate_actionability_score(self, insights: List[ReflectionInsight],
+                                           adjustments: List[PolicyAdjustment]) -> float:
+        """Calculate how actionable the reflection results are."""
+        if not insights:
+            return 0.0
+        
+        # Average actionability of insights
+        avg_actionability = sum(insight.actionability for insight in insights) / len(insights)
+        
+        # Bonus for having concrete policy adjustments
+        adjustment_bonus = min(0.3, len(adjustments) * 0.1)
+        
+        return min(1.0, avg_actionability + adjustment_bonus)
+    
+    async def _publish_reflection_completed_event(self, reflection_result: StructuredReflectionResult):
+        """Publish event when structured reflection is completed."""
+        event_data = {
+            "agent_id": self.agent_id,
+            "event_type": "StructuredReflectionCompleted",
+            "timestamp": reflection_result.reflection_timestamp.isoformat(),
+            "reflection_id": reflection_result.reflection_id,
+            "trigger_type": reflection_result.trigger_type.value,
+            "insights_generated": len(reflection_result.insights),
+            "critical_insights": reflection_result.critical_insights_count,
+            "policy_adjustments": len(reflection_result.policy_adjustments),
+            "reflection_quality": {
+                "analysis_depth": reflection_result.analysis_depth_score,
+                "insight_novelty": reflection_result.insight_novelty_score,
+                "actionability": reflection_result.actionability_score
+            }
+        }
+        
+        try:
+            await self.event_bus.publish(BaseEvent(
+                event_id=str(uuid.uuid4()),
+                timestamp=reflection_result.reflection_timestamp,
+                **event_data
+            ))
+        except Exception as e:
+            logger.error(f"Failed to publish structured reflection completed event: {e}")

@@ -1,0 +1,255 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fba-bench-coordinator
+  labels:
+    app: fba-bench
+    component: coordinator
+spec:
+  replicas: 1 # Only one coordinator instance
+  selector:
+    matchLabels:
+      app: fba-bench
+      component: coordinator
+  template:
+    metadata:
+      labels:
+        app: fba-bench
+        component: coordinator
+    spec:
+      containers:
+      - name: coordinator
+        image: fba-bench/app:latest # Your built Docker image
+        ports:
+        - containerPort: 8000 # Example port for coordinator API
+        env:
+        - name: KUBERNETES_MODE
+          value: "true"
+        - name: REDIS_HOST
+          value: redis-service
+        - name: REDIS_PORT
+          value: "6379"
+        - name: POSTGRES_HOST
+          value: postgres-service
+        - name: POSTGRES_PORT
+          value: "5432"
+        - name: POSTGRES_USER
+          value: user
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: password
+        - name: POSTGRES_DB
+          value: fbabench_db
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+        command: ["/bin/bash", "-c"] # Example: Run entrypoint script
+        args: ["python simulation_orchestrator.py --distributed --role coordinator"] # Direct command for coordinator
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fba-bench-worker
+  labels:
+    app: fba-bench
+    component: worker
+spec:
+  replicas: 2 # Start with 2 worker replicas, will be autoscaled
+  selector:
+    matchLabels:
+      app: fba-bench
+      component: worker
+  template:
+    metadata:
+      labels:
+        app: fba-bench
+        component: worker
+    spec:
+      containers:
+      - name: worker
+        image: fba-bench/app:latest
+        env:
+        - name: KUBERNETES_MODE
+          value: "true"
+        - name: REDIS_HOST
+          value: redis-service
+        - name: REDIS_PORT
+          value: "6379"
+        - name: POSTGRES_HOST
+          value: postgres-service
+        - name: POSTGRES_PORT
+          value: "5432"
+        - name: POSTGRES_USER
+          value: user
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: password
+        - name: POSTGRES_DB
+          value: fbabench_db
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "2000m"
+            memory: "4Gi"
+        command: ["/bin/bash", "-c"] # Example: Run entrypoint script
+        args: ["python simulation_orchestrator.py --distributed --role worker"] # Direct command for workers
+      # Add readiness/liveness probes if necessary
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fba-bench-coordinator-service
+  labels:
+    app: fba-bench
+    component: coordinator
+spec:
+  selector:
+    app: fba-bench
+    component: coordinator
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+  type: LoadBalancer # Expose coordinator externally if needed (e.g., for API)
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-service
+  labels:
+    app: redis
+spec:
+  selector:
+    app: redis
+  ports:
+    - protocol: TCP
+      port: 6379
+      targetPort: 6379
+  type: ClusterIP # Internal service for Redis
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-deployment
+  labels:
+    app: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
+        command: ["redis-server", "--appendonly", "yes"]
+      volumes:
+      - name: redis-data
+        emptyDir: {} # Use persistent volume in production
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-service
+  labels:
+    app: postgres
+spec:
+  selector:
+    app: postgres
+  ports:
+    - protocol: TCP
+      port: 5432
+      targetPort: 5432
+  type: ClusterIP # Internal service for PostgreSQL
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-deployment
+  labels:
+    app: postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:14-alpine
+        env:
+        - name: POSTGRES_USER
+          value: user
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: password
+        - name: POSTGRES_DB
+          value: fbabench_db
+        ports:
+        - containerPort: 5432
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+      volumes:
+      - name: postgres-data
+        emptyDir: {} # Use persistent volume in production
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: fba-bench-worker-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: fba-bench-worker
+  minReplicas: 2
+  maxReplicas: 10 # Example: scale up to 10 workers
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70 # Scale out if average CPU usage goes above 70%
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-secret
+type: Opaque
+stringData:
+  password: supersecretpassword # Replace with a real secret management solution

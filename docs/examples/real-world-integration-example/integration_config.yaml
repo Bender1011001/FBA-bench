@@ -1,0 +1,33 @@
+# Example Real-World Integration Configuration
+
+real_world_integration_system:
+  enabled: true # Enable the real-world integration system for this example
+
+  # Marketplace Adapters Configuration
+  marketplace_adapters:
+    amazon_seller_central:
+      enabled: true # Enable Amazon Seller Central integration
+      marketplace_id: "ATVPDKIKX0DER" # Example: US marketplace ID (replace with actual if live)
+      api_credentials_env_vars:
+        - AWS_ACCESS_KEY_ID
+        - AWS_SECRET_ACCESS_KEY
+        - MWS_AUTH_TOKEN
+        - SELLER_ID
+      api_endpoint: "https://mws.amazonservices.com" # Or Selling Partner API endpoint
+      debug_api_logging: false # Set to true to log raw API requests/responses (use with caution!)
+
+  # Safety Constraints Configuration
+  safety_constraints:
+    dry_run_mode: true # !!! IMPORTANT: Set to false to make live API calls. HIGHLY RECOMMENDED FOR DEVELOPMENT. !!!
+    manual_approval_threshold_usd: 1000.00 # Actions with financial impact > this need explicit approval (if workflow exists)
+    max_daily_price_change_percent: 0.05 # Max 5% price change in 24 hours
+    max_inventory_restock_units: 500 # Max 500 units per restock
+    restricted_product_ids: ["BLOCKED_PRODUCT_1", "BLOCKED_PRODUCT_2"] # Example blocked products
+    fail_on_violation: false # Log warning and block action, but simulation continues
+
+  # Deployment Workflow Settings (conceptual for this example)
+  deployment_workflow:
+    monitoring_integration_enabled: true # Ensure live agent actions are monitored
+    auto_rollback_on_critical_alert: false # Set to true for automated rollback (HIGHLY SENSITIVE)
+    rollback_webhook_url: "http://your-rollback-system.com/trigger" # URL to trigger external rollback
+    manual_review_queue_endpoint: "http://your-review-tool.com/queue" # Endpoint for manual approval queue

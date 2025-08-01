@@ -1,0 +1,46 @@
+# Example Multi-Skill Agent Configuration
+
+multi_skill_system:
+  enabled: true
+
+  # List of skills to be enabled for this agent
+  enabled_skills:
+    - supply_manager
+    - marketing_manager
+    - financial_analyst
+    # - customer_service # Enable if customer service is needed for the scenario
+
+  # Global LLM settings for skills (can be overridden per skill below)
+  llm:
+    model_name: "gpt-4o-mini" # A cost-effective general purpose model
+    temperature: 0.5
+    max_tokens: 1500
+
+  # Skill Coordination Configuration
+  coordination:
+    enabled: true
+    conflict_resolution_strategy: "prioritize_financial_impact" # Prioritize financial outcomes in conflicts
+    llm_for_resolution:
+      enabled: true # Use LLM for complex conflict resolution
+      model_name: "gpt-4o" # Use a more powerful LLM for coordination logic
+      temperature: 0.3
+    # Optional: Assign weights to skills for weighted averaging strategies
+    # skill_weights:
+    #   financial_analyst: 1.0
+    #   marketing_manager: 0.7
+    #   supply_manager: 0.6
+
+  # Skill-Specific Configurations
+  skills:
+    supply_manager:
+      llm_model: "claude-3-haiku" # Faster/cheaper LLM for inventory management
+      inventory_safety_stock_multiplier: 1.2 # Maintain 20% safety stock
+      restock_threshold_percent: 0.3 # Reorder when inventory drops to 30%
+    marketing_manager:
+      llm_model: "gpt-4o-mini" # Good balance for marketing decisions
+      target_ad_roi_min: 1.5 # Aim for 150% ROI on ads
+      brand_awareness_goal: 0.7 # Try to achieve 70% brand awareness
+    financial_analyst:
+      llm_model: "gpt-4o" # High-quality model for complex financial decisions
+      target_profit_margin: 0.25 # Aim for 25% profit margin
+      capital_allocation_strategy: "growth" # "growth" or "cost_reduction"

@@ -1,0 +1,73 @@
+# My Custom Scenario Definition
+
+name: "DynamicMarketFluctuation"
+description: "A custom scenario featuring a series of unexpected demand shifts and potential supply chain issues."
+duration_days: 150 # 5 months
+
+initial_state:
+  starting_capital: 120000.00
+  initial_inventory:
+    product_X: 600
+    product_Y: 300
+    product_Z: 150
+  marketplace:
+    base_demand_product_X: 90
+    base_demand_product_Y: 45
+    base_demand_product_Z: 25
+    competition_level: "medium"
+    economic_conditions: "volatile"
+    initial_prices:
+      product_X: 22.50
+      product_Y: 30.00
+      product_Z: 48.00
+
+marketplace_events:
+  - day: 20
+    type: "demand_spike"
+    product_id: "product_X"
+    multiplier: 1.8
+    duration_days: 7
+    description: "Sudden viral interest in Product X."
+
+  - day: 50
+    type: "supply_chain_alert"
+    product_id: "raw_material_alpha" # For Product Y
+    impact: "potential_cost_increase_25%"
+    duration_days: 5 # A warning period
+    description: "Early warning of a potential raw material shortage for Product Y."
+
+  - day: 55
+    type: "supply_chain_disruption_confirmed"
+    product_id: "raw_material_alpha"
+    impact: "cost_increase_25%"
+    duration_days: 30
+    description: "Supply chain disruption confirmed for Product Y's raw material. Increased costs."
+
+  - day: 80
+    type: "competitor_innovates"
+    competitor_name: "InnovateCo"
+    product_id: "product_Y"
+    impact: "demand_shift_to_competitor_20%"
+    description: "New competitor enters with an innovative product, drawing demand from Product Y."
+
+  - day: 110
+    type: "positive_review_surge"
+    product_id: "product_Z"
+    impact: "brand_reputation_boost"
+    multiplier: 1.15 # 15% demand increase for product_Z due to good reviews
+    duration_days: 20
+    description: "Product Z receives widespread positive media attention and reviews."
+
+goals:
+  - name: "AchieveOverallProfit"
+    metric: "net_profit"
+    target: 60000.00
+    type: "minimum_threshold"
+  - name: "EndInventoryHealthy"
+    metric: "total_inventory_value"
+    target: 10000.00
+    type: "minimum_threshold"
+  - name: "ManageProductY"
+    metric: "profit_product_Y"
+    target: 5000.00
+    type: "minimum_threshold"

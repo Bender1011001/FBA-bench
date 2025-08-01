@@ -1,0 +1,34 @@
+# Example Learning Agent Configuration
+
+learning_system:
+  enabled: true
+
+  # Episodic Learning Configuration
+  episodic_learning:
+    enabled: true
+    storage_path: "./learning_data/episodic_agent_learnings/" # Path to store persistent learning data
+    learning_rate: 0.005 # Agent adapts faster to new experiences
+    insight_persistence: true # Insights from reflection are saved
+    agent_state_keys:
+      - "memory" # Persist agent's memory
+      - "decision_weights" # If agents have trainable decision weights
+      - "tool_usage_patterns" # For tools used
+
+  # Reinforcement Learning Environment Configuration (optional for this example)
+  rl_environment:
+    enabled: false # Keep false unless integrating with an actual RL framework
+    observation_space_definition: "default"
+    action_space_definition: "default"
+    reward_function_config:
+      metric: "net_profit"
+      maximize: true
+      penalty_for_violations: 50.0 # Lesser penalty for learning phase
+    cost_penalty_weight: 0.0005 # Less aggressive cost penalty during learning
+    max_episode_steps: 180 # Shorter episodes for faster iterations
+
+  # Safety Considerations for Learning
+  safety_considerations:
+    learning_mode_enabled: true # Explicitly in learning mode
+    disable_real_world_integration_on_learning: true # Crucial: NO live API calls during learning
+    use_simulated_feedback_only: true # Learn only from simulation feedback
+    sandbox_environment_required: true # Reinforce best practice

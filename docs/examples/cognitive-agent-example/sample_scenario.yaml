@@ -1,0 +1,44 @@
+# Sample Scenario for Cognitive Agent Example
+
+name: "CognitiveAgentSampleScenario"
+description: "A simple, stable market scenario for testing cognitive agent features."
+duration_days: 180 # 6 months to allow for quarterly planning/reflection
+
+initial_state:
+  starting_capital: 100000.00
+  initial_inventory:
+    product_A: 500
+    product_B: 250
+  marketplace:
+    base_demand_product_A: 100
+    base_demand_product_B: 50
+    competition_level: "low"
+    economic_conditions: "stable"
+    initial_prices:
+      product_A: 20.00
+      product_B: 15.00
+
+marketplace_events:
+  # A minor, predictable event to test reaction and reflection
+  - day: 45
+    type: "demand_fluctuation"
+    product_id: "product_A"
+    multiplier: 0.8 # Demand drops 20%
+    duration_days: 15
+    description: "Temporary dip in demand for Product A due to seasonal change."
+  - day: 60
+    type: "demand_fluctuation"
+    product_id: "product_A"
+    multiplier: 1.25 # Demand recovers
+    duration_days: 0 # Instant change
+    description: "Demand for Product A returns to normal."
+
+goals:
+  - name: "MaximizeNetProfit"
+    metric: "net_profit"
+    target: 50000.00
+    type: "minimum_threshold"
+  - name: "MaintainGoodwill"
+    metric: "customer_satisfaction_score"
+    target: 4.5
+    type: "minimum_threshold"

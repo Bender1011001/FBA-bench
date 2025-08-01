@@ -881,6 +881,590 @@ class AgentDecisionEvent(BaseEvent):
             'prompt_metadata': self.prompt_metadata,
         }
 
+
+# Skill Coordination Events
+
+@dataclass
+class SkillActivated(BaseEvent):
+    """
+    Event indicating a skill has been activated to handle an event.
+    
+    Attributes:
+        skill_name: Name of the activated skill
+        event_trigger: Type of event that triggered the skill
+        priority_score: Priority score assigned to this activation
+        agent_id: ID of the agent whose skill was activated
+        activation_reason: Reason for skill activation
+    """
+    skill_name: str
+    event_trigger: str
+    priority_score: float
+    agent_id: str
+    activation_reason: str = ""
+    
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.skill_name:
+            raise ValueError("Skill name cannot be empty")
+        if not 0.0 <= self.priority_score <= 1.0:
+            raise ValueError("Priority score must be between 0.0 and 1.0")
+    
+    def to_summary_dict(self) -> Dict[str, Any]:
+        return {
+            'event_id': self.event_id,
+            'timestamp': self.timestamp.isoformat(),
+            'skill_name': self.skill_name,
+            'event_trigger': self.event_trigger,
+            'priority_score': round(self.priority_score, 3),
+            'agent_id': self.agent_id,
+            'activation_reason': self.activation_reason
+        }
+
+
+@dataclass
+class SkillActionGenerated(BaseEvent):
+    """
+    Event indicating a skill has generated an action.
+    
+    Attributes:
+        skill_name: Name of the skill that generated the action
+        action_type: Type of action generated
+        confidence_score: Confidence score for the action
+        agent_id: ID of the agent whose skill generated the action
+        action_parameters: Parameters of the generated action
+        expected_outcome: Expected outcome of the action
+        resource_requirements: Resource requirements for the action
+    """
+    skill_name: str
+    action_type: str
+    confidence_score: float
+    agent_id: str
+    action_parameters: Dict[str, Any] = field(default_factory=dict)
+    expected_outcome: Dict[str, Any] = field(default_factory=dict)
+    resource_requirements: Dict[str, Any] = field(default_factory=dict)
+    
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.skill_name:
+            raise ValueError("Skill name cannot be empty")
+        if not self.action_type:
+            raise ValueError("Action type cannot be empty")
+        if not 0.0 <= self.confidence_score <= 1.0:
+            raise ValueError("Confidence score must be between 0.0 and 1.0")
+    
+    def to_summary_dict(self) -> Dict[str, Any]:
+        return {
+            'event_id': self.event_id,
+            'timestamp': self.timestamp.isoformat(),
+            'skill_name': self.skill_name,
+            'action_type': self.action_type,
+            'confidence_score': round(self.confidence_score, 3),
+            'agent_id': self.agent_id,
+            'action_parameters': self.action_parameters,
+            'expected_outcome': self.expected_outcome,
+            'resource_requirements': self.resource_requirements
+        }
+
+
+@dataclass
+class SkillConflictDetected(BaseEvent):
+    """
+    Event indicating a conflict between multiple skills.
+    
+    Attributes:
+        competing_skills: List of skills involved in the conflict
+        conflict_type: Type of conflict (resource, action, priority, etc.)
+        resolution: How the conflict was resolved
+        agent_id: ID of the agent where conflict occurred
+        conflict_details: Additional details about the conflict
+        resolution_strategy: Strategy used to resolve the conflict
+    """
+    competing_skills: List[str]
+    conflict_type: str
+    resolution: str
+    agent_id: str
+    conflict_details: Dict[str, Any] = field(default_factory=dict)
+    resolution_strategy: str = ""
+    
+    def __post_init__(self):
+        super().__post_init__()
+        if len(self.competing_skills) < 2:
+            raise ValueError("Must have at least 2 competing skills")
+        if not self.conflict_type:
+            raise ValueError("Conflict type cannot be empty")
+        if not self.resolution:
+            raise ValueError("Resolution cannot be empty")
+    
+    def to_summary_dict(self) -> Dict[str, Any]:
+        return {
+            'event_id': self.event_id,
+            'timestamp': self.timestamp.isoformat(),
+            'competing_skills': self.competing_skills,
+            'conflict_type': self.conflict_type,
+            'resolution': self.resolution,
+            'agent_id': self.agent_id,
+            'conflict_details': self.conflict_details,
+            'resolution_strategy': self.resolution_strategy
+        }
+
+
+@dataclass
+class MultiDomainDecisionMade(BaseEvent):
+    """
+    Event indicating a multi-domain decision has been made by the controller.
+    
+    Attributes:
+        coordinated_actions: List of actions that were coordinated and approved
+        reasoning: Strategic reasoning for the decision
+        resource_allocation: Resource allocation decisions
+        agent_id: ID of the agent that made the decision
+        business_priority: Current business priority at time of decision
+        strategic_alignment_score: Overall strategic alignment score
+        rejected_actions_count: Number of actions that were rejected
+    """
+    coordinated_actions: List[Dict[str, Any]]
+    reasoning: str
+    resource_allocation: Dict[str, Any]
+    agent_id: str
+    business_priority: str = ""
+    strategic_alignment_score: float = 0.0
+    rejected_actions_count: int = 0
+    
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.reasoning:
+            raise ValueError("Reasoning cannot be empty")
+        if not isinstance(self.coordinated_actions, list):
+            raise TypeError("Coordinated actions must be a list")
+        if not isinstance(self.resource_allocation, dict):
+            raise TypeError("Resource allocation must be a dictionary")
+    
+    def to_summary_dict(self) -> Dict[str, Any]:
+        return {
+            'event_id': self.event_id,
+            'timestamp': self.timestamp.isoformat(),
+            'coordinated_actions_count': len(self.coordinated_actions),
+            'reasoning': self.reasoning,
+            'resource_allocation': self.resource_allocation,
+            'agent_id': self.agent_id,
+            'business_priority': self.business_priority,
+            'strategic_alignment_score': round(self.strategic_alignment_score, 3),
+            'rejected_actions_count': self.rejected_actions_count
+        }
+
+
+# Domain-Specific Events for Skill Triggers
+
+@dataclass
+class LowInventoryEvent(BaseEvent):
+    """
+    Event indicating low inventory levels requiring attention.
+    
+    Attributes:
+        asin: Product ASIN with low inventory
+        current_level: Current inventory level
+        reorder_point: Reorder point threshold
+        days_remaining: Estimated days until stockout
+        urgency_level: Urgency level (low, medium, high, critical)
+        recommended_order_quantity: Recommended quantity to order
+    """
+    asin: str
+    current_level: int
+    reorder_point: int
+    days_remaining: float
+    urgency_level: str
+    recommended_order_quantity: int = 0
+    
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.asin:
+            raise ValueError("ASIN cannot be empty")
+        if self.current_level < 0 or self.reorder_point < 0:
+            raise ValueError("Inventory levels must be non-negative")
+        if self.urgency_level not in ["low", "medium", "high", "critical"]:
+            raise ValueError("Urgency level must be low, medium, high, or critical")
+    
+    def to_summary_dict(self) -> Dict[str, Any]:
+        return {
+            'event_id': self.event_id,
+            'timestamp': self.timestamp.isoformat(),
+            'asin': self.asin,
+            'current_level': self.current_level,
+            'reorder_point': self.reorder_point,
+            'days_remaining': round(self.days_remaining, 1),
+            'urgency_level': self.urgency_level,
+            'recommended_order_quantity': self.recommended_order_quantity
+        }
+
+
+@dataclass
+class SupplierResponseEvent(BaseEvent):
+    """
+    Event representing a response from a supplier.
+    
+    Attributes:
+        supplier_id: ID of the responding supplier
+        response_type: Type of response (quote, delivery_update, quality_report, etc.)
+        content: Response content
+        order_id: Related order ID if applicable
+        delivery_date: Promised delivery date if applicable
+        quoted_price: Quoted price if applicable
+        response_time_hours: Time taken to respond in hours
+    """
+    supplier_id: str
+    response_type: str
+    content: str
+    order_id: Optional[str] = None
+    delivery_date: Optional[datetime] = None
+    quoted_price: Optional[Money] = None
+    response_time_hours: float = 0.0
+    
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.supplier_id:
+            raise ValueError("Supplier ID cannot be empty")
+        if not self.response_type:
+            raise ValueError("Response type cannot be empty")
+        if not self.content:
+            raise ValueError("Response content cannot be empty")
+    
+    def to_summary_dict(self) -> Dict[str, Any]:
+        return {
+            'event_id': self.event_id,
+            'timestamp': self.timestamp.isoformat(),
+            'supplier_id': self.supplier_id,
+            'response_type': self.response_type,
+            'content': self.content[:100] + "..." if len(self.content) > 100 else self.content,
+            'order_id': self.order_id,
+            'delivery_date': self.delivery_date.isoformat() if self.delivery_date else None,
+            'quoted_price': str(self.quoted_price) if self.quoted_price else None,
+            'response_time_hours': round(self.response_time_hours, 2)
+        }
+
+
+@dataclass
+class MarketTrendEvent(BaseEvent):
+    """
+    Event indicating a significant market trend or change.
+    
+    Attributes:
+        trend_type: Type of trend (price, demand, competitor, seasonal, etc.)
+        trend_direction: Direction of trend (up, down, stable)
+        magnitude: Magnitude of the trend (0.0 to 1.0)
+        affected_products: List of ASINs affected by the trend
+        confidence_level: Confidence in the trend analysis
+        duration_estimate: Estimated duration of the trend
+        market_data: Supporting market data
+    """
+    trend_type: str
+    trend_direction: str
+    magnitude: float
+    affected_products: List[str] = field(default_factory=list)
+    confidence_level: float = 0.5
+    duration_estimate: str = "unknown"
+    market_data: Dict[str, Any] = field(default_factory=dict)
+    
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.trend_type:
+            raise ValueError("Trend type cannot be empty")
+        if self.trend_direction not in ["up", "down", "stable"]:
+            raise ValueError("Trend direction must be up, down, or stable")
+        if not 0.0 <= self.magnitude <= 1.0:
+            raise ValueError("Magnitude must be between 0.0 and 1.0")
+        if not 0.0 <= self.confidence_level <= 1.0:
+            raise ValueError("Confidence level must be between 0.0 and 1.0")
+    
+    def to_summary_dict(self) -> Dict[str, Any]:
+        return {
+            'event_id': self.event_id,
+            'timestamp': self.timestamp.isoformat(),
+            'trend_type': self.trend_type,
+            'trend_direction': self.trend_direction,
+            'magnitude': round(self.magnitude, 3),
+            'affected_products': self.affected_products,
+            'confidence_level': round(self.confidence_level, 3),
+            'duration_estimate': self.duration_estimate,
+            'market_data': self.market_data
+        }
+
+
+@dataclass
+class CustomerMessageReceived(BaseEvent):
+    """
+    Event indicating a customer message has been received.
+    
+    Attributes:
+        customer_id: ID of the customer
+        message_type: Type of message (inquiry, complaint, return_request, etc.)
+        content: Message content
+        sentiment_score: Sentiment analysis score (-1.0 to 1.0)
+        priority_level: Priority level for response
+        related_asin: Product ASIN if message is product-related
+        response_required: Whether a response is required
+        escalation_needed: Whether escalation is needed
+    """
+    customer_id: str
+    message_type: str
+    content: str
+    sentiment_score: float = 0.0
+    priority_level: str = "medium"
+    related_asin: Optional[str] = None
+    response_required: bool = True
+    escalation_needed: bool = False
+    
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.customer_id:
+            raise ValueError("Customer ID cannot be empty")
+        if not self.message_type:
+            raise ValueError("Message type cannot be empty")
+        if not self.content:
+            raise ValueError("Message content cannot be empty")
+        if not -1.0 <= self.sentiment_score <= 1.0:
+            raise ValueError("Sentiment score must be between -1.0 and 1.0")
+        if self.priority_level not in ["low", "medium", "high", "urgent"]:
+            raise ValueError("Priority level must be low, medium, high, or urgent")
+    
+    def to_summary_dict(self) -> Dict[str, Any]:
+        return {
+            'event_id': self.event_id,
+            'timestamp': self.timestamp.isoformat(),
+            'customer_id': self.customer_id,
+            'message_type': self.message_type,
+            'content_length': len(self.content),
+            'sentiment_score': round(self.sentiment_score, 3),
+            'priority_level': self.priority_level,
+            'related_asin': self.related_asin,
+            'response_required': self.response_required,
+            'escalation_needed': self.escalation_needed
+        }
+
+
+@dataclass
+class NegativeReviewEvent(BaseEvent):
+    """
+    Event indicating a negative review has been posted.
+    
+    Attributes:
+        review_id: ID of the review
+        customer_id: ID of the customer who posted the review
+        asin: Product ASIN being reviewed
+        rating: Star rating (1-5)
+        review_content: Review text content
+        sentiment_score: Sentiment analysis score
+        impact_score: Potential impact on sales/reputation
+        response_needed: Whether a response is needed
+        escalation_required: Whether escalation is required
+    """
+    review_id: str
+    customer_id: str
+    asin: str
+    rating: int
+    review_content: str
+    sentiment_score: float = -0.5
+    impact_score: float = 0.5
+    response_needed: bool = True
+    escalation_required: bool = False
+    
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.review_id:
+            raise ValueError("Review ID cannot be empty")
+        if not self.customer_id:
+            raise ValueError("Customer ID cannot be empty")
+        if not self.asin:
+            raise ValueError("ASIN cannot be empty")
+        if not 1 <= self.rating <= 5:
+            raise ValueError("Rating must be between 1 and 5")
+        if not self.review_content:
+            raise ValueError("Review content cannot be empty")
+        if not -1.0 <= self.sentiment_score <= 1.0:
+            raise ValueError("Sentiment score must be between -1.0 and 1.0")
+        if not 0.0 <= self.impact_score <= 1.0:
+            raise ValueError("Impact score must be between 0.0 and 1.0")
+    
+    def to_summary_dict(self) -> Dict[str, Any]:
+        return {
+            'event_id': self.event_id,
+            'timestamp': self.timestamp.isoformat(),
+            'review_id': self.review_id,
+            'customer_id': self.customer_id,
+            'asin': self.asin,
+            'rating': self.rating,
+            'review_length': len(self.review_content),
+            'sentiment_score': round(self.sentiment_score, 3),
+            'impact_score': round(self.impact_score, 3),
+            'response_needed': self.response_needed,
+            'escalation_required': self.escalation_required
+        }
+
+
+@dataclass
+class ComplaintEvent(BaseEvent):
+    """
+    Event indicating a formal customer complaint.
+    
+    Attributes:
+        complaint_id: ID of the complaint
+        customer_id: ID of the complaining customer
+        complaint_type: Type of complaint
+        severity: Severity level of the complaint
+        description: Complaint description
+        related_asin: Product ASIN if complaint is product-related
+        related_order_id: Order ID if complaint is order-related
+        resolution_deadline: Deadline for resolution
+        escalation_level: Current escalation level
+    """
+    complaint_id: str
+    customer_id: str
+    complaint_type: str
+    severity: str
+    description: str
+    related_asin: Optional[str] = None
+    related_order_id: Optional[str] = None
+    resolution_deadline: Optional[datetime] = None
+    escalation_level: int = 1
+    
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.complaint_id:
+            raise ValueError("Complaint ID cannot be empty")
+        if not self.customer_id:
+            raise ValueError("Customer ID cannot be empty")
+        if not self.complaint_type:
+            raise ValueError("Complaint type cannot be empty")
+        if self.severity not in ["low", "medium", "high", "critical"]:
+            raise ValueError("Severity must be low, medium, high, or critical")
+        if not self.description:
+            raise ValueError("Description cannot be empty")
+        if self.escalation_level < 1:
+            raise ValueError("Escalation level must be at least 1")
+    
+    def to_summary_dict(self) -> Dict[str, Any]:
+        return {
+            'event_id': self.event_id,
+            'timestamp': self.timestamp.isoformat(),
+            'complaint_id': self.complaint_id,
+            'customer_id': self.customer_id,
+            'complaint_type': self.complaint_type,
+            'severity': self.severity,
+            'description_length': len(self.description),
+            'related_asin': self.related_asin,
+            'related_order_id': self.related_order_id,
+            'resolution_deadline': self.resolution_deadline.isoformat() if self.resolution_deadline else None,
+            'escalation_level': self.escalation_level
+        }
+
+
+@dataclass
+class ProfitReport(BaseEvent):
+    """
+    Event containing profit/loss reporting information.
+    
+    Attributes:
+        reporting_period: Period covered by the report
+        total_revenue: Total revenue for the period
+        total_expenses: Total expenses for the period
+        net_profit: Net profit (revenue - expenses)
+        profit_margin: Profit margin percentage
+        product_breakdown: Profit breakdown by product
+        expense_breakdown: Expense breakdown by category
+        performance_vs_target: Performance compared to targets
+    """
+    reporting_period: str
+    total_revenue: Money
+    total_expenses: Money
+    net_profit: Money
+    profit_margin: float
+    product_breakdown: Dict[str, Money] = field(default_factory=dict)
+    expense_breakdown: Dict[str, Money] = field(default_factory=dict)
+    performance_vs_target: Dict[str, float] = field(default_factory=dict)
+    
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.reporting_period:
+            raise ValueError("Reporting period cannot be empty")
+        if not isinstance(self.total_revenue, Money):
+            raise TypeError("Total revenue must be Money type")
+        if not isinstance(self.total_expenses, Money):
+            raise TypeError("Total expenses must be Money type")
+        if not isinstance(self.net_profit, Money):
+            raise TypeError("Net profit must be Money type")
+        
+        # Validate profit calculation
+        calculated_profit = Money(self.total_revenue.cents - self.total_expenses.cents)
+        if abs(self.net_profit.cents - calculated_profit.cents) > 1:  # Allow 1 cent rounding
+            raise ValueError(f"Net profit calculation error: expected {calculated_profit}, got {self.net_profit}")
+    
+    def to_summary_dict(self) -> Dict[str, Any]:
+        return {
+            'event_id': self.event_id,
+            'timestamp': self.timestamp.isoformat(),
+            'reporting_period': self.reporting_period,
+            'total_revenue': str(self.total_revenue),
+            'total_expenses': str(self.total_expenses),
+            'net_profit': str(self.net_profit),
+            'profit_margin': round(self.profit_margin, 4),
+            'product_count': len(self.product_breakdown),
+            'expense_categories': len(self.expense_breakdown),
+            'performance_metrics': self.performance_vs_target
+        }
+
+
+@dataclass
+class LossEvent(BaseEvent):
+    """
+    Event indicating a significant financial loss or negative event.
+    
+    Attributes:
+        loss_type: Type of loss (operational, one_time, writeoff, etc.)
+        amount: Amount of the loss
+        cause: Cause of the loss
+        affected_area: Business area affected
+        recovery_plan: Plan for recovery if any
+        prevention_measures: Measures to prevent recurrence
+        severity: Severity of the loss impact
+        insurance_claim: Whether insurance claim is applicable
+    """
+    loss_type: str
+    amount: Money
+    cause: str
+    affected_area: str
+    recovery_plan: str = ""
+    prevention_measures: List[str] = field(default_factory=list)
+    severity: str = "medium"
+    insurance_claim: bool = False
+    
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.loss_type:
+            raise ValueError("Loss type cannot be empty")
+        if not isinstance(self.amount, Money):
+            raise TypeError("Amount must be Money type")
+        if self.amount.cents <= 0:
+            raise ValueError("Loss amount must be positive")
+        if not self.cause:
+            raise ValueError("Cause cannot be empty")
+        if not self.affected_area:
+            raise ValueError("Affected area cannot be empty")
+        if self.severity not in ["low", "medium", "high", "critical"]:
+            raise ValueError("Severity must be low, medium, high, or critical")
+    
+    def to_summary_dict(self) -> Dict[str, Any]:
+        return {
+            'event_id': self.event_id,
+            'timestamp': self.timestamp.isoformat(),
+            'loss_type': self.loss_type,
+            'amount': str(self.amount),
+            'cause': self.cause,
+            'affected_area': self.affected_area,
+            'recovery_plan_provided': bool(self.recovery_plan),
+            'prevention_measures_count': len(self.prevention_measures),
+            'severity': self.severity,
+            'insurance_claim': self.insurance_claim
+        }
+
 # Event type registry for serialization/deserialization
 EVENT_TYPES = {
     'AgentDecisionEvent': AgentDecisionEvent,
@@ -889,7 +1473,7 @@ EVENT_TYPES = {
     'CompetitorPricesUpdated': CompetitorPricesUpdated,
     'SetPriceCommand': SetPriceCommand,
     'ProductPriceUpdated': ProductPriceUpdated,
-    'InventoryUpdate': InventoryUpdate, # New: Inventory update event
+    'InventoryUpdate': InventoryUpdate,
     'BudgetWarning': BudgetWarning,
     'BudgetExceeded': BudgetExceeded,
     'ConstraintViolation': ConstraintViolation,
@@ -899,6 +1483,20 @@ EVENT_TYPES = {
     'MarketManipulationEvent': MarketManipulationEvent,
     'ComplianceTrapEvent': ComplianceTrapEvent,
     'AdversarialResponse': AdversarialResponse,
+    # Skill coordination events
+    'SkillActivated': SkillActivated,
+    'SkillActionGenerated': SkillActionGenerated,
+    'SkillConflictDetected': SkillConflictDetected,
+    'MultiDomainDecisionMade': MultiDomainDecisionMade,
+    # Domain-specific events for skill triggers
+    'LowInventoryEvent': LowInventoryEvent,
+    'SupplierResponseEvent': SupplierResponseEvent,
+    'MarketTrendEvent': MarketTrendEvent,
+    'CustomerMessageReceived': CustomerMessageReceived,
+    'NegativeReviewEvent': NegativeReviewEvent,
+    'ComplaintEvent': ComplaintEvent,
+    'ProfitReport': ProfitReport,
+    'LossEvent': LossEvent,
 }
 
 

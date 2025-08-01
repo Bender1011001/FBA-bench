@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  # Main FBA-Bench simulation service (Python application)
+  fba-bench-app:
+    build:
+      context: ../.. # Build context is the root of the FBA-Bench project
+      dockerfile: Dockerfile # Assuming a Dockerfile exists at the project root
+    ports:
+      - "8000:8000" # Example port for a potential API server or dashboard
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=fbabench_db
+      - PYTHONUNBUFFERED=1 # Ensures Python output is unbuffered
+    volumes:
+      - ./logs:/app/logs # Mount a volume for logs
+      - ../../.:/app # Mount the entire project into the container for development/hot-reloading
+    depends_on:
+      - redis
+      - postgres
+    # command: python api_server.py # Example command to start the main app
+    # Placeholder for running a simulation. Actual command might be passed to workers.
+    # command: python experiment_cli.py run my_sweep.yaml --distributed --workers 2
+
+  # Redis service for Distributed Event Bus persistence/pubsub
+  redis:
+    image: "redis:7-alpine"
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data # Persistent volume for Redis data
+    command: redis-server --appendonly yes # Enable AOF persistence
+
+  # PostgreSQL service for state storage (e.g., WorldStore persistence)
+  postgres:
+    image: "postgres:14-alpine"
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=fbabench_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data # Persistent volume for PostgreSQL data
+
+  # Optional: Load balancer (e.g., Nginx, Envoy) - conceptual
+  # frontend-loadbalancer:
+  #   image: nginx:latest
+  #   ports:
+  #     - "80:80"
+  #   volumes:
+  #     - ./nginx.conf:/etc/nginx/nginx.conf # Custom Nginx configuration
+  #   depends_on:
+  #     - fba-bench-app # Points to the main application service or worker services
+
+volumes:
+  redis_data:
+  postgres_data:

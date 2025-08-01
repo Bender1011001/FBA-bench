@@ -1,0 +1,24 @@
+# Agent Configuration for Plugin Example
+
+# This configuration enables 'MySimpleSkill' which is provided by
+# the 'MySimpleAgentPlugin' located in this example directory.
+
+multi_skill_system:
+  enabled: true # Ensure multi-skill system is enabled
+
+  # List of skills to be enabled. Include 'my_simple_skill' here.
+  enabled_skills:
+    - supply_manager
+    - marketing_manager
+    - my_simple_skill # This is the custom skill from the plugin!
+
+  # Global LLM settings (if 'my_simple_skill' uses LLMs)
+  llm:
+    model_name: "gpt-4o-mini"
+    temperature: 0.5
+
+  # Optional: Skill-specific configuration for your custom skill
+  skills:
+    my_simple_skill:
+      custom_param: "example_value" # This parameter will be passed to MySimpleSkill's constructor
+      monitoring_interval_days: 1 # Example parameter for the custom skill

@@ -1,0 +1,35 @@
+# Simple Scenario for Agent Learning Example
+
+name: "LearningExampleScenario"
+description: "A repetitive, stable scenario designed to observe agent adaptation over episodes."
+duration_days: 90 # Short quarterly duration
+
+initial_state:
+  starting_capital: 50000.00
+  initial_inventory:
+    product_A: 200
+  marketplace:
+    base_demand_product_A: 50
+    competition_level: "low"
+    economic_conditions: "stable"
+    initial_prices:
+      product_A: 20.00
+
+marketplace_events:
+  # A simple, recurring event to provide consistent learning signals
+  - day: 30
+    type: "small_price_shock"
+    product_id: "product_A"
+    multiplier: 0.9 # Price drops 10%
+    description: "Minor market price fluctuation for Product A."
+  - day: 60
+    type: "small_price_shock"
+    product_id: "product_A"
+    multiplier: 0.9 # Another 10% price drop
+    description: "Another minor market price fluctuation for Product A."
+
+goals:
+  - name: "MaximizeNetProfit"
+    metric: "net_profit"
+    target: 5000.00
+    type: "minimum_threshold"

@@ -1,0 +1,28 @@
+# Scenario for Plugin Development Example
+
+name: "PluginDemoScenario"
+description: "A simple scenario for testing the integration of a custom agent plugin."
+duration_days: 90 # A few months to observe plugin behavior
+
+initial_state:
+  starting_capital: 10000.00
+  initial_inventory:
+    product_A: 100
+  marketplace:
+    base_demand_product_A: 10
+    competition_level: "low"
+    economic_conditions: "stable"
+    initial_prices:
+      product_A: 10.00
+
+marketplace_events:
+  - day: 15
+    type: "simulated_low_capital_event" # Custom event that might be observed by the plugin's skill
+    amount: 500
+    description: "Simulated event: Agent's capital drops by a small amount, to test monitoring."
+
+goals:
+  - name: "MaintainProfit"
+    metric: "net_profit"
+    target: 500.00
+    type: "minimum_threshold"

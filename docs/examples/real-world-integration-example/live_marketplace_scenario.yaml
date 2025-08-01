@@ -1,0 +1,43 @@
+# Live Marketplace Scenario for Real-World Integration Example
+
+name: "MarketplaceIntegrationTestScenario"
+description: "A scenario designed to test agent actions that would potentially interact with a live marketplace API, focusing on price and inventory updates."
+duration_days: 7 # Short duration for quick integration tests
+
+initial_state:
+  starting_capital: 20000.00
+  initial_inventory:
+    integration_product_A: 100 # Product intended for live interaction
+    integration_product_B: 50
+  marketplace:
+    base_demand_integration_product_A: 5
+    base_demand_integration_product_B: 3
+    competition_level: "low"
+    economic_conditions: "stable"
+    initial_prices:
+      integration_product_A: 30.00
+      integration_product_B: 45.00
+
+marketplace_events:
+  - day: 2
+    type: "simulated_positive_sales_trend"
+    product_id: "integration_product_A"
+    multiplier: 1.5 # Simulate a sales boost to encourage restock/price change
+    duration_days: 2
+    description: "Simulated positive sales signal for Product A, potentially prompting agent action."
+
+  - day: 4
+    type: "simulated_competitor_price_drop"
+    product_id: "integration_product_A"
+    new_competitor_price: 28.00 # Competitor drops price, might trigger agent to react
+    description: "Simulated competitor lowering price, testing agent's pricing response."
+
+goals:
+  - name: "MaintainProductAAvailability"
+    metric: "current_inventory_integration_product_A"
+    target: 20 # Ensure inventory doesn't drop too low, which would trigger restock
+    type: "minimum_threshold"
+  - name: "MaximizeProductAProfit"
+    metric: "profit_integration_product_A"
+    target: 1000.00
+    type: "minimum_threshold"

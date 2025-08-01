@@ -1,0 +1,31 @@
+# Simple Scenario for Distributed Simulation Example
+
+name: "DistributedSimpleScenario"
+description: "A very basic scenario for demonstrating distributed agent execution."
+duration_days: 30 # Short duration for quick testing
+
+initial_state:
+  starting_capital: 10000.00
+  initial_inventory:
+    product_A: 100
+  marketplace:
+    base_demand_product_A: 10
+    competition_level: "low"
+    economic_conditions: "stable"
+    initial_prices:
+      product_A: 10.00
+
+marketplace_events:
+  # No complex events for simplicity in a distributed test
+  - day: 15
+    type: "small_demand_increase"
+    product_id: "product_A"
+    multiplier: 1.1 # 10% demand increase
+    duration_days: 5
+    description: "A minor, temporary increase in demand for Product A."
+
+goals:
+  - name: "AchieveProfit"
+    metric: "net_profit"
+    target: 500.00
+    type: "minimum_threshold"

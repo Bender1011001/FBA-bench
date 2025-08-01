@@ -1,0 +1,78 @@
+# Complex Marketplace Scenario for Multi-Skill Agent Example
+
+name: "MarketplaceWithMultipleChallenges"
+description: "A scenario requiring diverse skill sets to manage demand shifts, supply disruptions, and competitor actions."
+duration_days: 270 # 9 months
+
+initial_state:
+  starting_capital: 150000.00
+  initial_inventory:
+    product_A: 400
+    product_B: 200
+    product_C: 100
+  marketplace:
+    base_demand_product_A: 80
+    base_demand_product_B: 40
+    base_demand_product_C: 20
+    competition_level: "medium"
+    economic_conditions: "stable"
+    initial_prices:
+      product_A: 25.00
+      product_B: 35.00
+      product_C: 50.00
+  suppliers:
+    supplier1:
+      lead_time: 10 # days
+      cost_factor: 1.0
+    supplier2:
+      lead_time: 5 # days
+      cost_factor: 1.1 # slightly more expensive but faster
+
+marketplace_events:
+  - day: 30
+    type: "demand_spike"
+    product_id: "product_A"
+    multiplier: 2.0
+    duration_days: 10
+    description: "Sudden increase in demand for Product A due to a viral trend."
+
+  - day: 60
+    type: "supply_chain_disruption"
+    product_id: "raw_material_for_product_B"
+    impact: "cost_increase_30%"
+    duration_days: 20
+    description: "Key raw material for Product B becomes scarce and expensive."
+
+  - day: 90
+    type: "competitor_launch"
+    competitor_name: "ApexInnovations"
+    product_id: "product_C"
+    impact: "price_drop_10%"
+    description: "New competitor enters market with a cheaper alternative for Product C. Agent needs to react."
+
+  - day: 120
+    type: "economic_slowdown"
+    impact: "overall_demand_decrease_15%"
+    duration_days: 60
+    description: "General economic downturn affecting all product demands."
+
+  - day: 180
+    type: "marketing_opportunity"
+    product_id: "product_B"
+    impact: "reach_increase_50%"
+    cost: 5000.00
+    description: "Opportunity for a large-scale marketing campaign for Product B. Requires budgeting."
+
+goals:
+  - name: "MaximizeNetProfit"
+    metric: "net_profit"
+    target: 75000.00
+    type: "minimum_threshold"
+  - name: "MaintainGoodwill"
+    metric: "customer_satisfaction_score"
+    target: 4.2
+    type: "minimum_threshold"
+  - name: "EfficientInventory"
+    metric: "average_inventory_turnover"
+    target: 8.0
+    type: "minimum_threshold"

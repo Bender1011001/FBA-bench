@@ -1,11 +1,13 @@
 from opentelemetry import trace
 from opentelemetry.trace import Tracer, NonRecordingSpan
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
+import json
 
 class AgentTracer:
     """
     Handles OpenTelemetry tracing for agent-specific actions (observe, think, tool_call).
     Each tracing method returns a context manager that should be used with a 'with' statement.
+    Includes enhancements for LLM reasoning, tool usage, error context, and performance.
     """
     def __init__(self, tracer: Tracer):
         self.tracer = tracer
@@ -29,20 +31,38 @@ class AgentTracer:
         span.add_event("Agent turn started")
         return _SpanContextManager(span)
 
-    def trace_observe_phase(self, current_tick: int, event_count: int):
+    def trace_observe_phase(self, current_tick: int, event_count: int, observed_events_summary: Optional[str] = None):
         """
         Returns a context manager for tracing the agent's observation phase.
+
+        Args:
+            current_tick: The current simulation tick.
+            event_count: The number of events observed.
+            observed_events_summary: A concise summary of the observed events.
         """
         span = self.tracer.start_as_current_span("observe")
-        span.set_attributes({
+        attributes = {
             "observe.tick": current_tick,
             "observe.event_count": event_count
-        })
+        }
+        if observed_events_summary:
+            attributes["observe.events_summary"] = observed_events_summary
+        span.set_attributes(attributes)
         return _SpanContextManager(span)
 
-    def trace_think_phase(self, current_tick: int, llm_model: str, llm_tokens_used: int, decision_confidence: Optional[float] = None, parsed_response: Optional[Dict[str, Any]] = None):
+    def trace_think_phase(self, current_tick: int, llm_model: str, llm_tokens_used: int,
+                          decision_confidence: Optional[float] = None, parsed_response: Optional[Dict[str, Any]] = None,
+                          llm_reasoning: Optional[str] = None):
         """
         Returns a context manager for tracing the agent's thinking/decision-making phase.
+
+        Args:
+            current_tick: The current simulation tick.
+            llm_model: The LLM model used for thinking.
+            llm_tokens_used: The number of tokens used by the LLM.
+            decision_confidence: Confidence score of the agent's decision.
+            parsed_response: The structured response from the LLM.
+            llm_reasoning: The raw LLM thought process or reasoning chain.
         """
         span = self.tracer.start_as_current_span("think")
         attributes = {
@@ -60,31 +80,60 @@ class AgentTracer:
                 attributes["think.product_asin"] = parsed_response["product_asin"]
             if 'set_price_value' in parsed_response:
                 attributes["think.set_price_value"] = parsed_response["set_price_value"]
+            # Capture full parsed response as a JSON string for detailed analysis if needed
+            attributes["think.parsed_response_json"] = json.dumps(parsed_response)
+
+        if llm_reasoning:
+            attributes["llm.reasoning"] = llm_reasoning # Capture LLM thought process
 
         span.set_attributes(attributes)
         return _SpanContextManager(span)
 
-    def trace_tool_call(self, tool_name: str, current_tick: int, tool_args: Optional[Dict[str, Any]] = None, result: Optional[Any] = None):
+    def trace_tool_call(self, tool_name: str, current_tick: int, tool_args: Optional[Dict[str, Any]] = None,
+                        result: Optional[Any] = None, success: Optional[bool] = None, error_details: Optional[Dict[str, Any]] = None):
         """
         Returns a context manager for tracing an individual tool call made by the agent.
+
+        Args:
+            tool_name: The name of the tool called.
+            current_tick: The current simulation tick.
+            tool_args: The arguments passed to the tool.
+            result: The result returned by the tool (if successful).
+            success: Boolean indicating if the tool call was successful.
+            error_details: Dictionary containing error information if the call failed.
         """
         span = self.tracer.start_as_current_span(f"tool_call_{tool_name}")
-        span.set_attributes({
+        attributes = {
             "tool_call.name": tool_name,
             "tool_call.tick": current_tick,
-        })
+        }
+        if success is not None:
+            attributes["tool_call.success"] = success
         if tool_args:
+            # Sanitize arguments, only include primitives or convert to string
             for k, v in tool_args.items():
-                # Sanitize arguments, only include primitives or convert to string
-                span.set_attribute(f"tool_call.args.{k}", self._safe_attribute_value(v))
+                attributes[f"tool_call.args.{k}"] = self._safe_attribute_value(v)
         if result:
-            span.set_attribute("tool_call.result", self._safe_attribute_value(result))
+            attributes["tool_call.result_summary"] = self._safe_attribute_value(result) # Summary to avoid large fields
+            attributes["tool_call.result_json"] = json.dumps(result) # Full result as JSON string if detailed capture is needed
+
+        if error_details:
+            attributes["tool_call.error_type"] = error_details.get("type", "unknown")
+            attributes["tool_call.error_message"] = error_details.get("message", "N/A")
+            attributes["tool_call.error_full_details"] = json.dumps(error_details) # Full error context
+
+        span.set_attributes(attributes)
         return _SpanContextManager(span)
 
     def _safe_attribute_value(self, value):
         """Converts value to a string if not a primitive type for OpenTelemetry attributes."""
         if isinstance(value, (str, int, float, bool)):
             return value
+        if isinstance(value, (dict, list)): # Convert dicts/lists to JSON string
+            try:
+                return json.dumps(value)
+            except TypeError:
+                return repr(value) # Fallback if not JSON serializable
         return str(value)
 
 class _SpanContextManager:
