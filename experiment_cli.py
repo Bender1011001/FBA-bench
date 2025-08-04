@@ -82,7 +82,7 @@ try:
     from community.contribution_tools import ContributionManager
 
 except ImportError as e:
-    print(f"❌ Import error: {e}")
+    print(f"x Import error: {e}")
     print(f"Details: {e.args[0]}") # Access the message directly from args
     print("This CLI requires FBA-Bench v3 components. Make sure you're running from the project root.")
     sys.exit(1)
@@ -173,35 +173,26 @@ class SimulationRunner:
         Returns:
             Dict containing complete simulation results and metrics
         """
-        logger.info(f"🚀 Starting simulation run {run_number}")
+        logger.info(f"Starting simulation run {run_number}")
         logger.info(f"   Parameters: {self._format_key_parameters(parameters)}")
         
         # Initialize reproducibility features for this run
         if self.reproducibility_config:
             # Set up deterministic seeding for this run
-            run_seed = self.reproducibility_config.master_seed + run_number
-            sim_seed = SimSeed(
-                master_seed=run_seed,
-                component_seeds={
-                    'simulation': run_seed + 1,
-                    'competitors': run_seed + 2,
-                    'events': run_seed + 3,
-                    'llm': run_seed + 4
-                }
-            )
+            run_seed = self.reproducibility_config.seed_management.master_seed + run_number
             SimSeed.set_master_seed(run_seed) # Ensure seed is set for all components
 
             # Apply simulation mode
             mode_controller = get_mode_controller()
             if self.reproducibility_config.simulation_mode:
                 set_global_mode(self.reproducibility_config.simulation_mode)
-                logger.info(f"🎯 Simulation mode: {self.reproducibility_config.simulation_mode.value}")
+                logger.info(f"Simulation mode: {self.reproducibility_config.simulation_mode.value}")
             
             # Initialize LLM cache if needed
-            if self.reproducibility_config.enable_llm_caching:
-                cache = LLMResponseCache(self.reproducibility_config.cache_file)
+            if self.reproducibility_config.llm_cache.enabled:
+                cache = LLMResponseCache(self.reproducibility_config.llm_cache.cache_file)
                 await cache.initialize()
-                logger.info(f"💾 LLM caching enabled: {self.reproducibility_config.cache_file}")
+                logger.info(f"LLM caching enabled: {self.reproducibility_config.llm_cache.cache_file}")
             
         # Convert duration_hours to max_ticks (assuming 1 tick per second)
         duration_hours = parameters.get('duration_hours', 72)
@@ -228,7 +219,7 @@ class SimulationRunner:
         current_backend: Union[AsyncioQueueBackend, DistributedBackend]
         
         if self.scalability_config and self.scalability_config.enable_distributed_mode:
-            logger.info("⚙️ Distributed mode enabled. Initializing DistributedEventBus backend.")
+            logger.info("Distributed mode enabled. Initializing DistributedEventBus backend.")
             # For local testing with MockRedisBroker, otherwise connect to actual Redis/Kafka
             distributed_message_broker = MockRedisBroker()
             distributed_event_bus_instance = DistributedEventBus(broker=distributed_message_broker)
@@ -240,7 +231,7 @@ class SimulationRunner:
             logger.info("DistributedCoordinator started.")
 
         else:
-            logger.info("⚙️ Running in single-process mode (AsyncioQueueBackend).")
+            logger.info("Running in single-process mode (AsyncioQueueBackend).")
             current_backend = AsyncioQueueBackend()
             event_bus = EventBus(backend=current_backend)
 
@@ -388,11 +379,11 @@ class SimulationRunner:
                 
                 # Add timeout to prevent infinite loops in testing
                 if time.time() - start_time_check > min(max_duration, 120):  # Max 120 seconds for CLI testing with overhead
-                    logger.info(f"    ⏰ Simulation timeout reached (120s), stopping...")
+                    logger.info(f"    Simulation timeout reached (120s), stopping...")
                     break
                 
         except Exception as e:
-            logger.exception(f"❌ Simulation run {run_number} failed: {e}")
+            logger.exception(f"Simulation run {run_number} failed: {e}")
             raise
         finally:
             # Ensure orchestrator is stopped
@@ -434,7 +425,7 @@ class SimulationRunner:
             SimSeed.reset_master_seed() # Clean up seed after run
             
         execution_time = time.time() - start_time
-        logger.info(f"✅ Simulation run {run_number} completed in {execution_time:.1f}s")
+        logger.info(f"Simulation run {run_number} completed in {execution_time:.1f}s")
         
         # Create simplified audit record from simulation results
         result = self._create_simulation_result(run_number, parameters, dashboard_service, execution_time)
@@ -579,7 +570,7 @@ class ExperimentManager:
                 config_data = yaml.safe_load(f)
             return ExperimentConfig(config_data)
         except Exception as e:
-            print(f"❌ Failed to load config file {self.config_file}: {e}")
+            print(f"Failed to load config file {self.config_file}: {e}")
             sys.exit(1)
     
     def _create_results_directory(self) -> Path:
@@ -594,7 +585,7 @@ class ExperimentManager:
             with open(self.config_file, 'r') as source:
                 f.write(source.read())
         
-        print(f"📁 Results directory: {results_dir}")
+        print(f"Results directory: {results_dir}")
         return results_dir
     
     async def run_experiment(self, max_runs: Optional[int] = None, parallel_workers: int = 1, args=None) -> None:
@@ -606,21 +597,21 @@ class ExperimentManager:
             parallel_workers: Number of parallel processes to use
             args: CLI arguments for reproducibility features
         """
-        print(f"🧪 Starting experiment: {self.experiment_config.experiment_name}")
-        print(f"📝 Description: {self.experiment_config.description}")
+        print(f"Starting experiment: {self.experiment_config.experiment_name}")
+        print(f"Description: {self.experiment_config.description}")
         
         # Display reproducibility configuration
         if self.reproducibility_config:
-            print(f"🔬 Reproducibility enabled:")
+            print(f"Reproducibility enabled:")
             print(f"   Mode: {self.reproducibility_config.simulation_mode.value if self.reproducibility_config.simulation_mode else 'default'}")
-            print(f"   Master seed: {self.reproducibility_config.master_seed}")
-            if self.reproducibility_config.enable_llm_caching:
-                print(f"   LLM caching: {self.reproducibility_config.cache_file}")
+            print(f"   Master seed: {self.reproducibility_config.seed_management.master_seed}")
+            if self.reproducibility_config.llm_cache.enabled:
+                print(f"   LLM caching: {self.reproducibility_config.llm_cache.cache_file}")
     
             # Learning and Real-world Integration configurations
             self.learning_config = self._load_learning_config(args)
-            print(f"🧠 Learning enabled: {self.learning_config.enable_episodic_learning}")
-            print(f"🌐 Real-world mode: {self.learning_config.real_world_mode}")
+            print(f"Learning enabled: {self.learning_config.enable_episodic_learning}")
+            print(f"Real-world mode: {self.learning_config.real_world_mode}")
         else: # Initialize default configs even if reproducibility is not explicitly enabled
             self.learning_config = self._load_learning_config(args)
         
@@ -634,7 +625,7 @@ class ExperimentManager:
         if max_runs:
             total_combinations = min(total_combinations, max_runs)
         
-        print(f"🔢 Total parameter combinations: {total_combinations}")
+        print(f"Total parameter combinations: {total_combinations}")
         
         # Pass LearningConfig and RealWorldAdapter to the runner
         self.runner.set_learning_config(self.learning_config) # New method
@@ -647,16 +638,16 @@ class ExperimentManager:
         if hasattr(self.learning_config, 'training_agent_id') and self.learning_config.training_agent_id:
             agent_id = self.learning_config.training_agent_id
             episodes_to_train = self.learning_config.training_episodes
-            print(f"🧠 Initiating RL training for agent '{agent_id}' over {episodes_to_train} episodes...")
+            print(f"Initiating RL training for agent '{agent_id}' over {episodes_to_train} episodes...")
             await self._train_agent_rl(agent_id, episodes_to_train, self.real_world_adapter, self.episodic_learning_manager)
             sys.exit(0) # Exit after training
 
         # Scenario: Export learned agent
         if args.export_agent:
             agent_id, version = args.export_agent
-            print(f"💾 Exporting learned agent '{agent_id}' version '{version}'...")
+            print(f"Exporting learned agent '{agent_id}' version '{version}'...")
             export_path = await self.episodic_learning_manager.export_learned_agent(agent_id, version)
-            print(f"✅ Agent exported to: {export_path}")
+            print(f"Agent exported to: {export_path}")
             sys.exit(0) # Exit after export
 
         # Initialize Plugin Manager and Contribution Manager
@@ -665,7 +656,7 @@ class ExperimentManager:
 
         # Load initial plugins from CLI args if provided
         if args.load_plugin:
-            print(f"📦 Loading plugins from: {args.load_plugin}")
+            print(f"Loading plugins from: {args.load_plugin}")
             for plugin_path in args.load_plugin:
                 # Ensure plugin_path is treated as a file path, load from its directory
                 try:
@@ -677,9 +668,9 @@ class ExperimentManager:
                         await self.plugin_manager.load_plugins(str(full_plugin_path))
                         print(f"Loaded plugins from directory: {plugin_path}")
                     else:
-                        print(f"⚠️ Warning: Plugin path '{plugin_path}' is neither a file nor a directory. Skipping.")
+                        print(f"Warning: Plugin path '{plugin_path}' is neither a file nor a directory. Skipping.")
                 except Exception as e:
-                    print(f"❌ Error loading plugin {plugin_path}: {e}")
+                    print(f"Error loading plugin {plugin_path}: {e}")
         
         # Load from default plugin dir
         await self.plugin_manager.load_plugins(args.plugin_dir)
@@ -687,23 +678,23 @@ class ExperimentManager:
 
         
         if parallel_workers > 1:
-            print(f"⚡ Parallel processing enabled: {parallel_workers} workers")
+            print(f"Parallel processing enabled: {parallel_workers} workers")
             await self._run_experiment_parallel(max_runs, parallel_workers)
         else:
-            print(f"🔄 Sequential processing")
+            print(f"Sequential processing")
             await self._run_experiment_sequential(max_runs)
         
         # Run post-experiment reproducibility validation if requested
         if args and getattr(args, 'validate_reproducibility', False):
-            print(f"🔍 Running post-experiment reproducibility validation...")
+            print(f"Running post-experiment reproducibility validation...")
             try:
                 analysis_results = analyze_experiment_reproducibility(str(self.results_dir), args)
                 if analysis_results.get('reproducibility_summary', {}).get('reproducibility_rate', 0) == 1.0:
-                    print("✅ Reproducibility validation: PASSED")
+                    print("Reproducibility validation: PASSED")
                 else:
-                    print("⚠️  Reproducibility validation: Some issues detected")
+                    print("Reproducibility validation: Some issues detected")
             except Exception as e:
-                print(f"❌ Reproducibility validation failed: {e}")
+                print(f"Reproducibility validation failed: {e}")
     
     async def _run_experiment_sequential(self, max_runs: Optional[int] = None) -> None:
         """Execute experiment runs sequentially."""
@@ -722,10 +713,10 @@ class ExperimentManager:
                 run_count += 1
                 
             except Exception as e:
-                print(f"❌ Run {run_number} failed: {e}")
+                print(f"Run {run_number} failed: {e}")
                 continue
         
-        logger.info(f"🎉 Experiment completed! {run_count} successful runs saved to {self.results_dir}")
+        logger.info(f"Experiment completed! {run_count} successful runs saved to {self.results_dir}")
     
     def _save_run_result(self, run_number: int, parameters: Dict[str, Any], result: Dict[str, Any]) -> None:
         """Save individual run result to JSON file."""
@@ -734,15 +725,15 @@ class ExperimentManager:
             with open(result_file, 'w') as f:
                 json.dump(result, f, indent=2, default=str)
             
-            logger.info(f"💾 Saved run {run_number} results to {result_file}")
+            logger.info(f"Saved run {run_number} results to {result_file}")
             
             # Print key metrics for immediate feedback
             metrics = result.get('metrics', {})
-            logger.info(f"    📊 Key metrics: Revenue=${metrics.get('total_revenue', 0):.2f}, "
+            logger.info(f"    Key metrics: Revenue=${metrics.get('total_revenue', 0):.2f}, "
                         f"Profit=${metrics.get('total_profit', 0):.2f}, "
                         f"Final Price=${metrics.get('final_price', 0):.2f}")
             if 'total_llm_cost' in result:
-                logger.info(f"    💸 LLM Cost: ${result['total_llm_cost']:.6f}")
+                logger.info(f"    LLM Cost: ${result['total_llm_cost']:.6f}")
 
         except Exception as e:
             logger.error(f"Failed to save run {run_number} result to {result_file}: {e}")
@@ -773,7 +764,7 @@ class ExperimentManager:
                     if hasattr(learning_config, key):
                         setattr(learning_config, key, value)
                         
-                logger.info(f"📚 Loaded learning configuration from: {args.learning_config}")
+                logger.info(f"Loaded learning configuration from: {args.learning_config}")
                 
             except Exception as e:
                 logger.warning(f"Failed to load learning config from {args.learning_config}: {e}")
@@ -782,14 +773,14 @@ class ExperimentManager:
     
     async def _train_agent_rl(self, agent_id: str, episodes: int, real_world_adapter: RealWorldAdapter, learning_manager: EpisodicLearningManager) -> None:
         """Train an agent using reinforcement learning."""
-        logger.info(f"🎯 Starting RL training for agent '{agent_id}' over {episodes} episodes")
+        logger.info(f"Starting RL training for agent '{agent_id}' over {episodes} episodes")
         
         # Create RL environment
         rl_env = FBABenchRLEnvironment(simulator=FBABenchSimulator(), reward_objective="profit_maximization")
         
         # Simple training loop
         for episode in range(episodes):
-            logger.info(f"📈 Training episode {episode + 1}/{episodes}")
+            logger.info(f"Training episode {episode + 1}/{episodes}")
             
             # Reset environment for new episode
             observation, info = rl_env.reset()
@@ -835,7 +826,7 @@ class ExperimentManager:
             
             logger.info(f"   Episode {episode + 1} completed: {step} steps, total reward: {total_reward:.2f}")
         
-        logger.info(f"✅ RL training completed for agent '{agent_id}'")
+        logger.info(f"RL training completed for agent '{agent_id}'")
             
     async def _run_experiment_parallel(self, max_runs: Optional[int] = None, parallel_workers: int = 4) -> None:
         """Execute experiment runs in parallel using multiprocessing."""
@@ -854,7 +845,7 @@ class ExperimentManager:
             for run_number, parameters in all_combinations
         ]
         
-        logger.info(f"🚀 Launching {len(worker_args)} simulations across {parallel_workers} local processes...")
+        logger.info(f"Launching {len(worker_args)} simulations across {parallel_workers} local processes...")
         
         # Execute in parallel
         successful_runs = 0
@@ -872,13 +863,13 @@ class ExperimentManager:
                     success = future.result()
                     if success:
                         successful_runs += 1
-                        logger.info(f"✅ Run {run_number} completed successfully by worker")
+                        logger.info(f"Run {run_number} completed successfully by worker")
                     else:
-                        logger.error(f"❌ Run {run_number} failed by worker")
+                        logger.error(f"Run {run_number} failed by worker")
                 except Exception as e:
-                    logger.exception(f"❌ Run {run_number} crashed in worker: {e}")
+                    logger.exception(f"Run {run_number} crashed in worker: {e}")
         
-        logger.info(f"🎉 Parallel experiment completed! {successful_runs}/{len(worker_args)} runs successful")
+        logger.info(f"Parallel experiment completed! {successful_runs}/{len(worker_args)} runs successful")
 
 
 def _run_single_simulation_worker(args: tuple) -> bool:
@@ -893,7 +884,7 @@ def _run_single_simulation_worker(args: tuple) -> bool:
         # Configure logging for the worker process
         logging.basicConfig(level=logging.INFO, format='%(asctime)s - Worker %(process)d - %(levelname)s - %(message)s')
         worker_logger = logging.getLogger(f"Worker-{os.getpid()}")
-        worker_logger.info(f"🔄 Worker {os.getpid()} starting simulation run {run_number}")
+        worker_logger.info(f"Worker {os.getpid()} starting simulation run {run_number}")
         
         # Create a new event loop for this process
         loop = asyncio.new_event_loop()
@@ -923,14 +914,14 @@ def _run_single_simulation_worker(args: tuple) -> bool:
             with open(result_file, 'w') as f:
                 json.dump(result, f, indent=2, default=str)
             
-            worker_logger.info(f"💾 Worker {os.getpid()} saved run {run_number} to {result_file}")
+            worker_logger.info(f"Worker {os.getpid()} saved run {run_number} to {result_file}")
             return True
             
         finally:
             loop.close()
             
     except Exception as e:
-        worker_logger.exception(f"❌ Worker {os.getpid()} failed for run {run_number}: {e}")
+        worker_logger.exception(f"Worker {os.getpid()} failed for run {run_number}: {e}")
         return False
 
 
@@ -949,10 +940,10 @@ def setup_reproducibility_from_args(args) -> ReproducibilityConfig:
         if os.path.exists(args.config_reproducibility):
             config = ReproducibilityConfig.load_from_file(args.config_reproducibility)
             if config is None:
-                print(f"⚠️ Failed to load reproducibility config from {args.config_reproducibility}, using defaults")
+                print(f"Failed to load reproducibility config from {args.config_reproducibility}, using defaults")
                 config = load_config_from_env()
         else:
-            print(f"⚠️ Reproducibility config file not found: {args.config_reproducibility}, using defaults")
+            print(f"Reproducibility config file not found: {args.config_reproducibility}, using defaults")
             config = load_config_from_env()
     else:
         config = load_config_from_env()
@@ -985,19 +976,19 @@ def setup_reproducibility_from_args(args) -> ReproducibilityConfig:
     # Validate configuration
     issues = config.validate()
     if issues:
-        print("⚠️ Reproducibility configuration issues:")
+        print("Reproducibility configuration issues:")
         for issue in issues:
             print(f"  • {issue}")
         if config.fail_fast_on_validation_error:
-            print("❌ Exiting due to configuration errors")
+            print("Exiting due to configuration errors")
             sys.exit(1)
     
     # Apply global configuration
     set_global_config(config)
     
-    print(f"🔬 Reproducibility mode: {config.simulation_mode.value}")
+    print(f"Reproducibility mode: {config.simulation_mode.value}")
     if config.seed_management.master_seed:
-        print(f"🎲 Master seed: {config.seed_management.master_seed}")
+        print(f"Master seed: {config.seed_management.master_seed}")
     
     return config
 
@@ -1016,7 +1007,7 @@ async def analyze_experiment_reproducibility(results_dir: str, args) -> Dict[str
     if not results_path.exists():
         raise FileNotFoundError(f"Results directory not found: {results_dir}")
     
-    print(f"📊 Analyzing reproducibility for: {results_dir}")
+    print(f"Analyzing reproducibility for: {results_dir}")
     
     analysis_results = {
         "timestamp": datetime.now().isoformat(),
@@ -1078,10 +1069,10 @@ async def analyze_experiment_reproducibility(results_dir: str, args) -> Dict[str
     snapshot_files = list(results_path.glob("**/*_enhanced.json"))
     parquet_files = list(results_path.glob("**/*.parquet"))
     
-    print(f"📁 Found {len(snapshot_files)} enhanced snapshots, {len(parquet_files)} event files")
+    print(f"Found {len(snapshot_files)} enhanced snapshots, {len(parquet_files)} event files")
     
     if hasattr(args, 'validate_snapshots') and args.validate_snapshots and len(snapshot_files) >= 2:
-        print("🔍 Validating snapshot reproducibility...")
+        print("Validating snapshot reproducibility...")
         
         # Compare pairs of snapshots
         reproducibility_results = []
@@ -1102,14 +1093,14 @@ async def analyze_experiment_reproducibility(results_dir: str, args) -> Dict[str
                 })
                 
                 if validation_result["is_reproducible"]:
-                    print(f"  ✅ {snapshot1.name} ↔ {snapshot2.name}: Reproducible")
+                    print(f"  {snapshot1.name} ↔ {snapshot2.name}: Reproducible")
                 else:
-                    print(f"  ❌ {snapshot1.name} ↔ {snapshot2.name}: Issues found")
+                    print(f"  {snapshot1.name} ↔ {snapshot2.name}: Issues found")
                     for issue in validation_result.get("issues", []):
                         print(f"    • {issue}")
                         
             except Exception as e:
-                print(f"  ❌ Error comparing {snapshot1.name} ↔ {snapshot2.name}: {e}")
+                print(f"  Error comparing {snapshot1.name} ↔ {snapshot2.name}: {e}")
                 reproducibility_results.append({
                     "snapshot1": snapshot1.name,
                     "snapshot2": snapshot2.name,
@@ -1120,7 +1111,7 @@ async def analyze_experiment_reproducibility(results_dir: str, args) -> Dict[str
     
     # Golden master comparison
     if hasattr(args, 'compare_golden') and args.compare_golden:
-        print(f"🏆 Comparing against golden master: {args.compare_golden}")
+        print(f"Comparing against golden master: {args.compare_golden}")
         
         try:
             # Set up golden master tester
@@ -1158,15 +1149,15 @@ async def analyze_experiment_reproducibility(results_dir: str, args) -> Dict[str
                 print(f"  {comparison_result.summary()}")
                 
             else:
-                print("  ⚠️ No simulation results found for comparison")
+                print("  No simulation results found for comparison")
                 
         except Exception as e:
-            print(f"  ❌ Golden master comparison failed: {e}")
+            print(f"  Golden master comparison failed: {e}")
             analysis_results["golden_master_comparison"] = {"error": str(e)}
     
     # Generate comprehensive report
     if hasattr(args, 'generate_report') and args.generate_report:
-        print("📋 Generating comprehensive reproducibility report...")
+        print("Generating comprehensive reproducibility report...")
         
         # Collect all reproducibility data
         reproducibility_summary = {
@@ -1203,8 +1194,8 @@ async def analyze_experiment_reproducibility(results_dir: str, args) -> Dict[str
         
         analysis_results["recommendations"] = recommendations
         
-        print(f"  📈 Reproducibility rate: {reproducibility_summary['reproducibility_rate']:.1%}")
-        print("  💡 Recommendations:")
+        print(f"  Reproducibility rate: {reproducibility_summary['reproducibility_rate']:.1%}")
+        print("  Recommendations:")
         for rec in recommendations:
             print(f"    • {rec}")
     
@@ -1236,10 +1227,10 @@ def export_analysis_results(results: Dict[str, Any], output_path: str, format_ty
             with open(output_file.with_suffix('.html'), 'w') as f:
                 f.write(html_content)
         
-        print(f"📄 Analysis results exported to: {output_file.with_suffix('.' + format_type)}")
+        print(f"Analysis results exported to: {output_file.with_suffix('.' + format_type)}")
         
     except Exception as e:
-        print(f"❌ Failed to export results: {e}")
+        print(f"Failed to export results: {e}")
 
 def generate_html_report(results: Dict[str, Any]) -> str:
     """
@@ -1274,7 +1265,7 @@ def generate_html_report(results: Dict[str, Any]) -> str:
     </head>
     <body>
         <div class="header">
-            <h1>🔬 FBA-Bench Reproducibility Analysis Report</h1>
+            <h1>FBA-Bench Reproducibility Analysis Report</h1>
             <p><strong>Generated:</strong> {timestamp}</p>
             <p><strong>Results Directory:</strong> {results_dir}</p>
         </div>
@@ -1288,7 +1279,7 @@ def generate_html_report(results: Dict[str, Any]) -> str:
         
         html += f"""
         <div class="section">
-            <h2>📊 Reproducibility Summary</h2>
+            <h2>Reproducibility Summary</h2>
             <div class="stats">
                 <p><strong>Reproducibility Rate:</strong> <span class="{status_class}">{rate:.1%}</span></p>
                 <p><strong>Total Snapshots:</strong> {summary['total_snapshots']}</p>
@@ -1302,13 +1293,13 @@ def generate_html_report(results: Dict[str, Any]) -> str:
     if "snapshot_validation" in results:
         html += """
         <div class="section">
-            <h2>🔍 Snapshot Validation Results</h2>
+            <h2>Snapshot Validation Results</h2>
             <table>
                 <tr><th>Snapshot 1</th><th>Snapshot 2</th><th>Status</th><th>Issues</th></tr>
         """
         
         for validation in results["snapshot_validation"]:
-            status = "✅ Reproducible" if validation.get("is_reproducible", False) else "❌ Issues Found"
+            status = "Reproducible" if validation.get("is_reproducible", False) else "Issues Found"
             issues = ", ".join(validation.get("issues", []))
             if not issues:
                 issues = "None"
@@ -1328,7 +1319,7 @@ def generate_html_report(results: Dict[str, Any]) -> str:
     if "recommendations" in results:
         html += """
         <div class="section">
-            <h2>💡 Recommendations</h2>
+            <h2>Recommendations</h2>
             <ul>
         """
         
@@ -1441,7 +1432,7 @@ async def main():
     analyze_parser.add_argument('--generate-report', action='store_true',
                                help='Generate comprehensive reproducibility report')
     analyze_parser.add_argument('--tolerance-config', type=str,
-                               help='Path to tolerance configuration for comparisons')
+                               help='Path to tolerance configuration file')
     analyze_parser.add_argument('--export-format', type=str,
                                choices=['json', 'yaml', 'html'], default='json',
                                help='Format for exported analysis results')
@@ -1492,7 +1483,7 @@ async def main():
     if args.command == 'run':
         # Conditional validation for config_file for sweep vs. single scenario
         if not args.scenario and not args.tier and not args.generate_scenario and not os.path.exists(args.config_file):
-            print(f"❌ Configuration file not found: {args.config_file}. Required for sweep experiments.")
+            print(f"Configuration file not found: {args.config_file}. Required for sweep experiments.")
             sys.exit(1)
             
         if (args.scenario or args.tier or args.generate_scenario) and args.config_file != 'sweep.yaml':
@@ -1508,7 +1499,7 @@ async def main():
         
         if args.generate_scenario:
             if not args.dynamic_randomization_config:
-                print("❌ --dynamic-randomization-config is required when using --generate-scenario.")
+                print("--dynamic-randomization-config is required when using --generate-scenario.")
                 sys.exit(1)
             try:
                 with open(args.dynamic_randomization_config, 'r') as f:
@@ -1519,9 +1510,9 @@ async def main():
                     args.generate_scenario, dynamic_rand_config, target_tier=args.tier
                 )
                 generated_scenario.to_yaml(args.dynamic_scenario_output)
-                print(f"✅ Dynamic scenario generated and saved to: {args.dynamic_scenario_output}")
+                print(f"Dynamic scenario generated and saved to: {args.dynamic_scenario_output}")
             except Exception as e:
-                print(f"❌ Failed to generate dynamic scenario: {e}")
+                print(f"Failed to generate dynamic scenario: {e}")
                 sys.exit(1)
             sys.exit(0) # Exit after generation
             
@@ -1536,9 +1527,9 @@ async def main():
                     try:
                         agent_models_to_test[agent_name] = BotFactory.create_bot(agent_name)
                     except Exception as e:
-                        print(f"❌ Could not load agent '{agent_name}': {e}. Skipping this agent.")
+                        print(f"Could not load agent '{agent_name}': {e}. Skipping this agent.")
             if not agent_models_to_test:
-                print("❌ No agent models specified or loaded for scenario run. Using a DummyAgent for testing.")
+                print("No agent models specified or loaded for scenario run. Using a DummyAgent for testing.")
                 # Fallback to a default dummy agent if none provided for scenario/tier runs
                 class DummyAgent:
                     def name(self): return "DummyAgent"
@@ -1550,7 +1541,7 @@ async def main():
             elif args.tier is not None:
                 tier_configs = scenario_config_manager.get_scenarios_by_tier(args.tier)
                 if not tier_configs:
-                    print(f"❌ No scenarios found for tier {args.tier}.")
+                    print(f"No scenarios found for tier {args.tier}.")
                     sys.exit(1)
                 scenarios_to_run.extend([cfg.config_data['scenario_name'] for cfg in tier_configs])
             elif args.benchmark_scenarios:
@@ -1562,7 +1553,7 @@ async def main():
                 print(f"\n--- Running scenario: {s_name} ---")
                 scenario_filepath = scenario_config_manager.get_scenario_path(s_name)
                 if not scenario_filepath:
-                    print(f"❌ Scenario '{s_name}' not found. Skipping.")
+                    print(f"Scenario '{s_name}' not found. Skipping.")
                     continue
                     
                 for agent_name, agent_instance in agent_models_to_test.items():
@@ -1581,7 +1572,7 @@ async def main():
                             run_results
                         )
                     except Exception as e:
-                        print(f"❌ Error running simulation for scenario '{s_name}' with agent '{agent_name}': {e}")
+                        print(f"Error running simulation for scenario '{s_name}' with agent '{agent_name}': {e}")
                         all_scenario_results.append({
                             'scenario_name': s_name,
                             'agent_name': agent_name,
@@ -1596,7 +1587,7 @@ async def main():
             output_dir.mkdir(parents=True, exist_ok=True)
             with open(output_dir / "scenario_summary.json", 'w') as f:
                 json.dump(all_scenario_results, f, indent=2)
-            print(f"\n✅ All scenario results saved to {output_dir}")
+            print(f"\nAll scenario results saved to {output_dir}")
 
             if args.validate_curriculum:
                 print("\n--- Running Curriculum Validation ---")
@@ -1604,7 +1595,7 @@ async def main():
                 report_file = output_dir / "curriculum_validation_report.json"
                 with open(report_file, 'w') as f:
                     json.dump(curriculum_report, f, indent=2)
-                print(f"✅ Curriculum validation report saved to: {report_file}")
+                print(f"Curriculum validation report saved to: {report_file}")
                 curriculum_validator.recommend_tier_adjustments(curriculum_report.get('tier_progression_validation', {}))
                 
             sys.exit(0) # Exit after scenario/tier/benchmark run
@@ -1675,156 +1666,8 @@ async def main():
                 # For this task, we'll assume a single, stitched trace for simplicity.
                 failure_point = {"event_type": "end_of_sim", "timestamp": time.time(), "reason": "CLI initiated analysis"}
                 failure_summary = trace_analyzer.analyze_simulation_failure(collected_traces, failure_point)
-                analysis_results["trace_failure_analysis"] = failure_summary
-                
-                # Behavioral patterns require a specific structure for agent traces/decisions
-                # We'll need to parse 'llm.reasoning' and 'tool_call.error_full_details' from generic traces
-                agent_decisions_from_traces = []
-                for event in collected_traces:
-                    if event.get("span_name", "").startswith("agent_turn_"):
-                        # Attempt to reconstruct simplified agent decision from spans
-                        agent_id = event["attributes"].get("agent.id")
-                        actions_in_turn = []
-                        # Find child spans for 'think' and 'tool_call'
-                        # This is a simplified stand-in. Proper span-linking or direct decision logging is better.
-                        if "think.action_type" in event["attributes"]: # Simplified from agent_tracer change
-                            actions_in_turn.append({"action": event["attributes"]["think.action_type"], "status": "success"}) # Assuming success for now
-                        if "tool_call.name" in event["attributes"]:
-                            status = "failure" if event["attributes"].get("tool_call.success") is False else "success"
-                            error_details = json.loads(event["attributes"]["tool_call.error_full_details"]) if "tool_call.error_full_details" in event["attributes"] else {}
-                            actions_in_turn.append({"action": event["attributes"]["tool_call.name"], "status": status, "error_details": error_details})
-                        if agent_id and actions_in_turn:
-                            agent_decisions_from_traces.append({"agent_id": agent_id, "decisions": actions_in_turn})
 
-                agent_behavior_patterns = trace_analyzer.detect_behavioral_patterns(agent_decisions_from_traces)
-                analysis_results["agent_behavior_patterns"] = agent_behavior_patterns
-
-                # Extract timing data for performance bottlenecks
-                timing_data = [{"operation": t.get("span_name"), "duration_ms": t.get("attributes", {}).get("span.duration_ms", 0), "timestamp": t.get("timestamp")} for t in collected_traces if "span.duration_ms" in t.get("attributes", {})]
-                performance_bottlenecks = trace_analyzer.identify_performance_bottlenecks(timing_data)
-                analysis_results["performance_bottlenecks"] = performance_bottlenecks
-
-                logger.info("Trace analysis completed.")
-
-            if args.generate_insights and (args.analyze_traces or "trace_failure_analysis" in analysis_results):
-                logger.info("Generating automated insight report...")
-                insight_report = trace_analyzer.generate_insight_report(analysis_results)
-                report_output_path = Path(args.results_dir) / "observability_insight_report.md"
-                with open(report_output_path, 'w') as f:
-                    f.write(insight_report)
-                logger.info(f"Insight report saved to: {report_output_path}")
-
-            if args.error_analysis:
-                logger.info("Analyzing agent error patterns and generating feedback...")
-                # Get common errors, assuming behavioral patterns were detected
-                captured_errors = analysis_results.get("agent_behavior_patterns", {}).get("common_errors", {})
-                if captured_errors:
-                    logger.info(f"Detected common errors: {captured_errors}")
-                    error_recommendations = doc_generator.document_error_scenarios(captured_errors)
-                    analysis_results["error_analysis_recommendations"] = error_recommendations
-                    logger.info(f"Error analysis recommendations: {json.dumps(error_recommendations, indent=2)}")
-                else:
-                    logger.info("No common agent error patterns detected from available traces for error analysis.")
-                
-            if args.export_traces and collected_traces:
-                output_trace_path = Path(args.results_dir) / f"exported_traces.{args.export_traces}"
-                if args.export_traces == 'json':
-                    with open(output_trace_path, 'w') as f:
-                        json.dump(collected_traces, f, indent=2)
-                    logger.info(f"Raw traces exported to {output_trace_path}")
-                elif args.export_traces == 'zip':
-                    # Export multiple trace files into a single zip archive
-                    with zipfile.ZipFile(output_trace_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                        for idx, trace_obj in enumerate(collected_traces):
-                            trace_filename = f"trace_event_{idx}.json"
-                            zipf.writestr(trace_filename, json.dumps(trace_obj, indent=2))
-                    logger.info(f"Raw traces exported to {output_trace_path}")
-
-
-            # Export results (original functionality)
-            if hasattr(args, 'export_format') and args.export_format:
-                output_path = Path(args.results_dir) / "reproducibility_analysis"
-                export_analysis_results(analysis_results, str(output_path), args.export_format)
-            
-            logger.info("✅ Analysis completed successfully")
-            
+                print(f"Simulation Failure Summary: {failure_summary}")
         except Exception as e:
-            logger.exception(f"❌ Analysis failed: {e}")
-            sys.exit(1)
-            
-    elif args.command == 'golden':
-        try:
-            if args.golden_command == 'record':
-                # Record golden master baseline
-                tolerance_config = None
-                if args.config:
-                    tolerance_config = ToleranceConfig.from_file(args.config)
-                
-                tester = GoldenMasterTester(tolerance_config=tolerance_config)
-                success = tester.record_baseline(
-                    args.results_dir,
-                    args.label,
-                    description=getattr(args, 'description', None)
-                )
-                
-                if success:
-                    print(f"✅ Golden master baseline '{args.label}' recorded successfully")
-                else:
-                    print(f"❌ Failed to record golden master baseline")
-                    sys.exit(1)
-                    
-            elif args.golden_command == 'compare':
-                # Compare against golden master
-                tolerance_config = None
-                if args.config:
-                    tolerance_config = ToleranceConfig.from_file(args.config)
-                
-                tester = GoldenMasterTester(tolerance_config=tolerance_config)
-                comparison_result = tester.compare_with_baseline(args.results_dir, args.baseline)
-                
-                # Output results
-                if args.output:
-                    with open(args.output, 'w') as f:
-                        json.dump(asdict(comparison_result), f, indent=2)
-                    print(f"📄 Comparison report saved to: {args.output}")
-                else:
-                    print(f"📊 Comparison Results:")
-                    print(f"   Overall Match: {'✅ PASS' if comparison_result.overall_match else '❌ FAIL'}")
-                    print(f"   Confidence Score: {comparison_result.confidence_score:.3f}")
-                    print(f"   Differences: {len(comparison_result.differences)}")
-                    
-            elif args.golden_command == 'list':
-                # List available baselines
-                storage_path = getattr(args, 'storage_path', './golden_masters')
-                tester = GoldenMasterTester(storage_path=storage_path)
-                baselines = tester.list_baselines()
-                
-                if baselines:
-                    print("📋 Available Golden Master Baselines:")
-                    for baseline in baselines:
-                        print(f"   • {baseline['label']} (recorded: {baseline['timestamp']})")
-                        if 'description' in baseline and baseline['description']:
-                            print(f"     Description: {baseline['description']}")
-                else:
-                    print("📋 No golden master baselines found")
-                        
-            else:
-                golden_parser.print_help()
-                    
-        except Exception as e:
-            print(f"❌ Golden master operation failed: {e}")
-            sys.exit(1)
-            
-    else:
-        parser.print_help()
-
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("CLI operation cancelled by user.")
-        sys.exit(1)
-    except Exception as e:
-        logger.exception(f"An unexpected error occurred during CLI execution: {e}")
-        sys.exit(1)
+            logger.error(f"Error during analysis: {e}")
+            raise # Re-raise to ensure the error is propagated

@@ -1,6 +1,6 @@
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Union
 import json
 import time
 

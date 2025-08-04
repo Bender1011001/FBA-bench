@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Any, List, Optional
 import os
 import yaml
+import logging
 from scenarios.scenario_framework import ScenarioConfig
 from scenarios.dynamic_generator import DynamicScenarioGenerator
 

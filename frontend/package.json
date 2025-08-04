@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:all": "concurrently \"cd .. && uvicorn api_server:app --reload --host 0.0.0.0 --port 8000\" \"vite\" \"cd .. && python experiment_cli.py run scenarios/tier_0_baseline.yaml\" --names \"backend,frontend,simulation\" --prefix-colors \"blue,green,yellow\"",
+    "dev:all": "concurrently \"cd .. && uvicorn api_server_minimal:app --reload --host 0.0.0.0 --port 8000\" \"vite\" --names \"backend,frontend\" --prefix-colors \"blue,green\"",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
@@ -16,9 +16,13 @@
   "dependencies": {
     "@headlessui/react": "^2.2.7",
     "@tailwindcss/postcss": "^4.1.11",
+    "@types/dompurify": "^3.0.5",
+    "dompurify": "^3.2.6",
     "immer": "^10.1.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "react-error-boundary": "^6.0.0",
+    "react-window": "^1.8.11",
     "recharts": "^3.1.0",
     "uuid": "^11.1.0",
     "zustand": "^5.0.6"
@@ -30,6 +34,7 @@
     "@testing-library/user-event": "^14.6.1",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
+    "@types/react-window": "^1.8.8",
     "@vitejs/plugin-react": "^4.6.0",
     "autoprefixer": "^10.4.21",
     "concurrently": "^9.2.0",

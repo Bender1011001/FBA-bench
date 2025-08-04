@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { KPIDashboard } from './components/KPIDashboard';
 import { EventLog } from './components/EventLog';
 import { ConnectionStatus } from './components/ConnectionStatus';
@@ -9,14 +9,97 @@ import { SimulationStats } from './components/SimulationStats';
 import { ConfigurationWizard } from './pages/ConfigurationWizard';
 import { ExperimentManagement } from './pages/ExperimentManagement';
 import ResultsAnalysis from './pages/ResultsAnalysis';
-import ErrorBoundary from './components/ErrorBoundary'; // Import the ErrorBoundary
+import ErrorBoundary from './components/ErrorBoundary';
+import NotificationSystem from './components/NotificationSystem';
+import { notificationService } from './utils/notificationService';
+import { ThemeProvider, useTheme } from './contexts/ThemeContext';
+import {
+  DashboardErrorBoundary,
+  SimulationErrorBoundary,
+  AgentMonitorErrorBoundary,
+  SystemHealthErrorBoundary,
+  EventLogErrorBoundary,
+  ConfigurationErrorBoundary,
+  ExperimentErrorBoundary,
+  ResultsAnalysisErrorBoundary,
+  StatsErrorBoundary,
+  WebSocketErrorBoundary
+} from './components/SpecializedErrorBoundaries';
+
+// Define types for settings
+interface AppSettings {
+  theme: 'light' | 'dark' | 'auto';
+  autoRefresh: boolean;
+  refreshInterval: number;
+  notificationsEnabled: boolean;
+  autoScroll: boolean;
+}
+
+// Default settings
+const DEFAULT_SETTINGS: AppSettings = {
+  theme: 'light',
+  autoRefresh: true,
+  refreshInterval: 5000,
+  notificationsEnabled: true,
+  autoScroll: true,
+};
 
 function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'controls' | 'agents' | 'system-health' | 'events' | 'configure' | 'experiments' | 'results-analysis' | 'settings' | 'stats'>('dashboard');
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const { setTheme } = useTheme();
+
+  // Load settings from localStorage on mount
+  useEffect(() => {
+    try {
+      const savedSettings = localStorage.getItem('app-settings');
+      if (savedSettings) {
+        const parsedSettings = JSON.parse(savedSettings);
+        setSettings({ ...DEFAULT_SETTINGS, ...parsedSettings });
+      }
+    } catch (error) {
+      console.error('Failed to load settings from localStorage:', error);
+    }
+  }, []);
+
+  // Save settings to localStorage when they change
+  useEffect(() => {
+    try {
+      localStorage.setItem('app-settings', JSON.stringify(settings));
+    } catch (error) {
+      console.error('Failed to save settings to localStorage:', error);
+    }
+  }, [settings]);
+
+  // Handle settings changes
+  const handleSettingsChange = (newSettings: Partial<AppSettings>) => {
+    const updatedSettings = { ...settings, ...newSettings };
+    setSettings(updatedSettings);
+    
+    // Update theme if it changed
+    if (newSettings.theme) {
+      setTheme(newSettings.theme);
+    }
+    
+    // Show notification for settings changes
+    if (newSettings.notificationsEnabled && settings.notificationsEnabled !== newSettings.notificationsEnabled) {
+      notificationService.success('Browser notifications enabled', 3000);
+    }
+  };
+
+  // Show welcome notification on first load
+  useEffect(() => {
+    const hasVisitedBefore = localStorage.getItem('fba-bench-visited');
+    if (!hasVisitedBefore) {
+      notificationService.info('Welcome to FBA-Bench! Your simulation dashboard is ready.', 5000);
+      localStorage.setItem('fba-bench-visited', 'true');
+    }
+  }, []);
 
   return (
     <div className="min-h-screen bg-gray-50">
       <ErrorBoundary>
+        <NotificationSystem />
         {/* Header */}
         <header className="bg-white shadow-sm border-b border-gray-200">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -162,28 +245,36 @@ function App() {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {activeTab === 'dashboard' && (
           <div className="space-y-8">
-            <KPIDashboard />
+            <DashboardErrorBoundary>
+              <KPIDashboard />
+            </DashboardErrorBoundary>
           </div>
         )}
 
         {activeTab === 'controls' && (
           <div className="space-y-6">
             <h2 className="text-2xl font-bold text-gray-900 mb-4">Simulation Controls</h2>
-            <SimulationControls />
+            <SimulationErrorBoundary>
+              <SimulationControls />
+            </SimulationErrorBoundary>
           </div>
         )}
 
         {activeTab === 'agents' && (
           <div className="space-y-6">
             <h2 className="text-2xl font-bold text-gray-900 mb-4">Live Agent Monitoring</h2>
-            <AgentMonitor />
+            <AgentMonitorErrorBoundary>
+              <AgentMonitor />
+            </AgentMonitorErrorBoundary>
           </div>
         )}
         
         {activeTab === 'system-health' && (
           <div className="space-y-6">
             <h2 className="text-2xl font-bold text-gray-900 mb-4">System Health</h2>
-            <SystemHealthMonitor />
+            <SystemHealthErrorBoundary>
+              <SystemHealthMonitor />
+            </SystemHealthErrorBoundary>
           </div>
         )}
 
@@ -196,16 +287,22 @@ function App() {
                   Real-time simulation events and system activity
                 </p>
               </div>
-              <ConnectionStatus showDetails={false} className="w-96" />
+              <WebSocketErrorBoundary>
+                <ConnectionStatus showDetails={false} className="w-96" />
+              </WebSocketErrorBoundary>
             </div>
-            <EventLog className="h-[calc(100vh-12rem)]" />
+            <EventLogErrorBoundary>
+              <EventLog className="h-[calc(100vh-12rem)]" />
+            </EventLogErrorBoundary>
           </div>
         )}
 
         {activeTab === 'stats' && (
           <div className="space-y-6">
             <h2 className="text-2xl font-bold text-gray-900 mb-4">Simulation Statistics</h2>
-            <SimulationStats />
+            <StatsErrorBoundary>
+              <SimulationStats />
+            </StatsErrorBoundary>
           </div>
         )}
 
@@ -219,19 +316,25 @@ function App() {
                 </p>
               </div>
             </div>
-            <ConfigurationWizard />
+            <ConfigurationErrorBoundary>
+              <ConfigurationWizard />
+            </ConfigurationErrorBoundary>
           </div>
         )}
 
         {activeTab === 'experiments' && (
           <div className="space-y-6">
-            <ExperimentManagement />
+            <ExperimentErrorBoundary>
+              <ExperimentManagement />
+            </ExperimentErrorBoundary>
           </div>
         )}
 
         {activeTab === 'results-analysis' && (
           <div className="space-y-6">
-            <ResultsAnalysis />
+            <ResultsAnalysisErrorBoundary>
+              <ResultsAnalysis />
+            </ResultsAnalysisErrorBoundary>
           </div>
         )}
 
@@ -248,7 +351,9 @@ function App() {
               {/* Connection Settings */}
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
                 <h3 className="text-lg font-semibold text-gray-900 mb-4">Connection</h3>
-                <ConnectionStatus showDetails={true} />
+                <WebSocketErrorBoundary>
+                  <ConnectionStatus showDetails={true} />
+                </WebSocketErrorBoundary>
               </div>
 
               {/* Dashboard Settings */}
@@ -259,9 +364,13 @@ function App() {
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Refresh Interval
                     </label>
-                    <select className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                    <select
+                      value={settings.refreshInterval}
+                      onChange={(e) => handleSettingsChange({ refreshInterval: parseInt(e.target.value) })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
                       <option value="1000">1 second</option>
-                      <option value="5000" defaultChecked>5 seconds</option>
+                      <option value="5000">5 seconds</option>
                       <option value="10000">10 seconds</option>
                       <option value="30000">30 seconds</option>
                     </select>
@@ -271,8 +380,12 @@ function App() {
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Theme
                     </label>
-                    <select className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-                      <option value="light" defaultChecked>Light</option>
+                    <select
+                      value={settings.theme}
+                      onChange={(e) => handleSettingsChange({ theme: e.target.value as 'light' | 'dark' | 'auto' })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                      <option value="light">Light</option>
                       <option value="dark">Dark</option>
                       <option value="auto">Auto</option>
                     </select>
@@ -282,7 +395,8 @@ function App() {
                     <input
                       type="checkbox"
                       id="autoScroll"
-                      defaultChecked
+                      checked={settings.autoScroll}
+                      onChange={(e) => handleSettingsChange({ autoScroll: e.target.checked })}
                       className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                     />
                     <label htmlFor="autoScroll" className="ml-2 block text-sm text-gray-700">
@@ -294,6 +408,8 @@ function App() {
                     <input
                       type="checkbox"
                       id="notifications"
+                      checked={settings.notificationsEnabled}
+                      onChange={(e) => handleSettingsChange({ notificationsEnabled: e.target.checked })}
                       className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                     />
                     <label htmlFor="notifications" className="ml-2 block text-sm text-gray-700">
@@ -369,8 +485,17 @@ function App() {
         </div>
         </footer>
       </ErrorBoundary>
+      
+      {/* Notification System */}
+      <NotificationSystem />
     </div>
   );
 }
 
-export default App;
+const AppWithTheme: React.FC = () => (
+  <ThemeProvider>
+    <App />
+  </ThemeProvider>
+);
+
+export default AppWithTheme;

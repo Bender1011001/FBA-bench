@@ -1465,6 +1465,129 @@ class LossEvent(BaseEvent):
             'insurance_claim': self.insurance_claim
         }
 
+
+@dataclass
+class PlaceOrderCommand(BaseEvent):
+    """Agent command to place an order with a supplier."""
+    supplier_id: str
+    asin: str
+    quantity: int
+    max_price: Money
+    reason: Optional[str] = None
+
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.supplier_id:
+            raise ValueError("Supplier ID cannot be empty")
+        if not self.asin:
+            raise ValueError("ASIN cannot be empty")
+        if self.quantity <= 0:
+            raise ValueError("Order quantity must be positive")
+        if not isinstance(self.max_price, Money):
+            raise TypeError("Max price must be a Money object")
+
+    def to_summary_dict(self) -> Dict[str, Any]:
+        return {
+            'event_id': self.event_id,
+            'timestamp': self.timestamp.isoformat(),
+            'agent_id': getattr(self, 'agent_id', 'N/A'), # Assuming agent_id might be set by publisher
+            'supplier_id': self.supplier_id,
+            'asin': self.asin,
+            'quantity': self.quantity,
+            'max_price': str(self.max_price),
+            'reason': self.reason
+        }
+
+
+@dataclass
+class WorldStateSnapshotEvent(BaseEvent):
+    """
+    Event representing a comprehensive snapshot of the simulation's world state.
+    Published periodically by the WorldStore.
+    """
+    snapshot_id: str
+    tick_number: int
+    product_count: int
+    summary_metrics: Dict[str, Any] = field(default_factory=dict)
+    
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.snapshot_id:
+            raise ValueError("Snapshot ID cannot be empty")
+        if self.tick_number < 0:
+            raise ValueError("Tick number must be non-negative")
+        if self.product_count < 0:
+            raise ValueError("Product count must be non-negative")
+        if not isinstance(self.summary_metrics, dict):
+            raise TypeError("Summary metrics must be a dictionary")
+
+    def to_summary_dict(self) -> Dict[str, Any]:
+        return {
+            'event_id': self.event_id,
+            'timestamp': self.timestamp.isoformat(),
+            'snapshot_id': self.snapshot_id,
+            'tick_number': self.tick_number,
+            'product_count': self.product_count,
+            'summary_metrics': self.summary_metrics.copy()
+        }
+
+
+@dataclass
+class RespondToCustomerMessageCommand(BaseEvent):
+    """Agent command to respond to a customer message."""
+    message_id: str
+    response_content: str
+    reason: Optional[str] = None
+
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.message_id:
+            raise ValueError("Message ID cannot be empty")
+        if not self.response_content:
+            raise ValueError("Response content cannot be empty")
+
+    def to_summary_dict(self) -> Dict[str, Any]:
+        return {
+            'event_id': self.event_id,
+            'timestamp': self.timestamp.isoformat(),
+            'agent_id': getattr(self, 'agent_id', 'N/A'),
+            'message_id': self.message_id,
+            'response_content': self.response_content,
+            'reason': self.reason
+        }
+
+
+@dataclass
+class RunMarketingCampaignCommand(BaseEvent):
+    """Agent command to run a marketing campaign."""
+    campaign_type: str
+    budget: Money
+    duration_days: int
+    reason: Optional[str] = None
+
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.campaign_type:
+            raise ValueError("Campaign type cannot be empty")
+        if not isinstance(self.budget, Money):
+            raise TypeError("Budget must be a Money object")
+        if self.budget.cents <= 0:
+            raise ValueError("Budget must be positive")
+        if self.duration_days <= 0:
+            raise ValueError("Duration days must be positive")
+
+    def to_summary_dict(self) -> Dict[str, Any]:
+        return {
+            'event_id': self.event_id,
+            'timestamp': self.timestamp.isoformat(),
+            'agent_id': getattr(self, 'agent_id', 'N/A'),
+            'campaign_type': self.campaign_type,
+            'budget': str(self.budget),
+            'duration_days': self.duration_days,
+            'reason': self.reason
+        }
+
+
 # Event type registry for serialization/deserialization
 EVENT_TYPES = {
     'AgentDecisionEvent': AgentDecisionEvent,
@@ -1488,6 +1611,12 @@ EVENT_TYPES = {
     'SkillActionGenerated': SkillActionGenerated,
     'SkillConflictDetected': SkillConflictDetected,
     'MultiDomainDecisionMade': MultiDomainDecisionMade,
+    # New Commands
+    'PlaceOrderCommand': PlaceOrderCommand,
+    'RespondToCustomerMessageCommand': RespondToCustomerMessageCommand,
+    'RunMarketingCampaignCommand': RunMarketingCampaignCommand,
+    # New Events
+    'WorldStateSnapshotEvent': WorldStateSnapshotEvent,
     # Domain-specific events for skill triggers
     'LowInventoryEvent': LowInventoryEvent,
     'SupplierResponseEvent': SupplierResponseEvent,

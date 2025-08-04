@@ -2,6 +2,41 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Custom responsive improvements */
+@media (max-width: 640px) {
+  .min-w-max {
+    min-width: 100%;
+  }
+  
+  .overflow-x-auto {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+@media (min-width: 641px) and (max-width: 1024px) {
+  .min-w-max {
+    min-width: 600px;
+  }
+}
+
+@media (min-width: 1025px) {
+  .min-w-max {
+    min-width: 800px;
+  }
+}
+
+/* Ensure all content is visible without horizontal scrolling on body level */
+body {
+  overflow-x: hidden;
+}
+
+/* Fix for any potential content overflow */
+.container {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
 :root {
   font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;

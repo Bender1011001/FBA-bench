@@ -9,6 +9,7 @@ import os
 import json
 import yaml
 import logging
+import threading
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Union
 from dataclasses import dataclass, field, asdict
@@ -641,5 +642,3 @@ def load_config_from_env() -> ReproducibilityConfig:
         config.llm_cache.cache_file = os.getenv('LLM_CACHE_FILE')
     
     return config
-
-import threading

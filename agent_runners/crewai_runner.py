@@ -40,15 +40,51 @@ class FBAPricingTool(BaseTool):
     name: str = "fba_pricing_tool"
     description: str = "Analyze market conditions and recommend pricing actions for FBA products"
     
-    def _run(self, asin: str, current_price: float, competitor_prices: List[float], 
+    def _run(self, asin: str, current_price: float, competitor_prices: List[float],
              reasoning: str = "") -> Dict[str, Any]:
         """Execute pricing analysis."""
+        if not competitor_prices:
+            return {
+                "tool": "set_price",
+                "asin": asin,
+                "recommended_price": current_price,
+                "confidence": 0.6,
+                "reasoning": reasoning or "No competitor data available, maintaining current price"
+            }
+        
+        # Calculate average competitor price
+        avg_competitor_price = sum(competitor_prices) / len(competitor_prices)
+        min_competitor_price = min(competitor_prices)
+        max_competitor_price = max(competitor_prices)
+        
+        # Pricing strategy logic
+        if current_price > max_competitor_price * 1.1:
+            # We're significantly more expensive than all competitors
+            recommended_price = max_competitor_price * 0.95  # Slightly undercut highest competitor
+            confidence = 0.9
+            reasoning = reasoning or f"Price is {((current_price/max_competitor_price)-1)*100:.1f}% above highest competitor, reducing to {recommended_price:.2f}"
+        elif current_price < min_competitor_price * 0.9:
+            # We're significantly cheaper than all competitors
+            recommended_price = min_competitor_price * 0.98  # Slightly increase but remain competitive
+            confidence = 0.8
+            reasoning = reasoning or f"Price is {(1-current_price/min_competitor_price)*100:.1f}% below lowest competitor, increasing to {recommended_price:.2f}"
+        else:
+            # We're in a competitive range
+            if current_price > avg_competitor_price:
+                recommended_price = avg_competitor_price * 0.99  # Slightly undercut average
+                confidence = 0.7
+                reasoning = reasoning or f"Price is {((current_price/avg_competitor_price)-1)*100:.1f}% above average competitor, adjusting to {recommended_price:.2f}"
+            else:
+                recommended_price = current_price  # Maintain current price
+                confidence = 0.6
+                reasoning = reasoning or f"Price is competitive at {(1-current_price/avg_competitor_price)*100:.1f}% below average, maintaining current price"
+        
         return {
             "tool": "set_price",
             "asin": asin,
-            "recommended_price": current_price,  # Placeholder logic
-            "confidence": 0.8,
-            "reasoning": reasoning or "CrewAI pricing analysis"
+            "recommended_price": round(recommended_price, 2),
+            "confidence": confidence,
+            "reasoning": reasoning
         }
 
 
@@ -59,12 +95,51 @@ class FBAInventoryTool(BaseTool):
     
     def _run(self, asin: str, inventory_level: int, sales_velocity: float) -> Dict[str, Any]:
         """Execute inventory analysis."""
+        if sales_velocity <= 0:
+            return {
+                "tool": "manage_inventory",
+                "asin": asin,
+                "recommended_action": "hold",
+                "confidence": 0.9,
+                "reasoning": "No sales velocity detected, maintaining current inventory"
+            }
+        
+        # Calculate days of inventory remaining
+        days_of_inventory = inventory_level / sales_velocity if sales_velocity > 0 else float('inf')
+        
+        # Inventory management logic
+        if days_of_inventory < 7:
+            # Low inventory - need to restock
+            recommended_quantity = int(sales_velocity * 14)  # 2 weeks of inventory
+            confidence = 0.95
+            reasoning = f"Low inventory: {days_of_inventory:.1f} days remaining. Recommend restocking {recommended_quantity} units."
+            recommended_action = "restock"
+        elif days_of_inventory > 90:
+            # Excess inventory - reduce orders
+            recommended_quantity = 0
+            confidence = 0.85
+            reasoning = f"Excess inventory: {days_of_inventory:.1f} days on hand. Recommend pausing restocking."
+            recommended_action = "reduce_orders"
+        elif days_of_inventory > 30:
+            # High but not excessive inventory
+            recommended_quantity = int(sales_velocity * 7)  # 1 week of inventory
+            confidence = 0.7
+            reasoning = f"Adequate inventory: {days_of_inventory:.1f} days on hand. Recommend light restocking of {recommended_quantity} units."
+            recommended_action = "light_restock"
+        else:
+            # Optimal inventory range
+            recommended_quantity = 0
+            confidence = 0.6
+            reasoning = f"Optimal inventory: {days_of_inventory:.1f} days on hand. Maintain current levels."
+            recommended_action = "hold"
+        
         return {
-            "tool": "manage_inventory", 
+            "tool": "manage_inventory",
             "asin": asin,
-            "recommended_action": "hold",  # Placeholder logic
-            "confidence": 0.7,
-            "reasoning": "CrewAI inventory analysis"
+            "recommended_action": recommended_action,
+            "recommended_quantity": recommended_quantity,
+            "confidence": confidence,
+            "reasoning": reasoning
         }
 
 
@@ -75,12 +150,70 @@ class FBAMarketTool(BaseTool):
     
     def _run(self, products_data: str) -> Dict[str, Any]:
         """Execute market analysis."""
-        return {
-            "market_condition": "competitive",
-            "recommendation": "maintain_aggressive_pricing",
-            "confidence": 0.9,
-            "reasoning": "CrewAI market analysis"
-        }
+        try:
+            import json
+            products = json.loads(products_data)
+            
+            if not products:
+                return {
+                    "market_condition": "unknown",
+                    "recommendation": "gather_more_data",
+                    "confidence": 0.3,
+                    "reasoning": "No product data available for market analysis"
+                }
+            
+            # Analyze market conditions
+            total_products = len(products)
+            avg_price = sum(p.get('current_price', 0) for p in products) / total_products
+            avg_inventory = sum(p.get('inventory', 0) for p in products) / total_products
+            
+            # Calculate market competitiveness
+            competitor_count = sum(len(p.get('competitor_prices', [])) for p in products)
+            avg_competitors_per_product = competitor_count / total_products if total_products > 0 else 0
+            
+            # Determine market condition
+            if avg_competitors_per_product < 2:
+                market_condition = "low_competition"
+                recommendation = "opportunity_for_growth"
+                confidence = 0.8
+                reasoning = f"Low competition market with {avg_competitors_per_product:.1f} competitors per product on average"
+            elif avg_competitors_per_product < 5:
+                market_condition = "moderate_competition"
+                recommendation = "competitive_positioning"
+                confidence = 0.7
+                reasoning = f"Moderate competition with {avg_competitors_per_product:.1f} competitors per product on average"
+            else:
+                market_condition = "high_competition"
+                recommendation = "differentiation_strategy"
+                confidence = 0.9
+                reasoning = f"Highly competitive market with {avg_competitors_per_product:.1f} competitors per product on average"
+            
+            # Adjust for inventory levels
+            if avg_inventory > 1000:
+                recommendation += "_with_inventory_management"
+                confidence = min(confidence + 0.1, 1.0)
+                reasoning += f". High average inventory ({avg_inventory:.0f} units) requires careful management"
+            
+            return {
+                "market_condition": market_condition,
+                "recommendation": recommendation,
+                "confidence": confidence,
+                "reasoning": reasoning,
+                "market_metrics": {
+                    "total_products": total_products,
+                    "average_price": round(avg_price, 2),
+                    "average_inventory": round(avg_inventory, 0),
+                    "average_competitors": round(avg_competitors_per_product, 1)
+                }
+            }
+            
+        except (json.JSONDecodeError, Exception) as e:
+            return {
+                "market_condition": "unknown",
+                "recommendation": "data_error",
+                "confidence": 0.2,
+                "reasoning": f"Error analyzing market data: {str(e)}"
+            }
 
 
 class CrewAIRunner(AgentRunner):

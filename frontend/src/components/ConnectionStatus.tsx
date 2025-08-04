@@ -70,9 +70,9 @@ const getConnectionStatusText = (connected: boolean, reconnectAttempts: number) 
   }
 };
 
-export const ConnectionStatus: React.FC<ConnectionStatusProps> = ({ 
-  className = '', 
-  showDetails = true 
+export const ConnectionStatus: React.FC<ConnectionStatusProps> = React.memo(({
+  className = '',
+  showDetails = true
 }) => {
   const connectionStatus = useSimulationStore((state) => state.simulation.connectionStatus);
   const error = useSimulationStore((state) => state.simulation.error);
@@ -153,11 +153,17 @@ export const ConnectionStatus: React.FC<ConnectionStatusProps> = ({
       )}
     </div>
   );
-};
+}, (prevProps, nextProps) => {
+  // Custom comparison function to prevent unnecessary re-renders
+  return (
+    prevProps.className === nextProps.className &&
+    prevProps.showDetails === nextProps.showDetails
+  );
+});
 
 // Compact version for header/navbar
-export const ConnectionStatusCompact: React.FC<{ className?: string }> = ({ 
-  className = '' 
+export const ConnectionStatusCompact: React.FC<{ className?: string }> = React.memo(({
+  className = ''
 }) => {
   const connectionStatus = useSimulationStore((state) => state.simulation.connectionStatus);
   const { reconnect } = useWebSocket({ autoConnect: false });
@@ -181,7 +187,7 @@ export const ConnectionStatusCompact: React.FC<{ className?: string }> = ({
       {!connected && reconnectAttempts === 0 && (
         <button
           onClick={reconnect}
-          className="px-2 py-1 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded hover:bg-blue-100 transition-colors"
+          className="px-2 py-1 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded hover:bg-blue-100 transition-colors whitespace-nowrap"
           title="Reconnect to server"
         >
           Reconnect
@@ -189,6 +195,9 @@ export const ConnectionStatusCompact: React.FC<{ className?: string }> = ({
       )}
     </div>
   );
-};
+}, (prevProps, nextProps) => {
+  // Custom comparison function to prevent unnecessary re-renders
+  return prevProps.className === nextProps.className;
+});
 
 export default ConnectionStatus;

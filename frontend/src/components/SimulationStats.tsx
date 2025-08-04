@@ -103,10 +103,12 @@ export const SimulationStats: React.FC<SimulationStatsProps> = ({
       )}
 
       {snapshot && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {summaryMetrics.map((metric, index) => (
-            <MetricCard key={index} metric={metric} />
-          ))}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 overflow-x-auto">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 min-w-max">
+            {summaryMetrics.map((metric, index) => (
+              <MetricCard key={index} metric={metric} className="min-w-[250px]" />
+            ))}
+          </div>
         </div>
       )}
     </div>

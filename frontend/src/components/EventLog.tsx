@@ -1,5 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
+import { FixedSizeList as List } from 'react-window';
 import { useSimulationStore } from '../store/simulationStore';
+import { useTheme } from '../contexts/ThemeContext';
 import type {
   SimulationEvent,
   TickEventPayload,
@@ -8,6 +10,39 @@ import type {
   ProductPriceUpdatedPayload,
   CompetitorPricesUpdatedPayload
 } from '../types';
+import {
+  sanitizeText,
+  sanitizeTimestamp,
+  sanitizeInteger,
+  sanitizeExternalData
+} from '../utils/sanitization';
+
+// Debounce utility function
+const debounce = <T extends (...args: Parameters<T>) => ReturnType<T>>(
+  func: T,
+  wait: number
+): ((...args: Parameters<T>) => void) & { cancel: () => void } => {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  
+  const debounced = (...args: Parameters<T>) => {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+    
+    timeout = setTimeout(() => {
+      func(...args);
+    }, wait);
+  };
+  
+  debounced.cancel = () => {
+    if (timeout) {
+      clearTimeout(timeout);
+      timeout = null;
+    }
+  };
+  
+  return debounced;
+};
 
 interface EventLogProps {
   className?: string;
@@ -16,12 +51,10 @@ interface EventLogProps {
   showFilters?: boolean;
 }
 
+
+// Format timestamp using centralized sanitization utility
 const formatTimestamp = (timestamp: string): string => {
-  try {
-    return new Date(timestamp).toLocaleTimeString();
-  } catch {
-    return 'Invalid time';
-  }
+  return sanitizeTimestamp(timestamp);
 };
 
 // Type guards for discriminated union
@@ -88,22 +121,43 @@ const getEventIcon = (eventType: string) => {
 };
 
 const getEventDescription = (event: SimulationEvent): string => {
-  if (isTickEvent(event)) {
-    return `Simulation advanced to tick ${event.payload.tick_number}`;
+  try {
+    // Sanitize the entire event payload to ensure all data is clean
+    const sanitizedEvent = sanitizeExternalData(event);
+    
+    if (isTickEvent(sanitizedEvent)) {
+      const tickNumber = sanitizeInteger(sanitizedEvent.payload.tick_number, 0);
+      return `Simulation advanced to tick ${tickNumber}`;
+    }
+    if (isSaleOccurredEvent(sanitizedEvent)) {
+      const quantity = sanitizeInteger(sanitizedEvent.payload.sale.quantity, 0);
+      const productAsin = sanitizeText(sanitizedEvent.payload.sale.product_asin) || 'unknown';
+      const amount = sanitizeText(sanitizedEvent.payload.sale.sale_price.amount) || '?';
+      return `Sale: ${quantity}x ${productAsin} for ${amount}`;
+    }
+    if (isSetPriceCommandEvent(sanitizedEvent)) {
+      const productAsin = sanitizeText(sanitizedEvent.payload.product_asin) || 'unknown';
+      const newPrice = sanitizeText(sanitizedEvent.payload.new_price.amount) || '?';
+      return `Price command: Set ${productAsin} to ${newPrice}`;
+    }
+    if (isProductPriceUpdatedEvent(sanitizedEvent)) {
+      const productAsin = sanitizeText(sanitizedEvent.payload.product_asin) || 'unknown';
+      const oldPrice = sanitizeText(sanitizedEvent.payload.old_price.amount) || '?';
+      const newPrice = sanitizeText(sanitizedEvent.payload.new_price.amount) || '?';
+      return `Price updated: ${productAsin} from ${oldPrice} to ${newPrice}`;
+    }
+    if (isCompetitorPricesUpdatedEvent(sanitizedEvent)) {
+      const competitorStates = Array.isArray(sanitizedEvent.payload.competitor_states)
+        ? sanitizedEvent.payload.competitor_states
+        : [];
+      const competitorCount = sanitizeInteger(competitorStates.length, 0);
+      return `Competitor prices updated (${competitorCount} competitors)`;
+    }
+    return `Unknown event: ${sanitizeText(sanitizedEvent.type)}`;
+  } catch (error) {
+    console.error('Error generating event description:', error);
+    return '[Event Display Error]';
   }
-  if (isSaleOccurredEvent(event)) {
-    return `Sale: ${event.payload.sale.quantity}x ${event.payload.sale.product_asin} for ${event.payload.sale.sale_price.amount}`;
-  }
-  if (isSetPriceCommandEvent(event)) {
-    return `Price command: Set ${event.payload.product_asin} to ${event.payload.new_price.amount}`;
-  }
-  if (isProductPriceUpdatedEvent(event)) {
-    return `Price updated: ${event.payload.product_asin} from ${event.payload.old_price.amount} to ${event.payload.new_price.amount}`;
-  }
-  if (isCompetitorPricesUpdatedEvent(event)) {
-    return `Competitor prices updated (${event.payload.competitor_states.length} competitors)`;
-  }
-  return `Unknown event: ${event.type}`;
 };
 
 const getEventTypeLabel = (eventType: string): string => {
@@ -123,39 +177,71 @@ const getEventTypeLabel = (eventType: string): string => {
   }
 };
 
-export const EventLog: React.FC<EventLogProps> = ({
+export const EventLog: React.FC<EventLogProps> = React.memo(({
   className = '',
-  maxEvents = 100,
+  maxEvents = 1000,
   autoScroll = true,
   showFilters = true
 }) => {
   const eventLog = useSimulationStore((state) => state.simulation.eventLog);
+  const { isDarkMode } = useTheme();
   const [selectedTypes, setSelectedTypes] = useState<Set<string>>(new Set());
   const [searchTerm, setSearchTerm] = useState('');
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
+  const listRef = useRef<List>(null);
+
+  // Create debounced search function
+  const debouncedSearch = useMemo(
+    () => debounce((value: string) => {
+      setDebouncedSearchTerm(value);
+    }, 300),
+    []
+  );
+
+  // Cleanup debounce on unmount
+  useEffect(() => {
+    return () => {
+      // Clear any pending debounced calls
+      debouncedSearch.cancel?.();
+    };
+  }, [debouncedSearch]);
 
   // Get unique event types for filtering
-  const eventTypes = Array.from(new Set(eventLog.map(event => event.type)));
+  const eventTypes = useMemo(() =>
+    Array.from(new Set(eventLog.map(event => event.type))),
+    [eventLog]
+  );
 
-  // Filter events based on selected types and search term
-  const filteredEvents = eventLog
-    .filter(event => {
-      if (selectedTypes.size > 0 && !selectedTypes.has(event.type)) {
-        return false;
-      }
-      if (searchTerm && !getEventDescription(event).toLowerCase().includes(searchTerm.toLowerCase())) {
-        return false;
-      }
-      return true;
-    })
-    .slice(0, maxEvents);
+  // Filter events based on selected types and search term with memoization
+  const filteredEvents = useMemo(() => {
+    const filtered = eventLog
+      .filter(event => {
+        if (selectedTypes.size > 0 && !selectedTypes.has(event.type)) {
+          return false;
+        }
+        if (debouncedSearchTerm && !getEventDescription(event).toLowerCase().includes(debouncedSearchTerm.toLowerCase())) {
+          return false;
+        }
+        return true;
+      })
+      .slice(0, maxEvents);
+    
+    return filtered;
+  }, [eventLog, selectedTypes, debouncedSearchTerm, maxEvents]);
 
   // Auto-scroll to bottom when new events arrive
   useEffect(() => {
-    if (autoScroll && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if (autoScroll && listRef.current && filteredEvents.length > 0) {
+      listRef.current.scrollToItem(filteredEvents.length - 1);
     }
-  }, [eventLog.length, autoScroll]);
+  }, [filteredEvents.length, autoScroll]);
+
+  // Cleanup function to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      // Clear any pending timeouts or intervals
+    };
+  }, []);
 
   const toggleEventType = (eventType: string) => {
     const newSelected = new Set(selectedTypes);
@@ -167,23 +253,24 @@ export const EventLog: React.FC<EventLogProps> = ({
     setSelectedTypes(newSelected);
   };
 
-  const clearFilters = () => {
+  const clearFilters = useCallback(() => {
     setSelectedTypes(new Set());
     setSearchTerm('');
-  };
+    setDebouncedSearchTerm('');
+  }, []);
 
   return (
-    <div className={`bg-white rounded-lg shadow-sm border border-gray-200 ${className}`}>
+    <div className={`${isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'} rounded-lg shadow-sm border ${className}`}>
       {/* Header */}
-      <div className="p-4 border-b border-gray-200">
+      <div className={`p-4 border-b ${isDarkMode ? 'border-gray-700' : 'border-gray-200'}`}>
         <div className="flex items-center justify-between">
-          <h3 className="text-lg font-semibold text-gray-900">Event Log</h3>
-          <div className="flex items-center space-x-2 text-sm text-gray-500">
+          <h3 className={`text-lg font-semibold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Event Log</h3>
+          <div className={`flex items-center space-x-2 text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
             <span>{filteredEvents.length} of {eventLog.length} events</span>
             {(selectedTypes.size > 0 || searchTerm) && (
               <button
                 onClick={clearFilters}
-                className="text-blue-600 hover:text-blue-800"
+                className={isDarkMode ? "text-blue-400 hover:text-blue-300" : "text-blue-600 hover:text-blue-800"}
               >
                 Clear filters
               </button>
@@ -200,8 +287,15 @@ export const EventLog: React.FC<EventLogProps> = ({
                 type="text"
                 placeholder="Search events..."
                 value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                onChange={(e) => {
+                  setSearchTerm(e.target.value);
+                  debouncedSearch(e.target.value);
+                }}
+                className={`w-full px-3 py-2 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                  isDarkMode
+                    ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400'
+                    : 'border-gray-300 text-gray-900 placeholder-gray-500'
+                }`}
               />
             </div>
 
@@ -215,8 +309,12 @@ export const EventLog: React.FC<EventLogProps> = ({
                     className={`
                       px-3 py-1 text-xs font-medium rounded-full border transition-colors
                       ${selectedTypes.has(eventType)
-                        ? 'bg-blue-100 text-blue-800 border-blue-200'
-                        : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+                        ? isDarkMode
+                          ? 'bg-blue-900 text-blue-200 border-blue-700'
+                          : 'bg-blue-100 text-blue-800 border-blue-200'
+                        : isDarkMode
+                          ? 'bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600'
+                          : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
                       }
                     `}
                   >
@@ -229,15 +327,12 @@ export const EventLog: React.FC<EventLogProps> = ({
         )}
       </div>
 
-      {/* Event list */}
-      <div
-        ref={scrollRef}
-        className="h-96 overflow-y-auto"
-      >
+      {/* Event list with virtual scrolling */}
+      <div className="h-96">
         {filteredEvents.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-gray-500">
+          <div className={`flex items-center justify-center h-full ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
             <div className="text-center">
-              <svg className="w-12 h-12 mx-auto mb-4 text-gray-300" fill="currentColor" viewBox="0 0 20 20">
+              <svg className={`w-12 h-12 mx-auto mb-4 ${isDarkMode ? 'text-gray-600' : 'text-gray-300'}`} fill="currentColor" viewBox="0 0 20 20">
                 <path fillRule="evenodd" d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" clipRule="evenodd" />
                 <path fillRule="evenodd" d="M4 5a2 2 0 012-2v1a1 1 0 001 1h6a1 1 0 001-1V3a2 2 0 012 2v6a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clipRule="evenodd" />
               </svg>
@@ -248,54 +343,95 @@ export const EventLog: React.FC<EventLogProps> = ({
             </div>
           </div>
         ) : (
-          <div className="divide-y divide-gray-100">
-            {filteredEvents.map((event, index) => (
-              <div key={`${event.timestamp}-${index}`} className="p-4 hover:bg-gray-50">
-                <div className="flex items-start space-x-3">
-                  <div className="flex-shrink-0 mt-1">
-                    {getEventIcon(event.type)}
-                  </div>
-                  
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between">
-                      <p className="text-sm font-medium text-gray-900">
-                        {getEventTypeLabel(event.type)}
-                      </p>
-                      <p className="text-xs text-gray-500">
-                        {formatTimestamp(event.timestamp)}
-                      </p>
-                    </div>
-                    
-                    <p className="text-sm text-gray-600 mt-1">
-                      {getEventDescription(event)}
-                    </p>
-                    
-                    {/* Additional event details */}
-                    {isSaleOccurredEvent(event) && (
-                      <div className="mt-2 text-xs text-gray-500">
-                        Buyer: {event.payload.sale.buyer_id}
-                        {event.payload.sale.competitor_id && ` • Competitor: ${event.payload.sale.competitor_id}`}
-                      </div>
-                    )}
-                    
-                    {isCompetitorPricesUpdatedEvent(event) && (
-                      <div className="mt-2 text-xs text-gray-500">
-                        {event.payload.competitor_states.map((comp) => (
-                          <div key={comp.id}>
-                            {comp.name}: {comp.current_price.amount}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
+          <List
+            ref={listRef}
+            width="100%" // Full width of container
+            height={384} // h-96 = 24rem = 384px
+            itemCount={filteredEvents.length}
+            itemSize={120} // Approximate height of each event item
+            itemData={{ events: filteredEvents, isDarkMode }}
+            className={`divide-y ${isDarkMode ? 'divide-gray-700' : 'divide-gray-100'}`}
+            overscanCount={5} // Render 5 items above and below the visible area for smoother scrolling
+          >
+            {EventItem}
+          </List>
         )}
       </div>
     </div>
   );
-};
+}, (prevProps, nextProps) => {
+  // Custom comparison function to prevent unnecessary re-renders
+  return (
+    prevProps.className === nextProps.className &&
+    prevProps.maxEvents === nextProps.maxEvents &&
+    prevProps.autoScroll === nextProps.autoScroll &&
+    prevProps.showFilters === nextProps.showFilters
+  );
+});
+
+// Virtualized event item component
+const EventItem: React.FC<{
+  index: number;
+  style: React.CSSProperties;
+  data: { events: SimulationEvent[]; isDarkMode: boolean };
+}> = React.memo(({ index, style, data }) => {
+  const event = data.events[index];
+  const { isDarkMode } = data;
+  
+  return (
+    <div style={style} className={`p-4 ${isDarkMode ? 'hover:bg-gray-700' : 'hover:bg-gray-50'}`}>
+      <div className="flex items-start space-x-3">
+        <div className="flex-shrink-0 mt-1">
+          {getEventIcon(event.type)}
+        </div>
+        
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between">
+            <p className={`text-sm font-medium ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
+              {getEventTypeLabel(event.type)}
+            </p>
+            <p className={`text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+              {formatTimestamp(event.timestamp)}
+            </p>
+          </div>
+          
+          <p className={`text-sm mt-1 ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+            {getEventDescription(event)}
+          </p>
+          
+          {/* Additional event details */}
+          {isSaleOccurredEvent(event) && (
+            <div className={`mt-2 text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+              Buyer: {sanitizeText(event.payload.sale.buyer_id) || 'unknown'}
+              {event.payload.sale.competitor_id && ` • Competitor: ${sanitizeText(event.payload.sale.competitor_id) || 'unknown'}`}
+            </div>
+          )}
+          
+          {isCompetitorPricesUpdatedEvent(event) && (
+            <div className={`mt-2 text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+              {Array.isArray(event.payload.competitor_states) && event.payload.competitor_states.map((comp) => (
+                <div key={sanitizeText(comp.id) || Math.random().toString(36).substr(2, 9)}>
+                  {sanitizeText(comp.name) || 'Unknown'}: {sanitizeText(comp.current_price?.amount) || '?'}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}, (prevProps, nextProps) => {
+  // Custom comparison function to prevent unnecessary re-renders
+  const prevEvent = prevProps.data.events[prevProps.index];
+  const nextEvent = nextProps.data.events[nextProps.index];
+  
+  return (
+    prevProps.index === nextProps.index &&
+    prevProps.style === nextProps.style &&
+    prevProps.data.isDarkMode === nextProps.data.isDarkMode &&
+    prevEvent?.timestamp === nextEvent?.timestamp &&
+    prevEvent?.type === nextEvent?.type
+  );
+});
 
 export default EventLog;

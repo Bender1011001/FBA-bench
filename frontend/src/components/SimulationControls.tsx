@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useSimulationStore } from '../store/simulationStore';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { apiService } from '../services/apiService';
+import { sanitizePositiveNumber, sanitizeExternalData } from '../utils/sanitization';
 
 interface SimulationControlsProps {
   className?: string;
@@ -11,7 +12,7 @@ interface SimulationControlsProps {
   onSimulationReset?: () => void;
 }
 
-export const SimulationControls: React.FC<SimulationControlsProps> = ({
+export const SimulationControls: React.FC<SimulationControlsProps> = React.memo(({
   className = '',
   onSimulationStart,
   onSimulationStop,
@@ -21,12 +22,13 @@ export const SimulationControls: React.FC<SimulationControlsProps> = ({
   const {
     simulation,
     setSimulationStatus,
+    getCurrentMetrics,
     
     setError,
     resetSimulation,
   } = useSimulationStore();
 
-  const { sendJsonMessage, isConnected } = useWebSocket();
+  const { sendJsonMessage, isConnected, connectionStatus, lastError } = useWebSocket();
   const [isProcessing, setIsProcessing] = useState(false);
   const [simulationSpeed, setSimulationSpeed] = useState(1.0);
 
@@ -58,22 +60,23 @@ export const SimulationControls: React.FC<SimulationControlsProps> = ({
   // Start simulation
   const handleStart = async () => {
     await handleApiCall(
-      () => apiService.post('/api/simulation/start'),
+      () => apiService.post('/api/v1/simulation/start'),
       'Simulation started successfully',
       () => {
         // Update local state immediately for better UX
+        const metrics = getCurrentMetrics();
         setSimulationStatus({
           id: simulation.id,
           status: 'starting',
-          currentTick: simulation.currentTick,
-          totalTicks: simulation.totalTicks,
-          simulationTime: simulation.simulationTime,
+          currentTick: metrics.currentTick,
+          totalTicks: metrics.totalTicks,
+          simulationTime: metrics.simulationTime,
           realTime: new Date().toLocaleTimeString(),
           ticksPerSecond: 0,
-          revenue: simulation.revenue,
-          costs: simulation.costs,
-          profit: simulation.profit,
-          activeAgentCount: simulation.activeAgentCount,
+          revenue: metrics.revenue,
+          costs: metrics.costs,
+          profit: metrics.profit,
+          activeAgentCount: metrics.activeAgentCount,
         });
         
         // Send WebSocket message if connected
@@ -93,21 +96,22 @@ export const SimulationControls: React.FC<SimulationControlsProps> = ({
   // Stop simulation
   const handleStop = async () => {
     await handleApiCall(
-      () => apiService.post('/api/simulation/stop'),
+      () => apiService.post('/api/v1/simulation/stop'),
       'Simulation stopped successfully',
       () => {
+        const metrics = getCurrentMetrics();
         setSimulationStatus({
           id: simulation.id,
           status: 'stopped',
-          currentTick: simulation.currentTick,
-          totalTicks: simulation.totalTicks,
-          simulationTime: simulation.simulationTime,
+          currentTick: metrics.currentTick,
+          totalTicks: metrics.totalTicks,
+          simulationTime: metrics.simulationTime,
           realTime: new Date().toLocaleTimeString(),
           ticksPerSecond: 0,
-          revenue: simulation.revenue,
-          costs: simulation.costs,
-          profit: simulation.profit,
-          activeAgentCount: simulation.activeAgentCount,
+          revenue: metrics.revenue,
+          costs: metrics.costs,
+          profit: metrics.profit,
+          activeAgentCount: metrics.activeAgentCount,
         });
         
         if (isConnected) {
@@ -125,21 +129,22 @@ export const SimulationControls: React.FC<SimulationControlsProps> = ({
   // Pause simulation
   const handlePause = async () => {
     await handleApiCall(
-      () => apiService.post('/api/simulation/pause'),
+      () => apiService.post('/api/v1/simulation/pause'),
       'Simulation paused successfully',
       () => {
+        const metrics = getCurrentMetrics();
         setSimulationStatus({
           id: simulation.id,
           status: 'paused',
-          currentTick: simulation.currentTick,
-          totalTicks: simulation.totalTicks,
-          simulationTime: simulation.simulationTime,
+          currentTick: metrics.currentTick,
+          totalTicks: metrics.totalTicks,
+          simulationTime: metrics.simulationTime,
           realTime: new Date().toLocaleTimeString(),
           ticksPerSecond: 0,
-          revenue: simulation.revenue,
-          costs: simulation.costs,
-          profit: simulation.profit,
-          activeAgentCount: simulation.activeAgentCount,
+          revenue: metrics.revenue,
+          costs: metrics.costs,
+          profit: metrics.profit,
+          activeAgentCount: metrics.activeAgentCount,
         });
         
         if (isConnected) {
@@ -157,21 +162,22 @@ export const SimulationControls: React.FC<SimulationControlsProps> = ({
   // Resume simulation
   const handleResume = async () => {
     await handleApiCall(
-      () => apiService.post('/api/simulation/resume'),
+      () => apiService.post('/api/v1/simulation/resume'),
       'Simulation resumed successfully',
       () => {
+        const metrics = getCurrentMetrics();
         setSimulationStatus({
           id: simulation.id,
           status: 'running',
-          currentTick: simulation.currentTick,
-          totalTicks: simulation.totalTicks,
-          simulationTime: simulation.simulationTime,
+          currentTick: metrics.currentTick,
+          totalTicks: metrics.totalTicks,
+          simulationTime: metrics.simulationTime,
           realTime: new Date().toLocaleTimeString(),
           ticksPerSecond: simulation.ticksPerSecond,
-          revenue: simulation.revenue,
-          costs: simulation.costs,
-          profit: simulation.profit,
-          activeAgentCount: simulation.activeAgentCount,
+          revenue: metrics.revenue,
+          costs: metrics.costs,
+          profit: metrics.profit,
+          activeAgentCount: metrics.activeAgentCount,
         });
         
         if (isConnected) {
@@ -192,7 +198,7 @@ export const SimulationControls: React.FC<SimulationControlsProps> = ({
     }
 
     await handleApiCall(
-      () => apiService.post('/api/simulation/reset'),
+      () => apiService.post('/api/v1/simulation/reset'),
       'Simulation reset successfully',
       () => {
         resetSimulation();
@@ -212,21 +218,22 @@ export const SimulationControls: React.FC<SimulationControlsProps> = ({
   // Emergency stop
   const handleEmergencyStop = async () => {
     await handleApiCall(
-      () => apiService.post('/api/simulation/emergency-stop'),
+      () => apiService.post('/api/v1/simulation/emergency-stop'),
       'Emergency stop executed',
       () => {
+        const metrics = getCurrentMetrics();
         setSimulationStatus({
           id: simulation.id,
           status: 'stopped',
-          currentTick: simulation.currentTick,
-          totalTicks: simulation.totalTicks,
-          simulationTime: simulation.simulationTime,
+          currentTick: metrics.currentTick,
+          totalTicks: metrics.totalTicks,
+          simulationTime: metrics.simulationTime,
           realTime: new Date().toLocaleTimeString(),
           ticksPerSecond: 0,
-          revenue: simulation.revenue,
-          costs: simulation.costs,
-          profit: simulation.profit,
-          activeAgentCount: simulation.activeAgentCount,
+          revenue: metrics.revenue,
+          costs: metrics.costs,
+          profit: metrics.profit,
+          activeAgentCount: metrics.activeAgentCount,
         });
         
         if (isConnected) {
@@ -241,19 +248,21 @@ export const SimulationControls: React.FC<SimulationControlsProps> = ({
 
   // Update simulation speed
   const handleSpeedChange = async (newSpeed: number) => {
-    setSimulationSpeed(newSpeed);
+    // Sanitize the speed value to ensure it's a positive number
+    const sanitizedSpeed = sanitizePositiveNumber(newSpeed, 1.0);
+    setSimulationSpeed(sanitizedSpeed);
     
     if (simulation.status === 'running' && isConnected) {
       sendJsonMessage({
         type: 'simulation_control',
         action: 'set_speed',
-        speed: newSpeed,
+        speed: sanitizedSpeed,
       });
     }
     
     // Also update via API if needed
     try {
-      await apiService.post('/api/simulation/speed', { speed: newSpeed });
+      await apiService.post('/api/v1/simulation/speed', { speed: sanitizedSpeed });
     } catch (error) {
       console.warn('Failed to update simulation speed via API:', error);
     }
@@ -354,7 +363,7 @@ export const SimulationControls: React.FC<SimulationControlsProps> = ({
             max="5.0"
             step="0.1"
             value={simulationSpeed}
-            onChange={(e) => handleSpeedChange(parseFloat(e.target.value))}
+            onChange={(e) => handleSpeedChange(parseFloat(e.target.value || '1.0'))}
             disabled={isDisabled}
             className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer disabled:cursor-not-allowed"
           />
@@ -406,9 +415,15 @@ export const SimulationControls: React.FC<SimulationControlsProps> = ({
       {/* Connection Status */}
       <div className="mt-4 flex items-center justify-between text-sm">
         <div className="flex items-center space-x-2">
-          <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+          <div className={`w-2 h-2 rounded-full ${
+            connectionStatus === 'connected' ? 'bg-green-500' :
+            connectionStatus === 'connecting' ? 'bg-yellow-500' :
+            connectionStatus === 'error' ? 'bg-red-500' : 'bg-gray-500'
+          }`} />
           <span className="text-gray-600">
-            WebSocket: {isConnected ? 'Connected' : 'Disconnected'}
+            WebSocket: {connectionStatus === 'connected' ? 'Connected' :
+                      connectionStatus === 'connecting' ? 'Connecting...' :
+                      connectionStatus === 'error' ? 'Error' : 'Disconnected'}
           </span>
         </div>
         
@@ -424,7 +439,7 @@ export const SimulationControls: React.FC<SimulationControlsProps> = ({
       </div>
 
       {/* Error Display */}
-      {simulation.error && (
+      {(simulation.error || lastError) && (
         <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-md">
           <div className="flex items-center space-x-2">
             <svg className="w-4 h-4 text-red-500" fill="currentColor" viewBox="0 0 20 20">
@@ -432,11 +447,20 @@ export const SimulationControls: React.FC<SimulationControlsProps> = ({
             </svg>
             <span className="text-red-700 text-sm font-medium">Control Error</span>
           </div>
-          <p className="text-red-600 text-sm mt-1">{simulation.error}</p>
+          <p className="text-red-600 text-sm mt-1">{sanitizeExternalData(simulation.error || lastError)}</p>
         </div>
       )}
     </div>
   );
-};
+}, (prevProps, nextProps) => {
+  // Custom comparison function to prevent unnecessary re-renders
+  return (
+    prevProps.className === nextProps.className &&
+    prevProps.onSimulationStart === nextProps.onSimulationStart &&
+    prevProps.onSimulationStop === nextProps.onSimulationStop &&
+    prevProps.onSimulationPause === nextProps.onSimulationPause &&
+    prevProps.onSimulationReset === nextProps.onSimulationReset
+  );
+});
 
 export default SimulationControls;

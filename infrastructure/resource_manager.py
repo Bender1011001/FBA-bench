@@ -2,7 +2,7 @@ import logging
 import time
 import psutil # For system resource monitoring
 from collections import defaultdict
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, List
 
 logger = logging.getLogger(__name__)
 

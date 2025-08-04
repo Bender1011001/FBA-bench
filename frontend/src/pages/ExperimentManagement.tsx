@@ -94,8 +94,8 @@ export function ExperimentManagement() {
     <div className="container mx-auto p-6">
       <h1 className="text-3xl font-bold text-gray-900 mb-6">Experiment Management System</h1>
       
-      <div className="mb-6 border-b border-gray-200">
-        <nav className="-mb-px flex space-x-8" aria-label="Tabs">
+      <div className="mb-6 border-b border-gray-200 overflow-x-auto">
+        <nav className="-mb-px flex space-x-8 min-w-max" aria-label="Tabs">
           <button
             onClick={() => setActiveTab('configure')}
             className={`whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm focus:outline-none 

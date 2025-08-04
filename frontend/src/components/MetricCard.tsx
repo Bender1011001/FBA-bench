@@ -6,9 +6,50 @@ interface MetricCardProps {
   className?: string;
 }
 
+/**
+ * Safe calculation function that handles zero denominators and invalid values
+ */
+const safeCalculate = (value: number, denominator: number = 1): number => {
+  // Check if denominator is zero, NaN, or not finite
+  if (denominator === 0 || !isFinite(denominator)) {
+    return 0;
+  }
+  
+  // Check if value is NaN or not finite
+  if (!isFinite(value)) {
+    return 0;
+  }
+  
+  const result = value / denominator;
+  
+  // Ensure the result is finite
+  return isFinite(result) ? result : 0;
+};
+
+/**
+ * Validates that a value is safe for calculations
+ */
+const isValidNumber = (value: unknown): value is number => {
+  return typeof value === 'number' && isFinite(value) && !isNaN(value);
+};
+
 const formatValue = (value: string | number, formatType?: DashboardMetric['formatType']): string => {
+  // Convert string values to numbers if needed
+  let numericValue: number;
+  
   if (typeof value === 'string') {
-    return value;
+    // Try to parse string as number
+    numericValue = parseFloat(value);
+    if (isNaN(numericValue)) {
+      return value; // Return original string if it can't be parsed as a number
+    }
+  } else {
+    numericValue = value;
+  }
+  
+  // Validate the numeric value
+  if (!isValidNumber(numericValue)) {
+    return 'N/A';
   }
 
   switch (formatType) {
@@ -17,20 +58,23 @@ const formatValue = (value: string | number, formatType?: DashboardMetric['forma
         style: 'currency',
         currency: 'USD',
         minimumFractionDigits: 2,
-      }).format(value);
+      }).format(numericValue);
     
-    case 'percentage':
+    case 'percentage': {
+      // Safe calculation for percentage (divide by 100)
+      const percentageValue = safeCalculate(numericValue, 100);
       return new Intl.NumberFormat('en-US', {
         style: 'percent',
         minimumFractionDigits: 1,
         maximumFractionDigits: 1,
-      }).format(value / 100);
+      }).format(percentageValue);
+    }
     
     case 'number':
-      return new Intl.NumberFormat('en-US').format(value);
+      return new Intl.NumberFormat('en-US').format(numericValue);
     
     default:
-      return value.toString();
+      return numericValue.toString();
   }
 };
 
@@ -75,7 +119,7 @@ const getTrendColorClass = (trend?: DashboardMetric['trend']): string => {
   }
 };
 
-export const MetricCard: React.FC<MetricCardProps> = ({ metric, className = '' }) => {
+export const MetricCard: React.FC<MetricCardProps> = React.memo(({ metric, className = '' }) => {
   const { label, value, trend, formatType } = metric;
   const formattedValue = formatValue(value, formatType);
   const trendIcon = getTrendIcon(trend);
@@ -83,7 +127,7 @@ export const MetricCard: React.FC<MetricCardProps> = ({ metric, className = '' }
 
   return (
     <div className={`
-      bg-white rounded-lg shadow-sm border border-gray-200 p-6 
+      bg-white rounded-lg shadow-sm border border-gray-200 p-6
       hover:shadow-md transition-shadow duration-200
       ${className}
     `}>
@@ -109,19 +153,28 @@ export const MetricCard: React.FC<MetricCardProps> = ({ metric, className = '' }
       {trend && (
         <div className="mt-3 flex items-center text-sm">
           <span className={`font-medium ${
-            trend === 'up' ? 'text-green-600' : 
-            trend === 'down' ? 'text-red-600' : 
+            trend === 'up' ? 'text-green-600' :
+            trend === 'down' ? 'text-red-600' :
             'text-gray-600'
           }`}>
-            {trend === 'up' ? 'Trending up' : 
-             trend === 'down' ? 'Trending down' : 
+            {trend === 'up' ? 'Trending up' :
+             trend === 'down' ? 'Trending down' :
              'No change'}
           </span>
         </div>
       )}
     </div>
   );
-};
+}, (prevProps, nextProps) => {
+  // Custom comparison function to prevent unnecessary re-renders
+  return (
+    prevProps.metric.label === nextProps.metric.label &&
+    prevProps.metric.value === nextProps.metric.value &&
+    prevProps.metric.trend === nextProps.metric.trend &&
+    prevProps.metric.formatType === nextProps.metric.formatType &&
+    prevProps.className === nextProps.className
+  );
+});
 
 // Utility component for loading state
 export const MetricCardSkeleton: React.FC<{ className?: string }> = ({ className = '' }) => (

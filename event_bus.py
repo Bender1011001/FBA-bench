@@ -4,7 +4,7 @@ import asyncio
 import logging
 import inspect
 import uuid
-from typing import Dict, List, Callable, Any, Optional, Type, Union
+from typing import Dict, List, Callable, Any, Optional, Type, Union, TYPE_CHECKING, Tuple
 from datetime import datetime
 from abc import ABC, abstractmethod
 import zlib # For compression
@@ -21,8 +21,10 @@ logger = logging.getLogger(__name__)
 event_bus_tracer = setup_tracing(service_name="fba-bench-eventbus")
 
 # Type hinting for DistributedEventBus to avoid circular import at runtime
+print("DEBUG: About to check TYPE_CHECKING")  # Added debug print
 if TYPE_CHECKING:
     from infrastructure.distributed_event_bus import DistributedEventBus
+    print("DEBUG: Inside TYPE_CHECKING block")  # Added debug print if entered
 
 class EventBusBackend(ABC):
     """Abstract base class for EventBus backends."""

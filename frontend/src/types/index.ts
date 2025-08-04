@@ -479,7 +479,7 @@ export interface MarketMetrics {
 }
 
 export interface ChartConfiguration {
-  chartType: 'line' | 'bar' | 'area' | 'scatter' | 'pie' | 'gauge' | 'heatmap' | 'correlation';
+  chartType: 'line' | 'bar' | 'area' | 'scatter' | 'pie' | 'gauge' | 'heatmap' | 'correlation' | 'radar' | 'treemap' | 'funnel';
   dataSource: string; // e.g., 'financialMetrics', 'agentPerformance', 'timeSeriesData'
   timeRange?: { start: string; end: string }; // Optional for non-time-series charts
   metrics: string[]; // Metrics to display on the chart
@@ -488,4 +488,244 @@ export interface ChartConfiguration {
   title?: string;
   xAxisLabel?: string;
   yAxisLabel?: string;
+  colorScheme?: string[]; // Custom color scheme for charts
+  showLegend?: boolean;
+  showGrid?: boolean;
+  interactive?: boolean; // Enable drill-down and hover interactions
+}
+
+// Benchmarking Framework Types
+export interface BenchmarkConfig {
+  benchmark_id: string;
+  name: string;
+  description?: string;
+  version?: string;
+  environment: {
+    deterministic: boolean;
+    random_seed?: number;
+    parallel_execution: boolean;
+    max_workers: number;
+  };
+  scenarios: ScenarioConfig[];
+  agents: AgentConfig[];
+  metrics: MetricsConfig;
+  execution: ExecutionConfig;
+  output: OutputConfig;
+  validation: ValidationConfig;
+}
+
+export interface ScenarioConfig {
+  id: string;
+  name?: string;
+  type: string;
+  description?: string;
+  config: Record<string, unknown>;
+  enabled?: boolean;
+  priority?: number;
+  parameters: {
+    duration?: number;
+    complexity?: 'low' | 'medium' | 'high';
+    domain?: string;
+    difficulty?: 'easy' | 'medium' | 'hard' | 'expert';
+  };
+  metadata?: {
+    author?: string;
+    version?: string;
+    tags?: string[];
+  };
+}
+
+export interface AgentConfig {
+  id: string;
+  name?: string;
+  type: string;
+  description?: string;
+  framework_config: {
+    framework: string;
+    model?: string;
+    parameters: Record<string, unknown>;
+  };
+  capabilities?: string[];
+  constraints?: {
+    max_memory?: number;
+    max_cpu?: number;
+    timeout?: number;
+  };
+  enabled?: boolean;
+}
+
+export interface MetricsConfig {
+  categories: string[];
+  custom_metrics?: CustomMetricConfig[];
+}
+
+export interface CustomMetricConfig {
+  name: string;
+  type: string;
+  config: Record<string, unknown>;
+}
+
+export interface ExecutionConfig {
+  runs_per_scenario?: number;
+  max_duration?: number;
+  timeout?: number;
+  retry_on_failure?: boolean;
+  max_retries?: number;
+}
+
+export interface OutputConfig {
+  format?: 'json' | 'csv' | 'yaml';
+  path?: string;
+  include_detailed_logs?: boolean;
+  include_audit_trail?: boolean;
+}
+
+export interface ValidationConfig {
+  enabled?: boolean;
+  statistical_significance?: boolean;
+  confidence_level?: number;
+  reproducibility_check?: boolean;
+}
+
+// Benchmark Results Types
+export interface BenchmarkResult {
+  benchmark_name: string;
+  config_hash: string;
+  start_time: string;
+  end_time: string;
+  duration_seconds: number;
+  scenario_results: ScenarioResult[];
+  metadata: Record<string, unknown>;
+}
+
+export interface ScenarioResult {
+  scenario_name: string;
+  start_time: string;
+  end_time: string;
+  duration_seconds: number;
+  agent_results: AgentRunResult[];
+}
+
+export interface AgentRunResult {
+  agent_id: string;
+  scenario_name: string;
+  run_number: number;
+  start_time: string;
+  end_time: string;
+  duration_seconds: number;
+  metrics: MetricResult[];
+  errors: string[];
+  success: boolean;
+}
+
+export interface MetricResult {
+  name: string;
+  value: number;
+  unit: string;
+  timestamp: string;
+  metadata: Record<string, unknown>;
+}
+
+// Multi-dimensional Metrics Types
+export interface MultiDimensionalMetric {
+  name: string;
+  category: string;
+  dimensions: string[];
+  values: number[];
+  unit: string;
+  timestamp: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface CapabilityAssessment {
+  agent_id: string;
+  scenario_name: string;
+  capabilities: {
+    cognitive: number;
+    business: number;
+    technical: number;
+    ethical: number;
+    [key: string]: number;
+  };
+  overall_score: number;
+  timestamp: string;
+}
+
+export interface PerformanceHeatmap {
+  agents: string[];
+  scenarios: string[];
+  metrics: string[];
+  data: number[][][]; // 3D array: [agent][scenario][metric]
+  timestamp: string;
+}
+
+export interface ExecutionProgress {
+  benchmark_id: string;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'paused';
+  progress: number; // 0-100
+  current_scenario?: string;
+  current_agent?: string;
+  current_run?: number;
+  estimated_completion_time?: string;
+  start_time?: string;
+  end_time?: string;
+  errors?: string[];
+  metadata?: Record<string, unknown>;
+}
+
+// WebSocket Event Types for Benchmarking
+export type BenchmarkWebSocketEvent =
+  | { type: 'benchmark_started'; payload: { benchmark_id: string; timestamp: string } }
+  | { type: 'benchmark_progress'; payload: ExecutionProgress }
+  | { type: 'scenario_completed'; payload: { scenario_name: string; duration_seconds: number } }
+  | { type: 'agent_run_completed'; payload: AgentRunResult }
+  | { type: 'benchmark_completed'; payload: BenchmarkResult }
+  | { type: 'benchmark_error'; payload: { error: string; timestamp: string } }
+  | { type: 'metrics_update'; payload: MultiDimensionalMetric[] }
+  | { type: 'real_time_metrics'; payload: { agent_id: string; scenario_name: string; tick: number; metrics: MetricResult[] } };
+
+// Configuration Template Types
+export interface ConfigurationTemplate {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  config: BenchmarkConfig;
+  tags?: string[];
+  is_default?: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+// Report Types
+export interface BenchmarkReport {
+  id: string;
+  benchmark_id: string;
+  title: string;
+  description?: string;
+  template_id?: string;
+  format: 'pdf' | 'html' | 'json' | 'csv';
+  sections: ReportSection[];
+  generated_at: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ReportSection {
+  id: string;
+  title: string;
+  type: 'summary' | 'charts' | 'tables' | 'raw_data' | 'analysis';
+  content: Record<string, unknown>;
+  order: number;
+  visible?: boolean;
+}
+
+// Export Options
+export interface ExportOptions {
+  format: 'json' | 'csv' | 'pdf' | 'html' | 'yaml';
+  include_metadata?: boolean;
+  include_raw_data?: boolean;
+  include_charts?: boolean;
+  include_analysis?: boolean;
+  date_range?: { start: string; end: string };
+  filters?: Record<string, unknown>;
 }

@@ -9,6 +9,7 @@ import TierSelector from '../components/TierSelector';
 
 import type { Configuration, SimulationSettings, TemplateAgentConfig, Template, ConstraintConfig } from '../types';
 import { defaultConstraintConfig, constraintTiers } from '../data/constraintTiers'; // Import constraintTiers
+import { sanitizeUserInput, sanitizeExternalData } from '../utils/sanitization';
 
 const WizardStep = {
   SimulationType: 0,
@@ -26,15 +27,29 @@ export function ConfigurationWizard() {
   const [currentStep, setCurrentStep] = useState<WizardStep>(WizardStep.SimulationType);
   const [isExperiment, setIsExperiment] = useState<boolean>(false);
   const [isConstraintConfigValid, setIsConstraintConfigValid] = useState<boolean>(true); // New state for validation
+  
+  // Validation errors for each step
+  const [validationErrors, setValidationErrors] = useState<Record<WizardStep, string[]>>({
+    [WizardStep.SimulationType]: [],
+    [WizardStep.Templates]: [],
+    [WizardStep.Simulation]: [],
+    [WizardStep.Agents]: [],
+    [WizardStep.Constraints]: [],
+    [WizardStep.Experiment]: [],
+    [WizardStep.Review]: [],
+  });
 
   const [currentConfiguration, setCurrentConfiguration] = useState<Configuration>({
     simulationSettings: {
       simulationName: '',
       description: '',
       duration: 0,
+      tickInterval: 1,
       randomSeed: 0,
       metricsInterval: 0,
       snapshotInterval: 0,
+      initialPrice: 10.0,
+      inventory: 100,
     },
     agentConfigs: [],
     llmSettings: {
@@ -57,12 +72,182 @@ export function ConfigurationWizard() {
     }
   });
 
+  // Validation functions for each step
+  const validateSimulationStep = (): boolean => {
+    const errors: string[] = [];
+    const { simulationSettings } = currentConfiguration;
+    
+    if (!simulationSettings.simulationName || simulationSettings.simulationName.trim() === '') {
+      errors.push('Simulation name is required');
+    } else if (simulationSettings.simulationName.length < 3) {
+      errors.push('Simulation name must be at least 3 characters long');
+    } else if (simulationSettings.simulationName.length > 100) {
+      errors.push('Simulation name must be less than 100 characters');
+    }
+    
+    if (simulationSettings.description && simulationSettings.description.length > 500) {
+      errors.push('Description must be less than 500 characters');
+    }
+    
+    if (simulationSettings.duration <= 0) {
+      errors.push('Duration must be greater than 0');
+    } else if (simulationSettings.duration > 1000000) {
+      errors.push('Duration must be less than 1,000,000');
+    }
+    
+    if (simulationSettings.randomSeed < 0) {
+      errors.push('Random seed must be non-negative');
+    }
+    
+    if (simulationSettings.metricsInterval <= 0) {
+      errors.push('Metrics interval must be greater than 0');
+    } else if (simulationSettings.metricsInterval > simulationSettings.duration) {
+      errors.push('Metrics interval cannot be greater than duration');
+    }
+    
+    if (simulationSettings.snapshotInterval <= 0) {
+      errors.push('Snapshot interval must be greater than 0');
+    } else if (simulationSettings.snapshotInterval > simulationSettings.duration) {
+      errors.push('Snapshot interval cannot be greater than duration');
+    }
+    
+    setValidationErrors(prev => ({ ...prev, [WizardStep.Simulation]: errors }));
+    return errors.length === 0;
+  };
+  
+  const validateAgentsStep = (): boolean => {
+    const errors: string[] = [];
+    
+    if (currentConfiguration.agentConfigs.length === 0) {
+      errors.push('At least one agent configuration is required');
+    }
+    
+    // Validate each agent configuration
+    currentConfiguration.agentConfigs.forEach((agent, index) => {
+      if (!agent.agentName || agent.agentName.trim() === '') {
+        errors.push(`Agent ${index + 1}: Name is required`);
+      }
+      
+      if (!agent.agentType || agent.agentType.trim() === '') {
+        errors.push(`Agent ${index + 1}: Type is required`);
+      }
+      
+      if (agent.temperature < 0 || agent.temperature > 2) {
+        errors.push(`Agent ${index + 1}: Temperature must be between 0 and 2`);
+      }
+      
+      if (agent.max_tokens <= 0 || agent.max_tokens > 100000) {
+        errors.push(`Agent ${index + 1}: Max tokens must be between 1 and 100,000`);
+      }
+    });
+    
+    setValidationErrors(prev => ({ ...prev, [WizardStep.Agents]: errors }));
+    return errors.length === 0;
+  };
+  
+  const validateExperimentStep = (): boolean => {
+    const errors: string[] = [];
+    const { experimentSettings } = currentConfiguration;
+    
+    if (!experimentSettings.experimentName || experimentSettings.experimentName.trim() === '') {
+      errors.push('Experiment name is required');
+    } else if (experimentSettings.experimentName.length < 3) {
+      errors.push('Experiment name must be at least 3 characters long');
+    } else if (experimentSettings.experimentName.length > 100) {
+      errors.push('Experiment name must be less than 100 characters');
+    }
+    
+    if (experimentSettings.description && experimentSettings.description.length > 500) {
+      errors.push('Description must be less than 500 characters');
+    }
+    
+    if (experimentSettings.iterations !== undefined && experimentSettings.iterations <= 0) {
+      errors.push('Iterations must be greater than 0');
+    } else if (experimentSettings.iterations !== undefined && experimentSettings.iterations > 1000) {
+      errors.push('Iterations must be less than 1,000');
+    }
+    
+    if (experimentSettings.batchSize !== undefined && experimentSettings.batchSize <= 0) {
+      errors.push('Batch size must be greater than 0');
+    } else if (experimentSettings.batchSize !== undefined && experimentSettings.iterations !== undefined && experimentSettings.batchSize > experimentSettings.iterations) {
+      errors.push('Batch size cannot be greater than iterations');
+    }
+    
+    // Validate parameters
+    if (experimentSettings.parameters && experimentSettings.parameters.length > 0) {
+      experimentSettings.parameters.forEach((param, index) => {
+        if (!param.name || param.name.trim() === '') {
+          errors.push(`Parameter ${index + 1}: Name is required`);
+        }
+        
+        if (!param.type || !['number', 'string', 'boolean'].includes(param.type)) {
+          errors.push(`Parameter ${index + 1}: Type must be number, string, or boolean`);
+        }
+        
+        if (param.type === 'range') {
+          if (param.min === undefined || param.max === undefined) {
+            errors.push(`Parameter ${index + 1}: Min and max values are required for range type`);
+          } else if (param.min >= param.max) {
+            errors.push(`Parameter ${index + 1}: Min value must be less than max value`);
+          }
+        }
+      });
+    }
+    
+    setValidationErrors(prev => ({ ...prev, [WizardStep.Experiment]: errors }));
+    return errors.length === 0;
+  };
+  
+  const validateLLMSettings = (): boolean => {
+    const errors: string[] = [];
+    const { llmSettings } = currentConfiguration;
+    
+    if (!llmSettings.provider || llmSettings.provider.trim() === '') {
+      errors.push('LLM provider is required');
+    }
+    
+    if (!llmSettings.model || llmSettings.model.trim() === '') {
+      errors.push('LLM model is required');
+    }
+    
+    if (llmSettings.temperature !== undefined && (llmSettings.temperature < 0 || llmSettings.temperature > 2)) {
+      errors.push('Temperature must be between 0 and 2');
+    }
+    
+    if (llmSettings.max_tokens !== undefined && (llmSettings.max_tokens <= 0 || llmSettings.max_tokens > 100000)) {
+      errors.push('Max tokens must be between 1 and 100,000');
+    }
+    
+    // Add these errors to the simulation step as LLM settings are part of simulation configuration
+    setValidationErrors(prev => ({ ...prev, [WizardStep.Simulation]: errors }));
+    return errors.length === 0;
+  };
+
   const handleNext = () => {
     setCurrentStep((prev) => {
-      // Perform validation check if moving from the Constraints step
-      if (prev === WizardStep.Constraints && !isConstraintConfigValid) {
-        alert('Please resolve all constraint configuration errors and warnings before proceeding.');
-        return prev; // Stay on the current step
+      // Validate current step before proceeding
+      let isValid = true;
+      
+      switch (prev) {
+        case WizardStep.Simulation:
+          isValid = validateSimulationStep() && validateLLMSettings();
+          break;
+        case WizardStep.Agents:
+          isValid = validateAgentsStep();
+          break;
+        case WizardStep.Experiment:
+          isValid = validateExperimentStep();
+          break;
+        case WizardStep.Constraints:
+          if (!isConstraintConfigValid) {
+            alert('Please resolve all constraint configuration errors and warnings before proceeding.');
+            return prev;
+          }
+          break;
+      }
+      
+      if (!isValid) {
+        return prev; // Stay on the current step if validation fails
       }
 
       // Logic for step progression based on simulation type
@@ -83,14 +268,18 @@ export function ConfigurationWizard() {
   };
 
   const handleSelectTemplate = (config: Configuration) => {
-    setCurrentConfiguration(config);
+    // Sanitize the configuration data before applying it
+    const sanitizedConfig = sanitizeExternalData(config);
+    setCurrentConfiguration(sanitizedConfig);
     setCurrentStep(WizardStep.Simulation); // Go to the Simulation step after template selection
   };
 
   const handleConstraintConfigChange = (config: ConstraintConfig, isValid: boolean) => {
+    // Sanitize the constraint configuration before applying it
+    const sanitizedConfig = sanitizeExternalData(config);
     setCurrentConfiguration((prev) => ({
       ...prev,
-      constraints: config,
+      constraints: sanitizedConfig,
     }));
     setIsConstraintConfigValid(isValid);
   };
@@ -188,12 +377,14 @@ export function ConfigurationWizard() {
         {currentStep === WizardStep.Simulation && (
           <SimulationConfigForm
             config={currentConfiguration.simulationSettings}
-            onConfigChange={(newSettings: SimulationSettings) =>
+            onConfigChange={(newSettings: SimulationSettings) => {
+              // Sanitize the simulation settings before applying them
+              const sanitizedSettings = sanitizeExternalData(newSettings);
               setCurrentConfiguration((prev) => ({
                 ...prev,
-                simulationSettings: newSettings,
-              }))
-            }
+                simulationSettings: sanitizedSettings,
+              }));
+            }}
           />
         )}
 
@@ -207,9 +398,11 @@ export function ConfigurationWizard() {
                 agentConfig={currentConfiguration.agentConfigs[0]}
                 onAgentConfigChange={(newAgentConfig: TemplateAgentConfig) =>
                   setCurrentConfiguration((prev) => {
+                    // Sanitize the agent configuration before applying it
+                    const sanitizedAgentConfig = sanitizeExternalData(newAgentConfig);
                     const updatedAgentConfigs = [...prev.agentConfigs];
                     if (updatedAgentConfigs[0]) {
-                      updatedAgentConfigs[0] = { ...newAgentConfig };
+                      updatedAgentConfigs[0] = { ...sanitizedAgentConfig };
                     }
                     return { ...prev, agentConfigs: updatedAgentConfigs };
                   })
@@ -237,12 +430,14 @@ export function ConfigurationWizard() {
         {currentStep === WizardStep.Experiment && (
           <ExperimentConfigForm
             config={currentConfiguration.experimentSettings}
-            onConfigChange={(newSettings) =>
+            onConfigChange={(newSettings) => {
+              // Sanitize the experiment settings before applying them
+              const sanitizedSettings = sanitizeExternalData(newSettings);
               setCurrentConfiguration((prev) => ({
                 ...prev,
-                experimentSettings: { ...newSettings, outputConfig: newSettings.outputConfig || {} }, // Ensure outputConfig is not undefined
-              }))
-            }
+                experimentSettings: { ...sanitizedSettings, outputConfig: sanitizedSettings.outputConfig || {} }, // Ensure outputConfig is not undefined
+              }));
+            }}
           />
         )}
 
@@ -261,7 +456,9 @@ export function ConfigurationWizard() {
               type="button"
               className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
               onClick={() => {
-                localStorage.setItem('fbaBenchConfiguration', JSON.stringify(currentConfiguration));
+                // Sanitize configuration before saving
+                const sanitizedConfig = sanitizeExternalData(currentConfiguration);
+                localStorage.setItem('fbaBenchConfiguration', JSON.stringify(sanitizedConfig));
                 alert('Configuration saved to local storage!');
               }}
             >
@@ -275,7 +472,9 @@ export function ConfigurationWizard() {
                 if (savedConfig) {
                   try {
                     const parsedConfig: Configuration = JSON.parse(savedConfig);
-                    setCurrentConfiguration(parsedConfig);
+                    // Sanitize configuration after loading
+                    const sanitizedConfig = sanitizeExternalData(parsedConfig);
+                    setCurrentConfiguration(sanitizedConfig);
                     alert('Configuration loaded from local storage!');
                     setCurrentStep(WizardStep.SimulationType); // Reset to first step after loading
                   } catch (e) {
@@ -295,21 +494,31 @@ export function ConfigurationWizard() {
               onClick={() => {
                 const templateName = prompt("Enter a name for your template:");
                 if (templateName) {
+                  // Sanitize user input for template name
+                  const sanitizedName = sanitizeUserInput(templateName);
+                  if (!sanitizedName || sanitizedName.trim() === '') {
+                    alert("Template name cannot be empty or contain invalid characters.");
+                    return;
+                  }
+                  
                   if (!currentConfiguration.simulationSettings.simulationName || currentConfiguration.agentConfigs.length === 0) {
                     alert("Cannot save as template: Please provide a simulation name and at least one agent configuration.");
                     return;
                   }
+                  
+                  // Sanitize configuration before saving as template
+                  const sanitizedConfig = sanitizeExternalData(currentConfiguration);
                   const newTemplate: Template = {
                     id: `custom-${new Date().getTime()}`,
-                    name: templateName,
-                    description: `User-saved template: ${templateName}`,
+                    name: sanitizedName,
+                    description: `User-saved template: ${sanitizedName}`,
                     useCase: 'Custom saved configuration',
-                    configuration: currentConfiguration,
+                    configuration: sanitizedConfig,
                   };
                   const userTemplates: Template[] = JSON.parse(localStorage.getItem('fbaBenchUserTemplates') || '[]');
                   userTemplates.push(newTemplate);
                   localStorage.setItem('fbaBenchUserTemplates', JSON.stringify(userTemplates));
-                  alert(`Template '${templateName}' saved locally.`);
+                  alert(`Template '${sanitizedName}' saved locally.`);
                 }
               }}
             >

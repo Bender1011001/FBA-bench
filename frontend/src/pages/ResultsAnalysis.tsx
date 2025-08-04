@@ -59,22 +59,25 @@ const ResultsAnalysis: React.FC = () => {
       </section>
 
       {/* Statistical Summary Tables */}
-      <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8"> {/* Adjusted grid for more widgets */}
-        <h2 className="text-2xl font-semibold mb-4 text-gray-700 col-span-full">Statistical Summary</h2>
-        <MetricWidget metric={{ label: "Total Revenue", value: resultsData.aggregatedMetrics.totalRevenue || 0, formatType: "currency" }} />
-        <MetricWidget metric={{ label: "Total Profit", value: resultsData.aggregatedMetrics.totalProfit || 0, formatType: "currency" }} />
-        <MetricWidget metric={{ label: "Experiment Duration", value: resultsData.aggregatedMetrics.experimentDuration || 'N/A', unit: 'ticks' }} />
-        <MetricWidget metric={{ label: "Top Agent", value: resultsData.aggregatedMetrics.topPerformingAgent || 'N/A' }} />
-        {/* Add more summary metrics here */}
-        <div className="lg:col-span-2"> {/* Make SummaryWidget span 2 columns on large screens */}
-          <SummaryWidget title="Experiment Highlights" content="Best run achieved max profit with Agent X. Overall profit increased by 15%." />
+      <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8 overflow-x-auto"> {/* Adjusted grid for more widgets */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 min-w-max">
+          <h2 className="text-2xl font-semibold mb-4 text-gray-700 col-span-full">Statistical Summary</h2>
+          <MetricWidget metric={{ label: "Total Revenue", value: resultsData.aggregatedMetrics.totalRevenue || 0, formatType: "currency" }} />
+          <MetricWidget metric={{ label: "Total Profit", value: resultsData.aggregatedMetrics.totalProfit || 0, formatType: "currency" }} />
+          <MetricWidget metric={{ label: "Experiment Duration", value: resultsData.aggregatedMetrics.experimentDuration || 'N/A', unit: 'ticks' }} />
+          <MetricWidget metric={{ label: "Top Agent", value: resultsData.aggregatedMetrics.topPerformingAgent || 'N/A' }} />
+          {/* Add more summary metrics here */}
+          <div className="lg:col-span-2"> {/* Make SummaryWidget span 2 columns on large screens */}
+            <SummaryWidget title="Experiment Highlights" content="Best run achieved max profit with Agent X. Overall profit increased by 15%." />
+          </div>
         </div>
       </section>
 
       {/* Financial Performance Charts */}
       <section className="mb-8">
         <h2 className="text-2xl font-semibold mb-4 text-gray-700">Financial Performance</h2>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 overflow-x-auto">
+          <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 min-w-max">
           <FinancialChart
             data={resultsData.timeSeriesData}
             config={{ chartType: 'line', dataSource: 'timeSeriesData', metrics: ['revenue', 'profit'], title: 'Revenue & Profit Over Time' }}
@@ -83,13 +86,15 @@ const ResultsAnalysis: React.FC = () => {
             data={resultsData.timeSeriesData}
             config={{ chartType: 'area', dataSource: 'timeSeriesData', metrics: ['costs'], title: 'Cumulative Costs' }}
           />
+          </div>
         </div>
       </section>
 
       {/* Agent Performance Comparison */}
       <section className="mb-8">
         <h2 className="text-2xl font-semibold mb-4 text-gray-700">Agent Performance Comparison</h2>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 overflow-x-auto">
+          <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 min-w-max">
           <AgentComparisonChart
             data={resultsData.agentPerformance}
             config={{ chartType: 'bar', dataSource: 'agentPerformance', metrics: ['profit'], groupBy: 'agentId', title: 'Agent Profit Ranking' }}
@@ -98,6 +103,7 @@ const ResultsAnalysis: React.FC = () => {
             data={resultsData.agentPerformance}
             config={{ chartType: 'scatter', dataSource: 'agentPerformance', metrics: ['decisionsMade', 'accuracy'], title: 'Agent Decision Accuracy vs. Decisions Made' }}
           />
+          </div>
         </div>
       </section>
 
