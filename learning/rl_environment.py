@@ -2,6 +2,7 @@ import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
 from typing import Dict, Any, Tuple, List
+from dataclasses import dataclass
 
 # Placeholder for FBA-Bench simulation interface
 # In a real scenario, this would import the actual simulation components
@@ -228,3 +229,18 @@ class FBABenchRLEnvironment(gym.Env):
     def close(self):
         """Cleans up resources."""
         print("RL Environment closed.")
+
+
+@dataclass
+class RLConfig:
+    """Configuration for reinforcement learning environment."""
+    learning_rate: float = 0.001
+    discount_factor: float = 0.99
+    epsilon_start: float = 1.0
+    epsilon_end: float = 0.01
+    epsilon_decay: float = 0.995
+    batch_size: int = 32
+    memory_size: int = 10000
+    target_update_freq: int = 100
+    episode_steps: int = 1000
+    reward_objective: str = "profit_maximization"

@@ -1038,3 +1038,6 @@ class CustomerServiceSkill(BaseSkill):
             avg_satisfaction = (prev_avg * 0.9) + (satisfaction_score * 0.1)
         
         logger.debug(f"Tracked satisfaction: {satisfaction_score:.2f}, running average: {avg_satisfaction:.2f}")
+
+# Alias for backward compatibility
+CustomerService = CustomerServiceSkill

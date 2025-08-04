@@ -25,7 +25,7 @@ from services.sales_service import SalesService
 from agents.advanced_agent import AdvancedAgent, AgentConfig
 
 
-class TestMultiAgentLoop:
+class MultiAgentLoopTest:
     """Test suite for multi-agent command-arbitration-event loop."""
     
     def __init__(self):
@@ -360,7 +360,7 @@ async def main():
     print("=" * 60)
     print()
     
-    test_suite = TestMultiAgentLoop()
+    test_suite = MultiAgentLoopTest()
     
     try:
         await test_suite.setup()

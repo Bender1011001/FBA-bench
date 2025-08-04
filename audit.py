@@ -32,6 +32,7 @@ import json
 import os
 import subprocess
 import glob
+import logging
 from pathlib import Path
 from money import Money
 from ledger_utils import (
@@ -42,6 +43,8 @@ from ledger_utils import (
     hash_rng_state,
     hash_inventory_state
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -246,9 +249,10 @@ def _generate_config_hash(sim=None) -> str:
                     with open(config_file, 'r') as f:
                         file_config = json.load(f)
                     config_data[config_file] = file_config
-        except (json.JSONDecodeError, IOError, ImportError, yaml.YAMLError):
+        except (json.JSONDecodeError, IOError, ImportError, yaml.YAMLError) as e:
             # ImportError for yaml if not installed
-            pass
+            logger.warning(f"Failed to load config file {config_file}: {e}")
+            # Continue with other config files
     
     # If no configuration found, create a minimal reproducible hash
     if not config_data:
@@ -283,8 +287,8 @@ def _hash_working_tree_changes() -> str:
         if result.returncode == 0:
             diff_content = result.stdout
             return hashlib.sha256(diff_content.encode()).hexdigest()[:16]  # Truncate for brevity
-    except (subprocess.SubprocessError, FileNotFoundError, subprocess.TimeoutExpired):
-        pass
+    except (subprocess.SubprocessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
+        logger.warning(f"Failed to get git diff for working tree changes: {e}")
     return "no_diff_hash"
 
 

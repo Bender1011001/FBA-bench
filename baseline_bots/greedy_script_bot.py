@@ -2,6 +2,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Dict, Any, Optional
+from decimal import Decimal
 
 from money import Money
 from models.product import Product
@@ -53,16 +54,17 @@ class GreedyScriptBot:
 
         for product in state.products:
             # Price matching strategy
-            if product.competitor_prices: # Assuming product.competitor_prices is a list of Money objects
+            competitor_prices = product.metadata.get("competitor_prices", []) if product.metadata else []
+            if competitor_prices: # Get competitor_prices from metadata
                 # Find the minimum competitor price
-                lowest_price = min(price for _, price in product.competitor_prices)
+                lowest_price = min(price for _, price in competitor_prices)
                 
                 # Set price 1% below lowest competitor
-                new_price = lowest_price * 0.99
+                new_price = lowest_price * Decimal('0.99')
                 
                 # Ensure price is not set below cost basis (simple rule to prevent losses)
                 if new_price < product.cost:
-                    new_price = product.cost * 1.05 # Small markup if going below cost
+                    new_price = product.cost * Decimal('1.05') # Small markup if going below cost
                     
                 # Only change price if it's significantly different to avoid excessive churn
                 if abs(new_price.to_float() - product.price.to_float()) / product.price.to_float() > 0.001:

@@ -8,6 +8,7 @@ import asyncio
 import uuid
 import sys
 import os
+import pytest
 from datetime import datetime
 
 # Add current directory to path
@@ -52,6 +53,7 @@ class SimpleAgent:
         return command
 
 
+@pytest.mark.asyncio
 async def test_multiagent_core():
     """Test the core multi-agent command-arbitration-event loop."""
     print("🧪 FBA-Bench v3 Phase 5: Core Multi-Agent Loop Test")

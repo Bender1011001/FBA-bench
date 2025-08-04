@@ -952,3 +952,7 @@ class MarketingManagerSkill(BaseSkill):
             }
         
         return performance_analysis
+
+
+# Alias for backward compatibility
+MarketingManager = MarketingManagerSkill

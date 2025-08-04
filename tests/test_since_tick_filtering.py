@@ -4,6 +4,7 @@ Test script to verify since_tick filtering functionality works correctly.
 
 import asyncio
 import sys
+import pytest
 from datetime import datetime, timezone
 from services.dashboard_api_service import DashboardAPIService
 from event_bus import AsyncioQueueBackend, EventBus
@@ -11,6 +12,7 @@ from events import TickEvent, SaleOccurred, SetPriceCommand
 from money import Money
 
 
+@pytest.mark.asyncio
 async def test_since_tick_filtering():
     """Test that since_tick filtering works correctly."""
     print("🧪 Testing since_tick filtering functionality...")

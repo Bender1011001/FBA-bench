@@ -25,7 +25,7 @@ import hashlib
 # Add project root to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from reproducibility.golden_master import GoldenMaster, SnapshotComparison
+from reproducibility.golden_master import GoldenMasterTester
 from reproducibility.llm_cache import LLMResponseCache
 from reproducibility.sim_seed import SimSeed
 from infrastructure.performance_monitor import PerformanceMonitor
@@ -193,7 +193,7 @@ class RegressionTestSuite:
             
             # Define golden master file path
             golden_master_file = os.path.join(self.golden_master_directory, "simulation_golden_master.json")
-            golden_master = GoldenMaster(golden_master_file)
+            golden_master = GoldenMasterTester(golden_master_file)
             
             # Step 1: Generate or load baseline
             baseline_data = None

@@ -34,7 +34,7 @@ class ReportFormat(Enum):
     PDF = "pdf"
 
 
-class TestStatus(Enum):
+class StatusTest(Enum):
     """Test execution status."""
     PASSED = "passed"
     FAILED = "failed"
@@ -43,7 +43,7 @@ class TestStatus(Enum):
 
 
 @dataclass
-class TestConfiguration:
+class ConfigurationTest:
     """Configuration for test execution and reporting."""
     # Test execution settings
     enable_integration_tests: bool = True
@@ -86,11 +86,11 @@ class TestConfiguration:
 
 
 @dataclass
-class TestSuiteResult:
+class SuiteResultTest:
     """Results from a single test suite."""
     suite_name: str
     category: str
-    status: TestStatus
+    status: StatusTest
     start_time: str
     end_time: str
     duration_seconds: float
@@ -109,8 +109,8 @@ class ComprehensiveTestReport:
     """Comprehensive test report combining all suite results."""
     report_id: str
     generation_time: str
-    configuration: TestConfiguration
-    overall_status: TestStatus
+    configuration: ConfigurationTest
+    overall_status: StatusTest
     total_duration_seconds: float
     
     # Aggregate statistics
@@ -123,7 +123,7 @@ class ComprehensiveTestReport:
     overall_success_rate: float
     
     # Suite results
-    suite_results: List[TestSuiteResult] = field(default_factory=list)
+    suite_results: List[SuiteResultTest] = field(default_factory=list)
     
     # Analysis
     performance_summary: Dict[str, Any] = field(default_factory=dict)
@@ -132,22 +132,22 @@ class ComprehensiveTestReport:
     recommendations: List[str] = field(default_factory=list)
 
 
-class TestConfigurationManager:
+class ConfigurationTestManager:
     """Manages test configuration and provides defaults."""
     
     def __init__(self, config_file: Optional[str] = None):
         self.config_file = config_file or "tests/config/test_config.yaml"
-        self.config: TestConfiguration = TestConfiguration()
+        self.config: ConfigurationTest = ConfigurationTest()
         
-    def load_configuration(self) -> TestConfiguration:
+    def load_configuration(self) -> ConfigurationTest:
         """Load configuration from file or return defaults."""
         if os.path.exists(self.config_file):
             try:
                 with open(self.config_file, 'r') as f:
                     config_data = yaml.safe_load(f)
                 
-                # Convert to TestConfiguration object
-                self.config = TestConfiguration(**config_data)
+                # Convert to ConfigurationTest object
+                self.config = ConfigurationTest(**config_data)
                 logger.info(f"Loaded test configuration from {self.config_file}")
                 
             except Exception as e:
@@ -158,7 +158,7 @@ class TestConfigurationManager:
             
         return self.config
     
-    def save_configuration(self, config: TestConfiguration) -> bool:
+    def save_configuration(self, config: ConfigurationTest) -> bool:
         """Save configuration to file."""
         try:
             os.makedirs(os.path.dirname(self.config_file), exist_ok=True)
@@ -173,7 +173,7 @@ class TestConfigurationManager:
             logger.error(f"Failed to save configuration: {e}")
             return False
     
-    def validate_configuration(self, config: TestConfiguration) -> List[str]:
+    def validate_configuration(self, config: ConfigurationTest) -> List[str]:
         """Validate configuration and return any issues."""
         issues = []
         
@@ -192,10 +192,10 @@ class TestConfigurationManager:
         return issues
 
 
-class TestReportGenerator:
+class ReportGeneratorTest:
     """Generates comprehensive test reports in multiple formats."""
     
-    def __init__(self, config: TestConfiguration):
+    def __init__(self, config: ConfigurationTest):
         self.config = config
         self.output_dir = Path(config.output_directory)
         self.templates_dir = Path(__file__).parent / "templates"
@@ -208,7 +208,7 @@ class TestReportGenerator:
     
     async def generate_comprehensive_report(
         self, 
-        suite_results: List[TestSuiteResult],
+        suite_results: List[SuiteResultTest],
         report_id: Optional[str] = None
     ) -> ComprehensiveTestReport:
         """Generate a comprehensive test report from all suite results."""
@@ -218,7 +218,7 @@ class TestReportGenerator:
         
         # Calculate aggregate statistics
         total_suites = len(suite_results)
-        passed_suites = sum(1 for r in suite_results if r.status == TestStatus.PASSED)
+        passed_suites = sum(1 for r in suite_results if r.status == StatusTest.PASSED)
         failed_suites = total_suites - passed_suites
         
         total_tests = sum(r.total_tests for r in suite_results)
@@ -226,7 +226,7 @@ class TestReportGenerator:
         total_failed = sum(r.failed_tests for r in suite_results)
         
         overall_success_rate = total_passed / total_tests if total_tests > 0 else 0
-        overall_status = TestStatus.PASSED if failed_suites == 0 else TestStatus.FAILED
+        overall_status = StatusTest.PASSED if failed_suites == 0 else StatusTest.FAILED
         
         total_duration = sum(r.duration_seconds for r in suite_results)
         
@@ -350,7 +350,7 @@ class TestReportGenerator:
 
 **Report ID:** {report.report_id}  
 **Generated:** {report.generation_time}  
-**Overall Status:** {'✅ PASSED' if report.overall_status == TestStatus.PASSED else '❌ FAILED'}
+**Overall Status:** {'✅ PASSED' if report.overall_status == StatusTest.PASSED else '❌ FAILED'}
 
 ## Executive Summary
 
@@ -371,7 +371,7 @@ class TestReportGenerator:
         md_content += "\n## Test Suite Results\n\n"
         
         for suite in report.suite_results:
-            status_icon = '✅' if suite.status == TestStatus.PASSED else '❌'
+            status_icon = '✅' if suite.status == StatusTest.PASSED else '❌'
             md_content += f"### {status_icon} {suite.suite_name}\n"
             md_content += f"- **Category:** {suite.category}\n"
             md_content += f"- **Duration:** {suite.duration_seconds:.2f}s\n"
@@ -433,7 +433,7 @@ class TestReportGenerator:
         
         return file_path
     
-    async def _analyze_performance(self, suite_results: List[TestSuiteResult]) -> Dict[str, Any]:
+    async def _analyze_performance(self, suite_results: List[SuiteResultTest]) -> Dict[str, Any]:
         """Analyze performance metrics across all suites."""
         performance_suites = [s for s in suite_results if s.performance_metrics]
         
@@ -463,14 +463,14 @@ class TestReportGenerator:
             "performance_score": sum(s.success_rate for s in performance_suites) / len(performance_suites)
         }
     
-    async def _analyze_regressions(self, suite_results: List[TestSuiteResult]) -> Dict[str, Any]:
+    async def _analyze_regressions(self, suite_results: List[SuiteResultTest]) -> Dict[str, Any]:
         """Analyze for potential regressions."""
         regression_suites = [s for s in suite_results if "regression" in s.category.lower()]
         
         if not regression_suites:
             return {"analysis": "No regression test data available"}
         
-        regressions_detected = sum(1 for s in regression_suites if s.status == TestStatus.FAILED)
+        regressions_detected = sum(1 for s in regression_suites if s.status == StatusTest.FAILED)
         
         return {
             "regression_suites_run": len(regression_suites),
@@ -479,7 +479,7 @@ class TestReportGenerator:
             "regression_rate": regressions_detected / len(regression_suites) if regression_suites else 0
         }
     
-    async def _calculate_quality_metrics(self, suite_results: List[TestSuiteResult]) -> Dict[str, float]:
+    async def _calculate_quality_metrics(self, suite_results: List[SuiteResultTest]) -> Dict[str, float]:
         """Calculate overall quality metrics."""
         if not suite_results:
             return {}
@@ -489,7 +489,7 @@ class TestReportGenerator:
         
         return {
             "overall_pass_rate": passed_tests / total_tests if total_tests > 0 else 0,
-            "suite_completion_rate": sum(1 for s in suite_results if s.status == TestStatus.PASSED) / len(suite_results),
+            "suite_completion_rate": sum(1 for s in suite_results if s.status == StatusTest.PASSED) / len(suite_results),
             "average_suite_duration": sum(s.duration_seconds for s in suite_results) / len(suite_results),
             "test_coverage_score": min(1.0, len(suite_results) / 8),  # Assuming 8 expected categories
             "reliability_score": passed_tests / total_tests if total_tests > 0 else 0
@@ -497,7 +497,7 @@ class TestReportGenerator:
     
     async def _generate_recommendations(
         self, 
-        suite_results: List[TestSuiteResult], 
+        suite_results: List[SuiteResultTest], 
         quality_metrics: Dict[str, float]
     ) -> List[str]:
         """Generate actionable recommendations based on test results."""
@@ -508,7 +508,7 @@ class TestReportGenerator:
             recommendations.append("Overall test pass rate is below 90%. Review failing tests and address root causes.")
         
         # Check for failed suites
-        failed_suites = [s for s in suite_results if s.status == TestStatus.FAILED]
+        failed_suites = [s for s in suite_results if s.status == StatusTest.FAILED]
         if failed_suites:
             recommendations.append(f"{len(failed_suites)} test suite(s) failed. Prioritize fixing: {', '.join(s.suite_name for s in failed_suites[:3])}")
         
@@ -522,7 +522,7 @@ class TestReportGenerator:
             recommendations.append("Consider adding more test categories to improve coverage completeness.")
         
         # Check for regressions
-        regression_suites = [s for s in suite_results if "regression" in s.category.lower() and s.status == TestStatus.FAILED]
+        regression_suites = [s for s in suite_results if "regression" in s.category.lower() and s.status == StatusTest.FAILED]
         if regression_suites:
             recommendations.append("Regression tests failed. Review recent changes and implement fixes before deployment.")
         
@@ -614,7 +614,7 @@ class TestReportGenerator:
     
     async def _generate_simple_html(self, report: ComprehensiveTestReport) -> str:
         """Generate simple HTML report as fallback."""
-        status_color = "green" if report.overall_status == TestStatus.PASSED else "red"
+        status_color = "green" if report.overall_status == StatusTest.PASSED else "red"
         
         html = f"""
 <!DOCTYPE html>
@@ -634,7 +634,7 @@ class TestReportGenerator:
 """
         
         for suite in report.suite_results:
-            suite_color = "green" if suite.status == TestStatus.PASSED else "red"
+            suite_color = "green" if suite.status == StatusTest.PASSED else "red"
             html += f"""
     <div style="margin: 10px 0; padding: 10px; border: 1px solid #ddd;">
         <h3 style="color: {suite_color};">{suite.suite_name}</h3>
@@ -656,15 +656,15 @@ async def main():
     )
     
     # Example usage of the framework
-    config_manager = TestConfigurationManager()
+    config_manager = ConfigurationTestManager()
     config = config_manager.load_configuration()
     
     # Example test results (normally would come from actual test execution)
     sample_results = [
-        TestSuiteResult(
+        SuiteResultTest(
             suite_name="Integration Tests",
             category="integration",
-            status=TestStatus.PASSED,
+            status=StatusTest.PASSED,
             start_time="2024-01-01T10:00:00",
             end_time="2024-01-01T10:15:00",
             duration_seconds=900,
@@ -675,10 +675,10 @@ async def main():
             success_rate=1.0,
             performance_metrics={"average_response_time": 120.5}
         ),
-        TestSuiteResult(
+        SuiteResultTest(
             suite_name="Performance Tests",
             category="performance",
-            status=TestStatus.FAILED,
+            status=StatusTest.FAILED,
             start_time="2024-01-01T10:15:00",
             end_time="2024-01-01T10:45:00",
             duration_seconds=1800,
@@ -692,7 +692,7 @@ async def main():
     ]
     
     # Generate comprehensive report
-    report_generator = TestReportGenerator(config)
+    report_generator = ReportGeneratorTest(config)
     report = await report_generator.generate_comprehensive_report(sample_results)
     
     # Save report in all configured formats

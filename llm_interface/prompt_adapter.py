@@ -103,9 +103,9 @@ class PromptAdapter:
         all_products = self.world_store.get_all_product_states()
         for asin, product in all_products.items():
             portfolio[asin] = {
-                "current_price": product.price.amount, # Convert Money to float
+                "current_price": product.price.to_float(), # Convert Money to float
                 "inventory": product.inventory_quantity,
-                "cost_basis": product.cost_basis.amount, # Convert Money to float
+                "cost_basis": product.cost_basis.to_float(), # Convert Money to float
                 # Add sales velocity, competitor prices etc. if WorldStore tracks or if derived from recent events
                 # For now, keeping it minimal based on ProductState
             }

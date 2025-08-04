@@ -645,6 +645,32 @@ class LLMResponseCache:
         return self
     
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit."""
-        # Any cleanup if needed
-        pass
+        """Context manager exit with proper cleanup."""
+        try:
+            # Clear in-memory cache
+            with self._lock:
+                if self._memory_cache:
+                    cache_size = len(self._memory_cache)
+                    self._memory_cache.clear()
+                    self._access_order.clear()
+                    logger.debug(f"Cleared in-memory cache with {cache_size} entries")
+            
+            # Note: SQLite connections are managed by the _db_connection context manager
+            # and should be automatically closed. No additional cleanup needed there.
+            
+            # Log final statistics if there was activity
+            if self._stats.total_requests > 0:
+                logger.info(f"LLM cache session ended. Total requests: {self._stats.total_requests}, "
+                           f"Cache hits: {self._stats.cache_hits}, "
+                           f"Cache misses: {self._stats.cache_misses}, "
+                           f"Hit ratio: {self._stats.hit_ratio:.2%}")
+            
+            logger.debug("LLM cache cleanup completed successfully")
+            
+        except Exception as e:
+            logger.error(f"Error during LLM cache cleanup: {e}")
+            # Don't re-raise to avoid masking the original exception if one occurred
+
+
+# Alias for backward compatibility
+LLMPredictionCache = LLMResponseCache

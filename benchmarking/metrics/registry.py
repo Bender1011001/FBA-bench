@@ -632,4 +632,4 @@ class MetricRegistry:
 
 
 # Global registry instance
-registry = MetricRegistry()
+metrics_registry = MetricRegistry()

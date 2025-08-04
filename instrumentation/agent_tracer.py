@@ -19,17 +19,27 @@ class AgentTracer:
         span_name = f"agent_turn_{agent_id}_tick_{tick}"
         parent_span = trace.get_current_span()
         
-        span = self.tracer.start_as_current_span(
+        # Create a span context manager with the attributes
+        context_manager = self.tracer.start_as_current_span(
             span_name,
             attributes={
                 "agent.id": agent_id,
                 "simulation.tick": tick,
                 "agent.type": agent_type,
-                "parent_span_id": str(parent_span.context.span_id) if parent_span and parent_span.context else "N/A"
+                "parent_span_id": str(parent_span._context.span_id) if parent_span and hasattr(parent_span, '_context') else "N/A"
             }
         )
-        span.add_event("Agent turn started")
-        return _SpanContextManager(span)
+        
+        # Get the actual span from the context manager
+        span = context_manager.__enter__() if hasattr(context_manager, '__enter__') else None
+        if span:
+            try:
+                span.add_event("Agent turn started")
+            except AttributeError:
+                # If span doesn't have add_event method, just continue
+                pass
+        
+        return _SpanContextManager(span or context_manager)
 
     def trace_observe_phase(self, current_tick: int, event_count: int, observed_events_summary: Optional[str] = None):
         """

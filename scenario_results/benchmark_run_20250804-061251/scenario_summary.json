@@ -1,0 +1,94 @@
+[
+  {
+    "scenario_name": "Test Tier 0 Baseline",
+    "tier": 0,
+    "success_status": "success",
+    "profit_target": 1500,
+    "simulation_duration": 5,
+    "cli_run_type": "scenario_run",
+    "agent_name": "MockAgent"
+  },
+  {
+    "scenario_name": "Test Tier 1 Moderate",
+    "tier": 1,
+    "success_status": "fail",
+    "profit_target": 3000,
+    "simulation_duration": 10,
+    "cli_run_type": "scenario_run",
+    "agent_name": "MockAgent"
+  },
+  {
+    "scenario_name": "International Expansion Dummy",
+    "tier": 3,
+    "success_status": "fail",
+    "profit_target": 5000,
+    "simulation_duration": 15,
+    "cli_run_type": "scenario_run",
+    "agent_name": "MockAgent"
+  },
+  {
+    "scenario_name": "Cooperative Joint Venture Dummy",
+    "tier": 2,
+    "success_status": "success",
+    "joint_profit_target": 12000,
+    "simulation_duration": 10,
+    "cli_run_type": "scenario_run",
+    "agent_name": "MockAgent"
+  },
+  {
+    "scenario_name": "boom_and_bust_cycle",
+    "agent_name": "MockAgent",
+    "success_status": "error",
+    "error_message": "",
+    "cli_run_type": "scenario_run"
+  },
+  {
+    "scenario_name": "high_sku_complexity",
+    "agent_name": "MockAgent",
+    "success_status": "error",
+    "error_message": "",
+    "cli_run_type": "scenario_run"
+  },
+  {
+    "scenario_name": "hyper_competitive_market",
+    "agent_name": "MockAgent",
+    "success_status": "error",
+    "error_message": "",
+    "cli_run_type": "scenario_run"
+  },
+  {
+    "scenario_name": "international_expansion",
+    "agent_name": "MockAgent",
+    "success_status": "error",
+    "error_message": "",
+    "cli_run_type": "scenario_run"
+  },
+  {
+    "scenario_name": "supply_chain_crisis",
+    "agent_name": "MockAgent",
+    "success_status": "error",
+    "error_message": "",
+    "cli_run_type": "scenario_run"
+  },
+  {
+    "scenario_name": "cooperative_joint_venture",
+    "agent_name": "MockAgent",
+    "success_status": "error",
+    "error_message": "",
+    "cli_run_type": "scenario_run"
+  },
+  {
+    "scenario_name": "marketplace_ecosystem",
+    "agent_name": "MockAgent",
+    "success_status": "error",
+    "error_message": "",
+    "cli_run_type": "scenario_run"
+  },
+  {
+    "scenario_name": "supplier_agent_negotiations",
+    "agent_name": "MockAgent",
+    "success_status": "error",
+    "error_message": "",
+    "cli_run_type": "scenario_run"
+  }
+]

@@ -5,6 +5,7 @@ Demonstrates the new agent capabilities beyond pricing decisions.
 
 import asyncio
 import logging
+import pytest
 from datetime import datetime
 from typing import Dict, Any
 
@@ -21,6 +22,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+@pytest.mark.asyncio
 async def test_multi_skill_agent():
     """Test the enhanced AdvancedAgent with multi-skill capabilities."""
     
@@ -39,6 +41,7 @@ async def test_multi_skill_agent():
     
     # Initialize event bus and agent
     event_bus = get_event_bus()
+    await event_bus.start()
     agent = AdvancedAgent(agent_config, event_bus)
     
     # Start the agent
@@ -50,7 +53,8 @@ async def test_multi_skill_agent():
     tick_event = TickEvent(
         event_id="tick_001",
         timestamp=datetime.now(),
-        tick_number=1
+        tick_number=1,
+        simulation_time=datetime.now()
     )
     await agent.handle_tick_event(tick_event)
     
@@ -61,8 +65,10 @@ async def test_multi_skill_agent():
         timestamp=datetime.now(),
         asin="B123TEST",
         current_level=15,
-        threshold=20,
-        supplier_recommendations=["supplier_A", "supplier_B"]
+        reorder_point=20,
+        days_remaining=5.0,
+        urgency_level="medium",
+        recommended_order_quantity=10
     )
     await event_bus.publish(inventory_event)
     
@@ -74,11 +80,14 @@ async def test_multi_skill_agent():
     customer_event = CustomerMessageReceived(
         event_id="cust_001",
         timestamp=datetime.now(),
-        message_id="msg_123",
         customer_id="customer_456",
+        message_type="complaint",
         content="I'm having issues with my recent order. The product arrived damaged.",
-        channel="email",
-        priority="high"
+        sentiment_score=-0.5,
+        priority_level="high",
+        related_asin="B123TEST",
+        response_required=True,
+        escalation_needed=False
     )
     await event_bus.publish(customer_event)
     
@@ -91,13 +100,15 @@ async def test_multi_skill_agent():
         event_id="market_001",
         timestamp=datetime.now(),
         trend_type="pricing_pressure",
-        trend_data={
+        trend_direction="down",
+        magnitude=0.15,
+        affected_products=["B123TEST"],
+        confidence_level=0.85,
+        duration_estimate="1_week",
+        market_data={
             "category": "electronics",
-            "direction": "downward",
-            "magnitude": 0.15,
             "confidence": 0.85
-        },
-        affected_asins=["B123TEST"]
+        }
     )
     await event_bus.publish(market_event)
     
@@ -109,12 +120,14 @@ async def test_multi_skill_agent():
     profit_event = ProfitReport(
         event_id="profit_001",
         timestamp=datetime.now(),
-        agent_id="test_agent_001",
-        period="weekly",
-        revenue=5000.0,
-        costs=3500.0,
+        reporting_period="weekly",
+        total_revenue=Money(500000),  # $5000.00 in cents
+        total_expenses=Money(350000),  # $3500.00 in cents
+        net_profit=Money(150000),  # $1500.00 in cents
         profit_margin=0.30,
-        trend="increasing"
+        product_breakdown={"B123TEST": Money(150000)},
+        expense_breakdown={"inventory": Money(200000), "marketing": Money(150000)},
+        performance_vs_target={"revenue": 1.1, "profit": 1.2}
     )
     await event_bus.publish(profit_event)
     
@@ -128,7 +141,8 @@ async def test_multi_skill_agent():
         tick_event = TickEvent(
             event_id=f"tick_{i:03d}",
             timestamp=datetime.now(),
-            tick_number=i
+            tick_number=i,
+            simulation_time=datetime.now()
         )
         await agent.handle_tick_event(tick_event)
         await asyncio.sleep(0.1)

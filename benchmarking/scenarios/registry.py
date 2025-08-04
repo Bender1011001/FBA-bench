@@ -468,4 +468,4 @@ class ScenarioRegistry:
 
 
 # Global registry instance
-registry = ScenarioRegistry()
+scenario_registry = ScenarioRegistry()

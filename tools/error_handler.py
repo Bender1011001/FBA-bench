@@ -1,6 +1,7 @@
 import json
 import logging
 from typing import Dict, Any, List
+from collections import Counter
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -103,13 +104,74 @@ class AgentErrorHandler:
 
         return suggestions
 
+
+def handle_common_errors_for_agent(error: Exception, context: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Handle common errors for agents in a standardized way.
+    
+    Args:
+        error: The exception that occurred
+        context: Context information about the error
+        
+    Returns:
+        Dictionary with error handling information
+    """
+    error_handler = AgentErrorHandler()
+    
+    # Generate educational feedback
+    feedback = error_handler.generate_error_feedback(error, context)
+    
+    # Create standardized error response
+    error_response = {
+        "status": "error",
+        "error_type": type(error).__name__,
+        "message": str(error),
+        "feedback": feedback,
+        "context": context,
+        "suggestions": []
+    }
+    
+    # Add specific suggestions based on error type
+    if isinstance(error, (ValueError, TypeError)):
+        error_response["suggestions"].append("Check parameter types and values")
+    elif isinstance(error, KeyError):
+        error_response["suggestions"].append("Verify all required keys are present")
+    elif isinstance(error, AttributeError):
+        error_response["suggestions"].append("Check if the attribute exists on the object")
+    
+    return error_response
+
     def log_error_patterns(self, agent_id: str, error_history: List[Dict[str, Any]]):
         """
         Tracks recurring agent mistakes for later analysis and learning.
-        (Placeholder: In a real system, this would store to a database or a persistent log)
+        Aggregates error patterns and logs them for monitoring and improvement.
         """
+        if not error_history:
+            logging.info(f"Agent {agent_id} has no error history to analyze.")
+            return
+            
         logging.info(f"Agent {agent_id} error history snapshot: {len(error_history)} errors recorded.")
-        # For a more advanced system, this would involve aggregation, counting common errors, etc.
-        # Example: count_errors = Counter([e.get("error_type") for e in error_history])
-        # logging.info(f"Common errors for Agent {agent_id}: {count_errors}")
-        pass
+        
+        # Count common error types
+        error_types = [e.get("error_type", "unknown") for e in error_history if e.get("error_type")]
+        count_errors = Counter(error_types)
+        
+        # Log the most common errors
+        if count_errors:
+            logging.info(f"Most common errors for Agent {agent_id}:")
+            for error_type, count in count_errors.most_common(5):  # Log top 5 errors
+                logging.info(f"  - {error_type}: {count} occurrences")
+        
+        # Log error frequency over time if timestamps are available
+        timestamps = [e.get("timestamp") for e in error_history if e.get("timestamp")]
+        if timestamps:
+            logging.info(f"Error timestamps available for {len(timestamps)} errors. "
+                        "Consider implementing time-based analysis for error patterns.")
+        
+        # Note: In a production system, this data would be stored to a database
+        # for more sophisticated analysis and potential alerting.
+
+
+class BenchmarkError(Exception):
+    """Exception raised for benchmark-related errors."""
+    pass

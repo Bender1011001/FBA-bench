@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Any, Tuple, Set
 from dataclasses import dataclass, asdict
 from abc import ABC, abstractmethod
 
-from .memory_config import MemoryConfig, MemoryMode, DecayFunction
+from .memory_config import MemoryConfig, MemoryMode, DecayFunction, MemoryStoreType
 from events import BaseEvent
 
 
@@ -202,8 +202,8 @@ class DualMemoryManager:
         self.last_reflection_time: Optional[datetime] = None
         
         # Initialize memory stores
-        self.short_term_store = InMemoryStore()  # TODO: Make configurable
-        self.long_term_store = InMemoryStore()   # TODO: Make configurable
+        self.short_term_store = self._create_memory_store(self.config.short_term_store_type)
+        self.long_term_store = self._create_memory_store(self.config.long_term_store_type)
         
         # Memory access tracking
         self.retrieval_stats: Dict[str, int] = {}
@@ -350,6 +350,23 @@ class DualMemoryManager:
             self.last_reflection_time = None
         
         return True
+    
+    def _create_memory_store(self, store_type: MemoryStoreType) -> MemoryStore:
+        """
+        Factory method to create memory store instances based on configuration.
+        
+        Args:
+            store_type: Type of memory store to create
+            
+        Returns:
+            Instance of the requested memory store
+        """
+        if store_type == MemoryStoreType.IN_MEMORY:
+            return InMemoryStore()
+        else:
+            # Log a warning if an unsupported store type is requested
+            logger.warning(f"Unsupported memory store type: {store_type}. Falling back to InMemoryStore.")
+            return InMemoryStore()
     
     async def _calculate_importance_score(self, memory: MemoryEvent) -> float:
         """

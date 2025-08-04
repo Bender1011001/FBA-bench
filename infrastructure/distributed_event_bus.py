@@ -1,7 +1,10 @@
 import asyncio
 import logging
 import json
+import time
+from datetime import datetime
 from typing import Dict, List, Callable, Any, Optional
+from collections import defaultdict
 from abc import ABC, abstractmethod
 
 # Assuming BaseEvent is available from common event definitions
@@ -55,7 +58,10 @@ class MockRedisBroker(AbstractDistributedBroker):
         # Simulate async message delivery
         if topic in self._channels:
             for handler in self._channels[topic]:
-                asyncio.create_task(handler(message)) # Fire and forget for simplicity
+                if asyncio.iscoroutinefunction(handler):
+                    await handler(message) # Await async handler
+                else:
+                    handler(message) # Call sync handler directly
 
     async def subscribe(self, topic: str, handler: Callable):
         self._channels[topic].append(handler)

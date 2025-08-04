@@ -1,5 +1,6 @@
 import logging
 import time
+import os
 import psutil # For system resource monitoring
 from collections import defaultdict
 from typing import Dict, Any, Tuple, List
@@ -107,7 +108,7 @@ class ResourceManager:
         if self._spending_limit != float('inf') and self._total_api_cost > self._spending_limit:
             logger.error(f"WARNING: Spending limit of ${self._spending_limit:.2f} exceeded! Current cost: ${self._total_api_cost:.2f}. Consider stopping simulation.")
 
-        logger.info(f"Recorded LLM cost for {model_name}: ${cost:.6f} ({tokens} tokens). Total cost: ${self._total_api_cost:.2f}")
+        logger.info(f"Recorded LLM cost for {model_name}: ${cost:.6f} ({tokens} tokens). Total cost: ${self._total_api_cost:.6f}")
 
     def get_current_token_usage(self, key: str = "total") -> float:
         """Returns token usage for a specific agent/operation, or total."""

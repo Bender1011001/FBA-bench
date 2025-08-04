@@ -830,3 +830,6 @@ class GoldenMasterTester:
         except Exception as e:
             logger.error(f"Failed to delete golden master '{label}': {e}")
             return False
+
+# Alias for backward compatibility
+GoldenMaster = GoldenMasterTester

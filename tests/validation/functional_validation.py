@@ -27,10 +27,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from agents.hierarchical_planner import StrategicPlanner, TacticalPlanner, PlanStatus, PlanPriority, PlanType
 from agents.skill_coordinator import SkillCoordinator, CoordinationStrategy
 from agents.skill_modules.base_skill import BaseSkill, SkillAction, SkillContext, SkillOutcome, SkillStatus
-from agents.skill_modules.supply_manager import SupplyManager
-from agents.skill_modules.marketing_manager import MarketingManager
-from agents.skill_modules.customer_service import CustomerService
-from agents.skill_modules.financial_analyst import FinancialAnalyst
+from agents.skill_modules.supply_manager import SupplyManagerSkill
+from agents.skill_modules.marketing_manager import MarketingManagerSkill
+from agents.skill_modules.customer_service import CustomerServiceSkill
+from agents.skill_modules.financial_analyst import FinancialAnalystSkill
 from agents.cognitive_config import CognitiveConfig
 from agents.skill_config import SkillConfig
 from memory_experiments.reflection_module import ReflectionModule, StructuredReflectionLoop, ReflectionTrigger

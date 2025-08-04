@@ -580,3 +580,7 @@ class SupplyManagerSkill(BaseSkill):
         )
         
         return await self._prepare_negotiation_terms(supplier, mock_analysis)
+
+
+# Alias for backward compatibility
+SupplyManager = SupplyManagerSkill

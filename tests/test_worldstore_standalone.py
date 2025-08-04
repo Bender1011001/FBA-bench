@@ -8,6 +8,7 @@ import asyncio
 import uuid
 import sys
 import os
+import pytest
 from datetime import datetime
 
 # Add current directory to path
@@ -18,7 +19,7 @@ from events import SetPriceCommand, ProductPriceUpdated
 
 
 # Standalone WorldStore implementation for testing
-class TestWorldStore:
+class WorldStoreTest:
     """Simplified WorldStore for testing core multi-agent patterns."""
     
     def __init__(self, event_bus):
@@ -72,7 +73,7 @@ class TestWorldStore:
                 previous_price=previous_price,
                 agent_id=event.agent_id,
                 command_id=event.event_id,
-                arbitration_notes="Command accepted by TestWorldStore"
+                arbitration_notes="Command accepted by WorldStoreTest"
             )
             
             await self.event_bus.publish(update_event)
@@ -96,7 +97,7 @@ class TestWorldStore:
 
 
 # Standalone EventBus implementation for testing
-class TestEventBus:
+class EventBusTest:
     """Simplified EventBus for testing."""
     
     def __init__(self):
@@ -131,7 +132,7 @@ class TestEventBus:
                     print(f"Error in event callback: {e}")
 
 
-class TestAgent:
+class AgentTest:
     """Simplified agent for testing multi-agent patterns."""
     
     def __init__(self, agent_id: str, event_bus):
@@ -164,6 +165,7 @@ class TestAgent:
         return command
 
 
+@pytest.mark.asyncio
 async def test_multiagent_standalone():
     """Test the core multi-agent command-arbitration-event loop."""
     print("🧪 FBA-Bench v3 Phase 5: Standalone Multi-Agent Test")
@@ -172,14 +174,14 @@ async def test_multiagent_standalone():
     
     # Setup
     print("🚀 Setting up standalone test environment...")
-    event_bus = TestEventBus()
+    event_bus = EventBusTest()
     await event_bus.start()
     
-    world_store = TestWorldStore(event_bus)
+    world_store = WorldStoreTest(event_bus)
     await world_store.start()
     
-    agent1 = TestAgent("agent-001", event_bus)
-    agent2 = TestAgent("agent-002", event_bus)
+    agent1 = AgentTest("agent-001", event_bus)
+    agent2 = AgentTest("agent-002", event_bus)
     
     await agent1.start()
     await agent2.start()

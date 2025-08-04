@@ -1074,3 +1074,6 @@ class FinancialAnalystSkill(BaseSkill):
             "cashflow_projection": self.current_cash.to_float(),
             "confidence_level": 0.0
         }
+
+# Alias for backward compatibility
+FinancialAnalyst = FinancialAnalystSkill

@@ -40,6 +40,16 @@ class DecayFunction(Enum):
     STEP_FUNCTION = "step_function"
 
 
+class MemoryStoreType(Enum):
+    """Types of memory store implementations."""
+    IN_MEMORY = "in_memory"
+    # Add other store types here as they become available
+    # For example:
+    # SQLITE = "sqlite"
+    # REDIS = "redis"
+    # VECTOR_DB = "vector_db"
+
+
 @dataclass
 class MemoryConfig:
     """
@@ -92,6 +102,10 @@ class MemoryConfig:
     ])
     domain_specific_retention: Dict[str, int] = field(default_factory=dict)
     
+    # Memory Store Configuration
+    short_term_store_type: MemoryStoreType = MemoryStoreType.IN_MEMORY
+    long_term_store_type: MemoryStoreType = MemoryStoreType.IN_MEMORY
+    
     @classmethod
     def from_yaml(cls, filepath: str) -> 'MemoryConfig':
         """Load memory configuration from YAML file."""
@@ -127,7 +141,9 @@ class MemoryConfig:
             memory_budget_tokens=memory_settings.get('memory_budget_tokens', 2000),
             track_memory_usage=memory_settings.get('track_memory_usage', True),
             memory_domains=memory_settings.get('memory_domains', ['pricing', 'sales', 'competitors', 'strategy', 'operations', 'all']),
-            domain_specific_retention=memory_settings.get('domain_specific_retention', {})
+            domain_specific_retention=memory_settings.get('domain_specific_retention', {}),
+            short_term_store_type=MemoryStoreType(memory_settings.get('short_term_store_type', 'in_memory')),
+            long_term_store_type=MemoryStoreType(memory_settings.get('long_term_store_type', 'in_memory'))
         )
     
     def to_dict(self) -> Dict[str, Any]:
@@ -165,7 +181,9 @@ class MemoryConfig:
                 'memory_budget_tokens': self.memory_budget_tokens,
                 'track_memory_usage': self.track_memory_usage,
                 'memory_domains': self.memory_domains,
-                'domain_specific_retention': self.domain_specific_retention
+                'domain_specific_retention': self.domain_specific_retention,
+                'short_term_store_type': self.short_term_store_type.value,
+                'long_term_store_type': self.long_term_store_type.value
             }
         }
     

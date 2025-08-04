@@ -190,7 +190,7 @@ def test_minimal_run_snapshot(sim_factory, data_regression):
 
 @pytest.mark.golden
 @pytest.mark.parametrize("seed", [42]) # Use a fixed seed for predictable event streams
-async def test_golden_event_stream_matches_snapshot(sim_factory, data_regression):
+async def test_golden_event_stream_matches_snapshot(sim_factory, data_regression, seed):
     """
     Test that a deterministic run produces identical event streams (golden snapshot).
     This test captures the full sequence of events and compares it to a baseline.
@@ -218,7 +218,7 @@ async def test_golden_event_stream_matches_snapshot(sim_factory, data_regression
 # You might also add a CI-like test leveraging CIIntegration
 @pytest.mark.golden
 @pytest.mark.parametrize("seed", [42])
-async def test_ci_reproducibility_check(sim_factory):
+async def test_ci_reproducibility_check(sim_factory, seed):
     """
     Simulates a CI-like reproducibility check by comparing an event stream
     against a (mock) baseline snapshot.

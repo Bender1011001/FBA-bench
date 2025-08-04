@@ -16,7 +16,9 @@ def sample_product_state_basic():
         price=Money.from_dollars(20.0),
         base_demand=100.0,
         inventory_units=20,
-        competitor_prices=[("B0COMP01", Money.from_dollars(19.0)), ("B0COMP02", Money.from_dollars(21.0))] # Ensure this structure is compatible
+        metadata={
+            "competitor_prices": [("B0COMP01", Money.from_dollars(19.0)), ("B0COMP02", Money.from_dollars(21.0))]
+        }
     )
 
 @pytest.fixture
@@ -28,7 +30,9 @@ def sample_product_state_low_inventory():
         price=Money.from_dollars(12.0),
         base_demand=50.0,
         inventory_units=5, # Low inventory
-        competitor_prices=[("B0COMP03", Money.from_dollars(11.5))]
+        metadata={
+            "competitor_prices": [("B0COMP03", Money.from_dollars(11.5))]
+        }
     )
 
 @pytest.fixture
@@ -40,7 +44,9 @@ def sample_product_state_no_competitors():
         price=Money.from_dollars(70.0),
         base_demand=20.0,
         inventory_units=30,
-        competitor_prices=[] # No competitors
+        metadata={
+            "competitor_prices": [] # No competitors
+        }
     )
 
 @pytest.fixture
@@ -81,7 +87,9 @@ class TestGreedyScriptBot:
             price=Money.from_dollars(25.0),
             base_demand=10.0,
             inventory_units=10,
-            competitor_prices=[("B0COMP04", Money.from_dollars(19.0))] # Lowest comp price is 19.0
+            metadata={
+                "competitor_prices": [("B0COMP04", Money.from_dollars(19.0))] # Lowest comp price is 19.0
+            }
         )
         sim_state = SimulationState(
             products=[product_low_cost],
@@ -108,7 +116,9 @@ class TestGreedyScriptBot:
             price=Money.from_dollars(25.0),
             base_demand=10.0,
             inventory_units=10,
-            competitor_prices=[("B0COMP05", Money.from_dollars(19.0))] # Lowest comp is 19.0
+            metadata={
+                "competitor_prices": [("B0COMP05", Money.from_dollars(19.0))] # Lowest comp is 19.0
+            }
         )
         sim_state_very_low = SimulationState(
             products=[product_very_low_cost],
@@ -150,7 +160,9 @@ class TestGreedyScriptBot:
             price=Money.from_dollars(20.0),
             base_demand=100.0,
             inventory_units=20, # Sufficient inventory
-            competitor_prices=[("B0COMP01", Money.from_dollars(19.0))]
+            metadata={
+                "competitor_prices": [("B0COMP01", Money.from_dollars(19.0))]
+            }
         )
         sim_state_sufficient = SimulationState(
             products=[product_sufficient_inventory],

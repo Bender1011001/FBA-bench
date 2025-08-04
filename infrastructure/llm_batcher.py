@@ -123,6 +123,50 @@ class LLMBatcher:
             await asyncio.sleep(self.batch_timeout_ms / 1000.0 / 2) # Check more frequently than timeout
 
         logger.info("LLMBatching loop stopped.")
+    
+    async def _aggregate_and_process(self):
+        """Aggregates pending requests into batches and processes them."""
+        if not self._pending_requests:
+            return
+
+        current_time = time.time()
+        requests_to_batch = []
+        requests_to_remove_from_pending = []
+
+        # Collect requests that are ready to be batched (either by timeout or if we hit max size)
+        for req_id, req in list(self._pending_requests.items()): # copy to allow modification during iteration
+            # Always ensure we have enough space in the batch
+            if len(requests_to_batch) < self.max_batch_size:
+                # Check if request has been waiting long enough for timeout OR if we have max requests
+                if (current_time - req.timestamp) * 1000 >= self.batch_timeout_ms:
+                    requests_to_batch.append(req)
+                    requests_to_remove_from_pending.append(req_id)
+            elif len(requests_to_batch) >= self.max_batch_size:
+                # If we've hit max_batch_size, process what we have and then continue in next loop iteration
+                break
+
+        # If we have requests but they haven't timed out yet, process them anyway to avoid hanging
+        if not requests_to_batch and self._pending_requests:
+            requests_to_batch = list(self._pending_requests.values())
+            requests_to_remove_from_pending = list(self._pending_requests.keys())
+
+        if requests_to_batch:
+            # Remove batched requests from pending
+            for req_id in requests_to_remove_from_pending:
+                self._pending_requests.pop(req_id, None)
+
+            # Process the batch
+            processed_batch = self.optimize_batch_composition(requests_to_batch)
+            self._update_stats_from_batch(processed_batch)
+            await self.process_batch(processed_batch)
+            
+            # Update average batch size
+            if self.stats["total_batches_processed"] > 0:
+                self.stats["avg_batch_size"] = self.stats["total_requests_batched"] / self.stats["total_batches_processed"]
+            
+            # Update max batch latency
+            batch_latency = (time.time() - min(r.timestamp for r in processed_batch if r.timestamp is not None)) * 1000
+            self.stats["max_batch_latency_ms"] = max(self.stats["max_batch_latency_ms"], batch_latency)
 
     async def _aggregate_and_process(self):
         """Aggregates pending requests into batches and processes them."""
@@ -136,9 +180,11 @@ class LLMBatcher:
         # Collect requests that are ready to be batched (either by timeout or if we hit max size)
         for req_id, req in list(self._pending_requests.items()): # copy to allow modification during iteration
             # Always ensure we have enough space in the batch
-            if len(requests_to_batch) < self.max_batch_size and (current_time - req.timestamp) * 1000 >= self.batch_timeout_ms:
-                requests_to_batch.append(req)
-                requests_to_remove_from_pending.append(req_id)
+            if len(requests_to_batch) < self.max_batch_size:
+                # Check if request has been waiting long enough for timeout
+                if (current_time - req.timestamp) * 1000 >= self.batch_timeout_ms:
+                    requests_to_batch.append(req)
+                    requests_to_remove_from_pending.append(req_id)
             elif len(requests_to_batch) >= self.max_batch_size:
                 # If we've hit max_batch_size, process what we have and then continue in next loop iteration
                 break

@@ -85,7 +85,9 @@ except ImportError as e:
     print(f"x Import error: {e}")
     print(f"Details: {e.args[0]}") # Access the message directly from args
     print("This CLI requires FBA-Bench v3 components. Make sure you're running from the project root.")
-    sys.exit(1)
+    # Only exit if this script is being run directly, not when imported
+    if __name__ == "__main__":
+        sys.exit(1)
 
 logger = logging.getLogger(__name__)
 # Configure logging for CLI
@@ -158,7 +160,7 @@ class SimulationRunner:
     def set_learning_config(self, config: LearningConfig): # Reverted to public
         self.learning_config = config
 
-    def set_real_world_adapter(self, adapter: RealWorldAdapter): # Reverted to public
+    def set_real_world_adapter(self, adapter: "RealWorldAdapter"): # Reverted to public
         self.real_world_adapter = adapter
 
 
@@ -771,7 +773,7 @@ class ExperimentManager:
                 
         return learning_config
     
-    async def _train_agent_rl(self, agent_id: str, episodes: int, real_world_adapter: RealWorldAdapter, learning_manager: EpisodicLearningManager) -> None:
+    async def _train_agent_rl(self, agent_id: str, episodes: int, real_world_adapter: "RealWorldAdapter", learning_manager: "EpisodicLearningManager") -> None:
         """Train an agent using reinforcement learning."""
         logger.info(f"Starting RL training for agent '{agent_id}' over {episodes} episodes")
         

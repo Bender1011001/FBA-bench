@@ -2,6 +2,67 @@ import os
 import json
 from collections import defaultdict, deque
 from typing import Dict, Any, List
+from dataclasses import dataclass
+
+@dataclass
+class EpisodeData:
+    """Data structure for storing episode information."""
+    episode_id: str
+    agent_id: str
+    states: List[Dict[str, Any]]
+    actions: List[Dict[str, Any]]
+    rewards: List[float]
+    timestamp: str
+    metadata: Dict[str, Any]
+
+
+class ExperienceBuffer:
+    """
+    Buffer for storing and managing agent experiences.
+    
+    This class provides a way to store, retrieve, and manage experiences
+    for learning purposes.
+    """
+    
+    def __init__(self, max_size: int = 1000):
+        """Initialize the experience buffer with a maximum size."""
+        self.max_size = max_size
+        self.experiences: List[EpisodeData] = []
+    
+    def add_experience(self, experience: EpisodeData) -> None:
+        """Add an experience to the buffer."""
+        self.experiences.append(experience)
+        if len(self.experiences) > self.max_size:
+            self.experiences.pop(0)
+    
+    def get_experiences(self, agent_id: str = None, limit: int = -1) -> List[EpisodeData]:
+        """
+        Get experiences from the buffer.
+        
+        Args:
+            agent_id: Optional agent ID to filter experiences
+            limit: Maximum number of experiences to return (-1 for all)
+            
+        Returns:
+            List of experiences
+        """
+        experiences = self.experiences
+        if agent_id:
+            experiences = [exp for exp in experiences if exp.agent_id == agent_id]
+        
+        if limit > 0:
+            experiences = experiences[-limit:]
+            
+        return experiences
+    
+    def clear(self) -> None:
+        """Clear all experiences from the buffer."""
+        self.experiences.clear()
+    
+    def size(self) -> int:
+        """Get the current number of experiences in the buffer."""
+        return len(self.experiences)
+
 
 class EpisodicLearningManager:
     """

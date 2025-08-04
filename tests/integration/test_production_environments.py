@@ -556,7 +556,7 @@ class ProductionEnvironmentManager:
         for node in self.config["nodes"]:
             # Create a mock process for the node
             process = subprocess.Popen(
-                ["python", "-c", f"import time; print('Node {node[\"name\"]} running on {node[\"host\"]}:{node[\"port\"]}'); time.sleep(60)"],
+                ["python", "-c", f"import time; print('Node {node['name']} running on {node['host']}:{node['port']}'); time.sleep(60)"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE
             )

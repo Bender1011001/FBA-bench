@@ -7,6 +7,7 @@ import uuid
 from typing import Dict, List, Callable, Any, Optional, Type, Union, TYPE_CHECKING, Tuple
 from datetime import datetime
 from abc import ABC, abstractmethod
+from collections import defaultdict
 import zlib # For compression
 
 from events import BaseEvent, EVENT_TYPES # Ensure BaseEvent is imported for type hinting

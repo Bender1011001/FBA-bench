@@ -1,5 +1,12 @@
 from dataclasses import dataclass, field
 from typing import List
+from enum import Enum
+
+class LearningMode(Enum):
+    """Learning modes for the agent."""
+    REINFORCEMENT = "reinforcement"
+    SUPERVISED = "supervised"
+    IMITATION = "imitation"
 
 @dataclass
 class LearningConfig:

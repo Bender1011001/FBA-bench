@@ -6,6 +6,7 @@ This test isolates the persona logic without complex import dependencies.
 
 import asyncio
 import random
+import pytest
 from decimal import Decimal
 from typing import Dict, Any, Optional
 from dataclasses import dataclass
@@ -219,6 +220,7 @@ class SlowFollower(CompetitorPersona):
         )
 
 # Test functions
+@pytest.mark.asyncio
 async def test_irrational_slasher():
     """Test IrrationalSlasher persona behavior."""
     print("Testing IrrationalSlasher...")
@@ -268,6 +270,7 @@ async def test_irrational_slasher():
     
     print("IrrationalSlasher test completed!\n")
 
+@pytest.mark.asyncio
 async def test_slow_follower():
     """Test SlowFollower persona behavior."""
     print("Testing SlowFollower...")
@@ -323,6 +326,7 @@ async def test_slow_follower():
     print(f"SlowFollower acted {action_count} times in 14 ticks (expected < 6)")
     print("SlowFollower test completed!\n")
 
+@pytest.mark.asyncio
 async def test_persona_diversity():
     """Test that different personas behave differently."""
     print("Testing persona diversity...")
