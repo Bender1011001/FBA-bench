@@ -303,8 +303,19 @@ ehthumbs.db
 Thumbs.db
 
 # Project specific
+
+# Python virtual environments (local)
+.venv-*/
+.venv-1/
+
+# Data and outputs
 results/
-frontend_backup/
+artifacts/
+learning_data/
+reproducibility_output/
+scenario_results/
+
+# Temporary and backup files
 *.backup
 *.bak
 *.tmp
@@ -324,7 +335,20 @@ config.local.*
 secrets.*
 .secrets
 
-# Build artifacts
+# SSL/TLS private materials (never commit secrets)
+ssl/*.key
+ssl/*.pem
+ssl/*.crt
+ssl/*.p12
+ssl/*.cer
+
+# Build artifacts and frontend caches
 build/
 dist/
 out/
+.vite/
+frontend/.vite
+frontend/.cache
+
+# Legacy/local backups
+frontend_backup/
