@@ -10,23 +10,18 @@ reproducibility and enable golden snapshot testing. The audit system tracks:
 4. Per-tick state hashes - Ensure deterministic execution
 5. Financial statement integrity - Validate accounting identities
 
-REPRODUCIBILITY IMPROVEMENTS (v2024.1):
-- Replaced placeholder hash functions with real implementations
-- Config hash now extracts simulation parameters from sim object
-- Code hash attempts Git SHA first, falls back to file content hashing
-- Fee schedule hash comprehensively extracts fee engine configuration
-- All hashes are deterministic and detect configuration changes
+REPRODUCIBILITY IMPROVEMENTS (v2025.1):
+- External configuration discovery (env + config dirs) merged deterministically into config hash
+- Baseline hash validation against golden_masters/audit_baselines.json
+- Hash-based simulation cache (opt-in) with integrity validation
+- Hash rotation strategy via config/hash_rotation.json to preserve comparability across planned changes
 
-TODO ITEMS:
-- Add support for external configuration file discovery in _generate_config_hash()
-- Implement more sophisticated code change detection (e.g., semantic AST diffing)
-- Add hash validation against known baseline configurations
-- Consider adding hash-based simulation cache for faster repeated runs
-- Implement hash rotation strategy for long-term compatibility
+TODO ITEMS (remaining):
+- Implement semantic/AST-level code change detection for richer diffs
 """
 from dataclasses import dataclass, asdict
 from decimal import Decimal
-from typing import Dict, List, Tuple, Union, Optional
+from typing import Dict, List, Tuple, Union, Optional, Any
 import hashlib
 import json
 import os
@@ -85,53 +80,72 @@ class RunAudit:
 
 def run_and_audit(sim, days: int) -> RunAudit:
     """Runs the simulation and produces an immutable audit structure suitable for golden snapshots."""
+    # Precompute immutable signatures for baseline validation and optional caching
+    pre_config_hash = _generate_config_hash(sim)
+    pre_code_hash = _generate_code_hash()
+    pre_git_tree_hash = _generate_git_tree_hash()
+    pre_fee_schedule_hash = _generate_fee_schedule_hash(getattr(sim, "fees", None))
+
+    # Attempt deterministic cache read if enabled (opt-in)
+    cached = _maybe_load_cached_run(sim, days, pre_config_hash, pre_code_hash, pre_git_tree_hash, pre_fee_schedule_hash)
+    if cached is not None:
+        # Validate against baseline and return cached result if acceptable
+        violations = _validate_against_baseline(pre_config_hash, pre_code_hash, pre_git_tree_hash, pre_fee_schedule_hash)
+        merged_violations = list({*cached.violations, *violations})
+        if merged_violations != cached.violations:
+            cached = RunAudit(
+                seed=cached.seed,
+                days=cached.days,
+                config_hash=cached.config_hash,
+                code_hash=cached.code_hash,
+                git_tree_hash=cached.git_tree_hash,
+                fee_schedule_hash=cached.fee_schedule_hash,
+                initial_equity=cached.initial_equity,
+                ticks=cached.ticks,
+                final_balance_sheet=cached.final_balance_sheet,
+                final_income_statement=cached.final_income_statement,
+                final_ledger_hash=cached.final_ledger_hash,
+                violations=merged_violations
+            )
+        return cached
+
     # Store initial state
     initial_equity = _get_equity_from_ledger(sim.ledger)
     owner_contributions = Decimal("10000.00")  # Initial seed capital
     owner_distributions = Decimal("0.00")
-    
-    ticks = []
-    violations = []
-    
+
+    ticks: List[TickAudit] = []
+    violations: List[str] = []
+
     for day in range(days):
-        # Capture pre-tick state
         pre_tick_equity = _get_equity_from_ledger(sim.ledger)
-        
-        # Run the simulation tick
         sim.tick_day()
-        
-        # Capture post-tick state
+
         balance_sheet = balance_sheet_from_ledger(sim.ledger)
         trial_balance_result = trial_balance(sim.ledger)
-        
-        # Calculate metrics
+
         assets = sum(v for k, v in balance_sheet.items() if k in ["Cash", "Inventory"])
         liabilities = sum(v for k, v in balance_sheet.items() if k.startswith("Liability"))
-        
+
         debit_sum = trial_balance_result[0]
         credit_sum = trial_balance_result[1]
-        
-        # Calculate income statement metrics
+
         income_statement = income_statement_from_ledger(sim.ledger, 0, day + 1)
         net_income_to_date = income_statement.get("Net Income", Decimal("0"))
-        
-        # Calculate the correct closing equity by adding net income to the initial equity
+
         initial_equity_balance = balance_sheet.get("Equity", Decimal("0"))
         closing_equity = initial_equity_balance + net_income_to_date
-        
+
         equity_change_from_profit = closing_equity - pre_tick_equity
-        
-        # Get inventory state
+
         inventory_units = {}
         for sku in sim.products.keys():
             inventory_units[sku] = sim.inventory.quantity(sku)
-        
-        # Generate hashes
+
         inventory_hash = hash_inventory_state(sim.inventory)
         rng_state_hash = hash_rng_state(sim.rng)
         ledger_tick_hash = hash_ledger_slice(sim.ledger, day, day + 1)
-        
-        # Create tick audit
+
         tick_audit = TickAudit(
             day=day + 1,
             assets=assets,
@@ -148,33 +162,32 @@ def run_and_audit(sim, days: int) -> RunAudit:
             rng_state_hash=rng_state_hash,
             ledger_tick_hash=ledger_tick_hash
         )
-        
+
         ticks.append(tick_audit)
-        
-        # Check for violations
+
         if abs(debit_sum - credit_sum) > Decimal("0.01"):
             violations.append(f"Day {day + 1}: Trial balance violation - debits {debit_sum} != credits {credit_sum}")
-        
+
         if abs(assets - (liabilities + closing_equity)) > Decimal("0.01"):
             violations.append(f"Day {day + 1}: Accounting identity violation - A={assets} != L+E={liabilities + closing_equity}")
-    
-    # Generate final hashes and summaries
+
     final_balance_sheet = balance_sheet_from_ledger(sim.ledger)
     final_income_statement = income_statement_from_ledger(sim.ledger, 0, days)
     final_ledger_hash = hash_ledger_slice(sim.ledger, 0, days)
-    
-    # Generate configuration hashes
-    config_hash = _generate_config_hash(sim)
-    code_hash = _generate_code_hash()
-    git_tree_hash = _generate_git_tree_hash()
-    fee_schedule_hash = _generate_fee_schedule_hash(sim.fees)
-    
-    return RunAudit(
-        seed=sim.rng.getstate()[1][0],  # Extract seed from RNG state
+
+    config_hash = pre_config_hash
+    code_hash = pre_code_hash
+    git_tree_hash = pre_git_tree_hash
+    fee_schedule_hash = pre_fee_schedule_hash
+
+    violations.extend(_validate_against_baseline(config_hash, code_hash, git_tree_hash, fee_schedule_hash))
+
+    result = RunAudit(
+        seed=sim.rng.getstate()[1][0],
         days=days,
         config_hash=config_hash,
         code_hash=code_hash,
-        git_tree_hash=git_tree_hash,  # Set new field
+        git_tree_hash=git_tree_hash,
         fee_schedule_hash=fee_schedule_hash,
         initial_equity=initial_equity,
         ticks=ticks,
@@ -183,6 +196,10 @@ def run_and_audit(sim, days: int) -> RunAudit:
         final_ledger_hash=final_ledger_hash,
         violations=violations
     )
+
+    _maybe_write_cached_run(sim, result)
+
+    return result
 
 
 def _get_equity_from_ledger(ledger) -> Decimal:
@@ -197,25 +214,23 @@ def _get_equity_from_ledger(ledger) -> Decimal:
 
 def _generate_config_hash(sim=None) -> str:
     """
-    Generate hash of current configuration, including simulation parameters and environment variables.
-    
-    Args:
-        sim: Simulation object containing configuration (optional for backward compatibility)
-        
-    Returns:
-        SHA256 hash (first 16 characters) of configuration
+    Generate hash of current configuration, including simulation parameters, environment variables,
+    and discovered external config files from well-known locations.
+
+    Discovery order (merged deterministically):
+    1) Explicit env var FBA_CONFIG_PATH (file or directory; if dir, scan *.yaml|*.yml|*.json)
+    2) Local working dir files: config.json, simulation_config.json, fba_config.json, sweep.yaml
+    3) Config dirs: config/, configs/, config/environments/, configs/environments/ (scan recursively for *.yaml|*.yml|*.json)
     """
-    config_data = {}
-    
+    config_data: Dict[str, Any] = {}
+
     if sim is not None:
-        # Extract configuration from simulation object
         if hasattr(sim, 'fees') and hasattr(sim.fees, 'config'):
             config_data['fee_config'] = sim.fees.config
         elif hasattr(sim, 'fees') and hasattr(sim.fees, 'fee_rates'):
             config_data['fee_rates'] = sim.fees.fee_rates
-            
+
         if hasattr(sim, 'products'):
-            # Hash product catalog structure (not full product details)
             product_summary = {}
             for sku, product in sim.products.items():
                 product_summary[sku] = {
@@ -224,46 +239,23 @@ def _generate_config_hash(sim=None) -> str:
                     'dimensions': getattr(product, 'dimensions_inches', [0, 0, 0])
                 }
             config_data['products'] = product_summary
-            
+
         if hasattr(sim, 'config'):
             config_data['sim_config'] = sim.config
-    
-    # Include environment variables (filter for relevant ones if needed)
-    # For full reproducibility, include all environment variables.
-    # For practical purposes, you might want to filter to avoid sensitive info or highly volatile variables.
-    # Here, we include ALL env vars for maximum reproducibility.
+
     config_data['environment_variables'] = dict(os.environ)
 
-    # Try to load external config files
-    config_files = ['config.json', 'simulation_config.json', 'fba_config.json', 'sweep.yaml']
-    for config_file in config_files:
-        try:
-            if os.path.exists(config_file):
-                # Handle YAML files specifically
-                if config_file.endswith(('.yaml', '.yml')):
-                    import yaml
-                    with open(config_file, 'r') as f:
-                        file_config = yaml.safe_load(f)
-                    config_data[config_file] = file_config
-                else: # Assume JSON for others
-                    with open(config_file, 'r') as f:
-                        file_config = json.load(f)
-                    config_data[config_file] = file_config
-        except (json.JSONDecodeError, IOError, ImportError, yaml.YAMLError) as e:
-            # ImportError for yaml if not installed
-            logger.warning(f"Failed to load config file {config_file}: {e}")
-            # Continue with other config files
-    
-    # If no configuration found, create a minimal reproducible hash
+    discovered_configs = _discover_external_configs()
+    for key in sorted(discovered_configs.keys()):
+        config_data[key] = discovered_configs[key]
+
     if not config_data:
         config_data = {
             'version': 'fba_bench_v3',
             'timestamp': 'static_for_reproducibility',
             'note': 'No dynamic configuration or environment variables found - using static hash'
         }
-    
-    # Create deterministic hash
-    # Use default=str to handle non-serializable objects (like Decimal)
+
     config_json = json.dumps(config_data, sort_keys=True, default=str)
     return hashlib.sha256(config_json.encode()).hexdigest()[:16]
 
@@ -342,25 +334,25 @@ def _generate_file_tree_hash(base_path: Path = Path.cwd()) -> str:
 def _generate_git_tree_hash() -> str:
     """
     Generate a hash representing the current state of the Git repository.
-    This includes the commit hash and a hash of any uncommitted changes.
+    Includes the commit hash and, if present, a hash of uncommitted changes.
+    Applies hash rotation mapping if configured.
     """
     try:
-        # Get current commit hash
         commit_hash_res = subprocess.run(['git', 'rev-parse', 'HEAD'],
                                        capture_output=True, text=True, cwd=Path.cwd(), timeout=10)
         commit_hash = commit_hash_res.stdout.strip() if commit_hash_res.returncode == 0 else ""
 
-        # Check for uncommitted changes
         status_res = subprocess.run(['git', 'status', '--porcelain'],
                                     capture_output=True, text=True, cwd=Path.cwd(), timeout=10)
         if status_res.returncode == 0 and status_res.stdout.strip():
-            # If there are uncommitted changes, hash the diff
             diff_hash = _hash_working_tree_changes()
-            return f"{commit_hash}-dirty-{diff_hash}"
+            raw = f"{commit_hash}-dirty-{diff_hash}"
         else:
-            return commit_hash
+            raw = commit_hash
     except (subprocess.SubprocessError, FileNotFoundError, subprocess.TimeoutExpired):
-        return "no_git_hash" # Indicate Git is not available or command failed
+        raw = "no_git_hash"
+
+    return _apply_hash_rotation(raw)
 
 
 def _generate_fee_schedule_hash(fee_engine) -> str:
@@ -426,3 +418,286 @@ def _generate_fee_schedule_hash(fee_engine) -> str:
     # Create deterministic hash
     fee_json = json.dumps(fee_data, sort_keys=True, default=str)
     return hashlib.sha256(fee_json.encode()).hexdigest()[:16]
+# ---------------------------
+# Extended helpers: config discovery, baselines, cache, rotation
+# ---------------------------
+
+def _discover_external_configs() -> Dict[str, Any]:
+    """
+    Discover external configuration files from:
+    - Env var FBA_CONFIG_PATH (file or directory)
+    - Local files: config.json, simulation_config.json, fba_config.json, sweep.yaml
+    - Directories: config/, configs/, config/environments/, configs/environments/
+    Returns a dict mapping "source_path" -> parsed content.
+    """
+    discovered: Dict[str, Any] = {}
+
+    def _load_file(path: Path) -> Optional[Any]:
+        try:
+            if path.suffix.lower() in (".yaml", ".yml"):
+                import yaml  # type: ignore
+                with open(path, "r", encoding="utf-8") as f:
+                    return yaml.safe_load(f)
+            elif path.suffix.lower() in (".json",):
+                with open(path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            else:
+                return None
+        except Exception as e:
+            logger.warning(f"Failed to load config file {path}: {e}")
+            return None
+
+    def _scan_dir(dir_path: Path) -> None:
+        if not dir_path.exists() or not dir_path.is_dir():
+            return
+        for root, _, files in os.walk(dir_path):
+            for fname in files:
+                p = Path(root) / fname
+                if p.suffix.lower() in (".yaml", ".yml", ".json"):
+                    content = _load_file(p)
+                    if content is not None:
+                        # Use POSIX style for consistency in hash order
+                        key = str(p.relative_to(Path.cwd()).as_posix()) if p.is_absolute() else str(p.as_posix())
+                        discovered[key] = content
+
+    # 1) Env var
+    env_path = os.getenv("FBA_CONFIG_PATH", "").strip()
+    if env_path:
+        p = Path(env_path)
+        if p.is_file():
+            content = _load_file(p)
+            if content is not None:
+                discovered[str(p)] = content
+        elif p.is_dir():
+            _scan_dir(p)
+
+    # 2) Local files
+    for local in ["config.json", "simulation_config.json", "fba_config.json", "sweep.yaml"]:
+        p = Path(local)
+        if p.exists() and p.is_file():
+            content = _load_file(p)
+            if content is not None:
+                discovered[str(p)] = content
+
+    # 3) Config dirs
+    for d in ["config", "configs", "config/environments", "configs/environments"]:
+        _scan_dir(Path(d))
+
+    return discovered
+
+
+def _apply_hash_rotation(hash_value: str) -> str:
+    """
+    Apply a rotation mapping if config/hash_rotation.json exists.
+    The mapping is { "old_hash": "new_hash", ... }.
+    """
+    try:
+        rotation_file = Path("config/hash_rotation.json")
+        if rotation_file.exists():
+            with open(rotation_file, "r", encoding="utf-8") as f:
+                mapping = json.load(f)
+            return mapping.get(hash_value, hash_value)
+    except Exception as e:
+        logger.warning(f"Hash rotation mapping load failed: {e}")
+    return hash_value
+
+
+def _validate_against_baseline(config_hash: str, code_hash: str, git_tree_hash: str, fee_hash: str) -> List[str]:
+    """
+    Compare current hashes against stored baselines in golden_masters/audit_baselines.json.
+    Returns a list of violation messages (empty if all match or no baseline file).
+    Supports hash rotation mapping.
+    """
+    violations: List[str] = []
+    baseline_file = Path("golden_masters/audit_baselines.json")
+    if not baseline_file.exists():
+        return violations
+
+    try:
+        with open(baseline_file, "r", encoding="utf-8") as f:
+            baseline = json.load(f)
+        # Apply rotation to current values before comparison
+        cur = {
+            "config_hash": _apply_hash_rotation(config_hash),
+            "code_hash": _apply_hash_rotation(code_hash),
+            "git_tree_hash": _apply_hash_rotation(git_tree_hash),
+            "fee_schedule_hash": _apply_hash_rotation(fee_hash),
+        }
+        for k, v in cur.items():
+            expected = baseline.get(k)
+            if expected and v != expected:
+                violations.append(f"Baseline mismatch for {k}: expected {expected}, got {v}")
+    except Exception as e:
+        logger.warning(f"Failed to validate against baseline: {e}")
+
+    return violations
+
+
+def _cache_enabled(mode: str = "readwrite") -> bool:
+    """
+    Returns True if simulation cache is enabled.
+    Modes:
+      - readwrite: read and write cache (FBA_ENABLE_SIM_CACHE true and not disabled)
+      - writeonly: only write cache (FBA_ENABLE_SIM_CACHE true and FBA_SIM_CACHE_MODE=writeonly)
+    """
+    if os.getenv("FBA_DISABLE_SIM_CACHE", "").lower() == "true":
+        return False
+    enabled = os.getenv("FBA_ENABLE_SIM_CACHE", "").lower() == "true"
+    if not enabled:
+        return False
+    sim_mode = os.getenv("FBA_SIM_CACHE_MODE", "readwrite").lower()
+    if mode == "writeonly":
+        return sim_mode in ("writeonly", "readwrite")
+    return sim_mode == "readwrite"
+
+
+def _build_cache_key(sim, days: int, config_hash: str, code_hash: str, git_tree_hash: str, fee_hash: str) -> str:
+    """
+    Deterministic cache key based on tier, scenario id/name if available, and hashes.
+    """
+    tier = None
+    scenario = None
+    try:
+        if hasattr(sim, "config"):
+            if isinstance(sim.config, dict):
+                tier = sim.config.get("tier")
+                scenario = sim.config.get("scenario_name") or sim.config.get("scenario_id")
+            else:
+                tier = getattr(sim.config, "tier", None)
+                scenario = getattr(sim.config, "scenario_name", None) or getattr(sim.config, "scenario_id", None)
+    except Exception:
+        pass
+    payload = {
+        "tier": tier or "unknown",
+        "scenario": scenario or "unknown",
+        "days": days,
+        "config_hash": config_hash,
+        "code_hash": code_hash,
+        "git_tree_hash": git_tree_hash,
+        "fee_hash": fee_hash,
+    }
+    s = json.dumps(payload, sort_keys=True, default=str)
+    return hashlib.sha256(s.encode()).hexdigest()
+
+
+def _cache_dir() -> Path:
+    p = Path("config_storage/simulations")
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _serialize_run(audit: RunAudit) -> Dict[str, Any]:
+    return {
+        "seed": audit.seed,
+        "days": audit.days,
+        "config_hash": audit.config_hash,
+        "code_hash": audit.code_hash,
+        "git_tree_hash": audit.git_tree_hash,
+        "fee_schedule_hash": audit.fee_schedule_hash,
+        "initial_equity": str(audit.initial_equity),
+        "ticks": [
+            {
+                "day": t.day,
+                "assets": str(t.assets),
+                "liabilities": str(t.liabilities),
+                "equity": str(t.equity),
+                "debit_sum": str(t.debit_sum),
+                "credit_sum": str(t.credit_sum),
+                "equity_change_from_profit": str(t.equity_change_from_profit),
+                "net_income_to_date": str(t.net_income_to_date),
+                "owner_contributions_to_date": str(t.owner_contributions_to_date),
+                "owner_distributions_to_date": str(t.owner_distributions_to_date),
+                "inventory_units_by_sku": t.inventory_units_by_sku,
+                "inventory_hash": t.inventory_hash,
+                "rng_state_hash": t.rng_state_hash,
+                "ledger_tick_hash": t.ledger_tick_hash,
+            }
+            for t in audit.ticks
+        ],
+        "final_balance_sheet": {k: str(v) for k, v in audit.final_balance_sheet.items()},
+        "final_income_statement": {k: str(v) for k, v in audit.final_income_statement.items()},
+        "final_ledger_hash": audit.final_ledger_hash,
+        "violations": audit.violations,
+    }
+
+
+def _deserialize_run(payload: Dict[str, Any]) -> RunAudit:
+    ticks = [
+        TickAudit(
+            day=it["day"],
+            assets=Decimal(it["assets"]),
+            liabilities=Decimal(it["liabilities"]),
+            equity=Decimal(it["equity"]),
+            debit_sum=Decimal(it["debit_sum"]),
+            credit_sum=Decimal(it["credit_sum"]),
+            equity_change_from_profit=Decimal(it["equity_change_from_profit"]),
+            net_income_to_date=Decimal(it["net_income_to_date"]),
+            owner_contributions_to_date=Decimal(it["owner_contributions_to_date"]),
+            owner_distributions_to_date=Decimal(it["owner_distributions_to_date"]),
+            inventory_units_by_sku=it["inventory_units_by_sku"],
+            inventory_hash=it["inventory_hash"],
+            rng_state_hash=it["rng_state_hash"],
+            ledger_tick_hash=it["ledger_tick_hash"],
+        )
+        for it in payload.get("ticks", [])
+    ]
+    return RunAudit(
+        seed=payload["seed"],
+        days=payload["days"],
+        config_hash=payload["config_hash"],
+        code_hash=payload["code_hash"],
+        git_tree_hash=payload["git_tree_hash"],
+        fee_schedule_hash=payload["fee_schedule_hash"],
+        initial_equity=Decimal(payload["initial_equity"]),
+        ticks=ticks,
+        final_balance_sheet={k: Decimal(v) for k, v in payload["final_balance_sheet"].items()},
+        final_income_statement={k: Decimal(v) for k, v in payload["final_income_statement"].items()},
+        final_ledger_hash=payload["final_ledger_hash"],
+        violations=payload.get("violations", []),
+    )
+
+
+def _maybe_load_cached_run(sim, days: int, config_hash: str, code_hash: str, git_tree_hash: str, fee_hash: str) -> Optional[RunAudit]:
+    """
+    If cache is enabled for reads, attempt to load a cached RunAudit from disk and validate integrity.
+    """
+    if not _cache_enabled("readwrite"):
+        return None
+    try:
+        key = _build_cache_key(sim, days, config_hash, code_hash, git_tree_hash, fee_hash)
+        cache_path = _cache_dir() / f"{key}.json"
+        if not cache_path.exists():
+            return None
+        with open(cache_path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        # Integrity checks
+        if (
+            payload.get("config_hash") != config_hash
+            or payload.get("code_hash") != code_hash
+            or payload.get("git_tree_hash") != git_tree_hash
+            or payload.get("fee_schedule_hash") != fee_hash
+            or payload.get("days") != days
+        ):
+            logger.warning("Cached run integrity check failed; ignoring cache.")
+            return None
+        return _deserialize_run(payload)
+    except Exception as e:
+        logger.warning(f"Failed to read simulation cache: {e}")
+        return None
+
+
+def _maybe_write_cached_run(sim, audit: RunAudit) -> None:
+    """
+    If cache is enabled for write, persist the RunAudit to disk atomically.
+    """
+    if not _cache_enabled("writeonly"):
+        return
+    try:
+        key = _build_cache_key(sim, audit.days, audit.config_hash, audit.code_hash, audit.git_tree_hash, audit.fee_schedule_hash)
+        cache_path = _cache_dir() / f"{key}.json"
+        tmp_path = cache_path.with_suffix(".json.tmp")
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(_serialize_run(audit), f, sort_keys=True)
+        os.replace(tmp_path, cache_path)
+    except Exception as e:
+        logger.warning(f"Failed to write simulation cache: {e}")

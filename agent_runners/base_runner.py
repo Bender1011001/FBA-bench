@@ -170,30 +170,49 @@ class AgentRunner:
     async def make_decision_async(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """
         Make a decision using the agent asynchronously.
-        
+
+        Default behavior:
+        - If subclass provides an async 'async_make_decision', use it directly.
+        - Otherwise, run blocking 'make_decision' in a worker thread via asyncio.to_thread
+          to avoid blocking the event loop.
+        - Maintains status transitions and callback invocations.
+
         Args:
             context: Context information for the decision
-            
+
         Returns:
             Dictionary containing the decision and any metadata
-            
+
         Raises:
             AgentRunnerDecisionError: If decision making fails
         """
-        # Default implementation wraps the synchronous method
-        # Subclasses can override this for true async support
         try:
             self.status = AgentRunnerStatus.RUNNING
             self.started_at = datetime.now()
             self._trigger_callbacks("on_status_change", self.status)
-            
-            result = self.make_decision(context)
-            
+
+            # Prefer a true async implementation if subclass exposes it
+            async_decider = getattr(self, "async_make_decision", None)
+            if callable(async_decider) and getattr(async_decider, "__call__", None):
+                if getattr(async_decider, "__aiter__", None) or getattr(async_decider, "__await__", None) or getattr(async_decider, "__anext__", None):
+                    # Some exotic async indicators; fall back to generic await
+                    result = await async_decider(context)  # type: ignore
+                else:
+                    # Best-effort: if it's an async def, awaiting will work
+                    try:
+                        result = await async_decider(context)  # type: ignore
+                    except TypeError:
+                        # Not actually async, fall back to thread
+                        result = await asyncio.to_thread(self.make_decision, context)
+            else:
+                # Run sync decision in a background thread so we never block the loop
+                result = await asyncio.to_thread(self.make_decision, context)
+
             self.status = AgentRunnerStatus.READY
             self.last_activity_at = datetime.now()
             self._trigger_callbacks("on_status_change", self.status)
             self._trigger_callbacks("on_decision", result)
-            
+
             return result
         except Exception as e:
             self.status = AgentRunnerStatus.FAILED

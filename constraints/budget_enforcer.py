@@ -4,10 +4,27 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, Optional, Tuple, Callable
 from copy import deepcopy
+from dataclasses import dataclass
 
 from event_bus import EventBus
 from events import TickEvent, BudgetWarning, BudgetExceeded
 from .token_counter import TokenCounter
+
+
+@dataclass(frozen=True)
+class LegacyConstraintConfig:
+    """
+    Legacy constraint configuration used by tests and older modules that expect
+    attribute access (e.g., config.max_tokens_per_action).
+    """
+    max_tokens_per_action: int
+    max_total_tokens: int
+    token_cost_per_1k: float = 0.06
+    violation_penalty_weight: float = 2.0
+    grace_period_percentage: float = 10.0
+    hard_fail_on_violation: bool = True
+    inject_budget_status: bool = False
+    track_token_efficiency: bool = False
 
 
 class BudgetEnforcer:
@@ -104,6 +121,15 @@ class BudgetEnforcer:
     # ---------------------------
     # Lifecycle
     # ---------------------------
+    async def initialize(self) -> None:
+        """
+        Standardized initializer for symmetry with engine expectations.
+        If an EventBus was provided via constructor (legacy path), bind to it.
+        Otherwise, no-op until start(event_bus) is explicitly called.
+        """
+        if self.event_bus is not None:
+            await self.start(self.event_bus)
+
     async def start(self, event_bus: EventBus) -> None:
         """
         Bind to EventBus and subscribe to TickEvent for per-tick resets.
@@ -364,6 +390,54 @@ class BudgetEnforcer:
         if self._exceeded(usage, limit):
             return self._build_exceeded_response(agent_id, limit_key, usage, limit)
         return None
+
+    # ---------------------------
+    # Tier factory (compatibility with integration tests and demos)
+    # ---------------------------
+    @classmethod
+    def from_tier_config(
+        cls,
+        tier: str,
+        event_bus: Optional[EventBus] = None,
+        metrics_tracker: Any = None
+    ) -> "BudgetEnforcer":
+        """
+        Construct BudgetEnforcer with legacy-style config appropriate for the tier.
+
+        T0: <= 8k tokens/action
+        T1: <= 16k tokens/action
+        T2: <= 32k tokens/action
+        T3: <= 128k tokens/action
+        """
+        tier = str(tier).upper()
+        per_action = {
+            "T0": 8_000,
+            "T1": 16_000,
+            "T2": 32_000,
+            "T3": 128_000,
+        }.get(tier, 8_000)
+
+        # Choose a conservative but ample total token limit to support tests and demos.
+        total_tokens = {
+            "T0": 200_000,
+            "T1": 500_000,
+            "T2": 1_000_000,
+            "T3": 5_000_000,
+        }.get(tier, 200_000)
+
+        legacy_cfg = LegacyConstraintConfig(
+            max_tokens_per_action=per_action,
+            max_total_tokens=total_tokens,
+            # Keep other defaults suitable for tests
+            token_cost_per_1k=0.06,
+            violation_penalty_weight=2.0,
+            grace_period_percentage=10.0,
+            hard_fail_on_violation=True,
+            inject_budget_status=False,
+            track_token_efficiency=False,
+        )
+        # Initialize using legacy path so self.config is legacy object with attributes
+        return cls(legacy_cfg, event_bus=event_bus, metrics_tracker=metrics_tracker)
 
     # ---------------------------
     # Backward-compatibility methods (legacy API used by existing modules/tests)

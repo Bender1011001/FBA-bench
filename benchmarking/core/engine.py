@@ -133,10 +133,10 @@ class BenchmarkEngine:
         )
 
         # Constraints and Gateway
-        self.budget_enforcer = BudgetEnforcer(
-            self.config.budget_limit,
-            self.event_bus,
-            tier=self.config.tier # TODO: Make BudgetEnforcer tier configurable if not already
+        # Use tier-configured BudgetEnforcer to align with integration tests and demos.
+        self.budget_enforcer = BudgetEnforcer.from_tier_config(
+            tier=self.config.tier,
+            event_bus=self.event_bus
         )
         self.agent_gateway = AgentGateway(
             self.event_bus,

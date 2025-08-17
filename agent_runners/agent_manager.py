@@ -170,17 +170,29 @@ class AgentManager:
         """Stop the AgentManager and its agents."""
         logger.info("AgentManager stopping.")
 
-        # Unsubscribe from events (optional, for explicit cleanup)
-        if self.event_bus:
-            # EventBus typically doesn't offer unsubscribe directly, but in a full system you would.
-            pass
+        # Attempt best-effort unsubscription; fall back gracefully if unsupported
+        try:
+            if self.event_bus:
+                # Prefer typed event unsubscription where available
+                unsubscribe = getattr(self.event_bus, "unsubscribe", None)
+                if callable(unsubscribe):
+                    # Mirror the subscriptions done in start()
+                    await self.event_bus.unsubscribe(TickEvent, self._handle_tick_event_for_decision_cycle)  # type: ignore
+                    await self.event_bus.unsubscribe(SetPriceCommand, self._handle_agent_command_acknowledgement)  # type: ignore
+                    logger.info("AgentManager unsubscribed from core events.")
+                else:
+                    logger.debug("EventBus does not support unsubscribe; proceeding without explicit unsubscription.")
+        except Exception as e:
+            logger.warning(f"Unsubscription encountered an issue: {e}")
 
+        # Cleanup all agent runners
         for agent_id, agent_reg in self.agent_registry.all_agents().items():
             try:
-                if agent_reg.runner: # Ensure runner exists before calling cleanup
+                if agent_reg.runner:  # Ensure runner exists before calling cleanup
                     await agent_reg.runner.cleanup()
             except AgentRunnerCleanupError as e:
                 logger.warning(f"Failed to cleanup agent {agent_id}: {e}")
+
         logger.info("AgentManager stopped.")
 
     def register_agent(self, agent_id: str, framework: str, config: Dict[str, Any]) -> None:
