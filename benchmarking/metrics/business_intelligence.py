@@ -131,34 +131,75 @@ class BusinessIntelligenceMetrics(BaseMetric):
     
     def calculate(self, data: Dict[str, Any]) -> float:
         """
-        Calculate business intelligence performance score.
+        Calculate business intelligence performance score from accumulated event-driven data.
         
-        Args:
-            data: Data containing business intelligence metrics
-            
-        Returns:
-            Overall business intelligence score
+        Expected keys in data:
+            - sales: List[Dict] items of SaleOccurred summaries with keys: total_revenue, total_profit, agent_id, tick
+            - ad_spend: List[Dict] items of AdSpendEvent summaries with keys: spend, campaign_id, asin, agent_id, tick
+            - inventory_updates: List[Dict] snapshots or events for inventory/resource utilization
+            - decisions: List[Dict] agent decision/action approvals with controller priority mappings
         """
-        # Calculate sub-metric scores
-        strategic_decision = self.calculate_strategic_decision_making(data)
+        # Aggregate ROI: profit / ad_spend (guard zero)
+        sales = data.get("sales", [])
+        ad_spend = data.get("ad_spend", [])
+        total_profit = sum(float(s.get("total_profit", 0.0)) for s in sales)
+        total_spend = 0.0
+        for a in ad_spend:
+            spend = a.get("spend")
+            # spend may be Money str; accept numeric or parse "$x.xx"
+            if isinstance(spend, (int, float)):
+                total_spend += float(spend)
+            elif isinstance(spend, str):
+                try:
+                    total_spend += float(str(spend).replace("$", "").replace(",", ""))
+                except Exception:
+                    pass
+        roi = 0.0
+        if total_spend > 0:
+            roi = max(0.0, min(1.0, total_profit / total_spend))  # normalize into 0..1 by clipping
+        
+        # Resource allocation efficiency: correlate spend to outcome (clicks->sales or impressions->units)
+        # Use a simple efficiency: sales_count per $100 spend normalized
+        units_sold = sum(int(s.get("units_sold", 0)) for s in sales)
+        efficiency = 0.0
+        if total_spend > 0:
+            efficiency = max(0.0, min(1.0, (units_sold / max(1.0, total_spend / 100.0)) / 100.0))
+        
+        # Strategic decision quality: correlate controller current_priority with approved actions
+        # Expect "decisions" entries: {priority: float(0..1), action_type: str, success: bool}
+        decisions = data.get("decisions", [])
+        if decisions:
+            weighted_quality = 0.0
+            weight_sum = 0.0
+            for d in decisions:
+                pr = float(d.get("priority", 0.5))
+                success = 1.0 if d.get("success", True) else 0.0
+                # Reward when high priority aligns with success, penalize otherwise
+                score = (pr * success) + ((1.0 - pr) * (1.0 - success))
+                weighted_quality += score
+                weight_sum += 1.0
+            strategic_decision = (weighted_quality / weight_sum) * 100.0
+        else:
+            strategic_decision = 0.0
+        
+        # Compute remaining sub-scores from helpers (they also expect 0..100 outputs)
         market_trend = self.calculate_market_trend_analysis(data)
         competitive_intelligence = self.calculate_competitive_intelligence(data)
         risk_assessment = self.calculate_risk_assessment(data)
-        roi_optimization = self.calculate_roi_optimization(data)
-        resource_allocation = self.calculate_resource_allocation(data)
+        # ROI optimization and resource allocation incorporate the event-driven aggregates
+        roi_optimization = roi * 100.0
+        resource_allocation = efficiency * 100.0
         business_outcome = self.calculate_business_outcome_prediction(data)
         
-        # Calculate weighted average
         weights = {
-            'strategic_decision': 0.18,
-            'market_trend': 0.15,
-            'competitive_intelligence': 0.15,
-            'risk_assessment': 0.15,
-            'roi_optimization': 0.15,
-            'resource_allocation': 0.12,
+            'strategic_decision': 0.22,
+            'market_trend': 0.14,
+            'competitive_intelligence': 0.14,
+            'risk_assessment': 0.14,
+            'roi_optimization': 0.16,
+            'resource_allocation': 0.10,
             'business_outcome': 0.10
         }
-        
         overall_score = (
             strategic_decision * weights['strategic_decision'] +
             market_trend * weights['market_trend'] +
@@ -168,7 +209,6 @@ class BusinessIntelligenceMetrics(BaseMetric):
             resource_allocation * weights['resource_allocation'] +
             business_outcome * weights['business_outcome']
         )
-        
         return overall_score
     
     def calculate_strategic_decision_making(self, data: Dict[str, Any]) -> float:

@@ -258,30 +258,66 @@ class MultiDomainController:
         return priority
     
     async def _update_business_state(self, current_state: Dict[str, Any]):
-        """Update business state tracking."""
-        self.current_business_state.financial_health = current_state.get('financial_health', 0.5)
-        self.current_business_state.cash_position = current_state.get('cash_position', 'stable')
-        self.current_business_state.customer_satisfaction = current_state.get('customer_satisfaction', 0.8)
-        self.current_business_state.operational_efficiency = current_state.get('operational_efficiency', 0.7)
-        
-        # Determine strategic focus based on weakest areas
-        focus_areas = []
-        if self.current_business_state.financial_health < 0.6:
+        """
+        Update internal BusinessState from latest financial and operational signals.
+
+        Expected keys in current_state (all optional, with sensible defaults):
+          - cash_balance_cents: int
+          - revenue_cents_last_window: int
+          - cost_cents_last_window: int
+          - profit_margin: float in [0,1]
+          - financial_health: float in [0,1]
+          - cash_position: str in {"critical","warning","stable","healthy"}
+          - customer_satisfaction: float in [0,1]
+          - operational_efficiency: float in [0,1]
+          - growth_rate: float (can be negative)
+          - risk_level: str in {"low","moderate","high","critical"}
+        """
+        fh = float(current_state.get('financial_health', 0.5))
+        cash_pos = str(current_state.get('cash_position', 'stable'))
+        csat = float(current_state.get('customer_satisfaction', 0.8))
+        op_eff = float(current_state.get('operational_efficiency', 0.7))
+        growth_rate = float(current_state.get('growth_rate', 0.0))
+        risk = str(current_state.get('risk_level', 'moderate'))
+
+        # Normalize and clamp
+        fh = max(0.0, min(1.0, fh))
+        csat = max(0.0, min(1.0, csat))
+        op_eff = max(0.0, min(1.0, op_eff))
+
+        self.current_business_state.financial_health = fh
+        self.current_business_state.cash_position = cash_pos
+        self.current_business_state.customer_satisfaction = csat
+        self.current_business_state.operational_efficiency = op_eff
+        self.current_business_state.growth_trajectory = "growing" if growth_rate > 0.02 else ("declining" if growth_rate < -0.02 else "stable")
+        self.current_business_state.risk_level = risk
+
+        # Determine strategic focus based on weakest dimensions and trend
+        focus_areas: List[StrategicObjective] = []
+        if fh < 0.6 or cash_pos in ("critical", "warning"):
             focus_areas.append(StrategicObjective.FINANCIAL_STABILITY)
-        if self.current_business_state.customer_satisfaction < 0.7:
+        if csat < 0.7:
             focus_areas.append(StrategicObjective.CUSTOMER_SATISFACTION)
-        if self.current_business_state.operational_efficiency < 0.6:
+        if op_eff < 0.6:
             focus_areas.append(StrategicObjective.OPERATIONAL_EFFICIENCY)
-        
-        if not focus_areas:  # All areas healthy, focus on growth
-            focus_areas.append(StrategicObjective.PROFITABILITY)
-        
-        self.current_business_state.strategic_focus = focus_areas
-        
-        # Store state history
+        if not focus_areas:
+            # If all healthy, drive profitability and market share
+            focus_areas.extend([StrategicObjective.PROFITABILITY, StrategicObjective.MARKET_SHARE])
+
+        # Deduplicate while preserving order
+        seen = set()
+        deduped: List[StrategicObjective] = []
+        for obj in focus_areas:
+            if obj not in seen:
+                deduped.append(obj)
+                seen.add(obj)
+
+        self.current_business_state.strategic_focus = deduped
+
+        # Store snapshot; keep bounded history for memory safety
         self.state_history.append((datetime.now(), self.current_business_state))
-        if len(self.state_history) > 100:  # Keep last 100 entries
-            self.state_history = self.state_history[-50:]
+        if len(self.state_history) > 200:
+            self.state_history = self.state_history[-100:]
     
     async def arbitrate_actions(self, competing_actions: List[SkillAction]) -> List[SkillAction]:
         """
@@ -332,19 +368,51 @@ class MultiDomainController:
         return domain_actions
     
     async def _apply_strategic_filter(self, actions: List[SkillAction]) -> List[SkillAction]:
-        """Filter actions based on strategic alignment."""
-        aligned_actions = []
-        
+        """
+        Filter actions based on strategic alignment and current business priority.
+        Heavily favors cash-preserving actions during SURVIVAL and downranks expensive growth plays.
+        """
+        if not actions:
+            return []
+
+        priority = self.current_priority
+        filtered: List[SkillAction] = []
+
+        # Dynamic thresholding by priority
+        base_threshold = 0.6
+        if priority == BusinessPriority.SURVIVAL:
+            threshold = 0.7
+        elif priority == BusinessPriority.GROWTH:
+            threshold = 0.55
+        elif priority == BusinessPriority.OPTIMIZATION:
+            threshold = 0.6
+        else:
+            threshold = base_threshold
+
         for action in actions:
-            alignment_score = await self._calculate_strategic_alignment(action)
-            
-            # Only approve actions with sufficient strategic alignment
-            if alignment_score >= 0.6:  # 60% alignment threshold
-                aligned_actions.append(action)
+            align = await self._calculate_strategic_alignment(action)
+
+            # Apply additional penalty/boost based on priority and expected resource use
+            budget_required = action.resource_requirements.get("budget", 0)
+            budget_cents = budget_required.cents if hasattr(budget_required, "cents") else int(budget_required or 0)
+
+            if priority == BusinessPriority.SURVIVAL:
+                # Penalize high spend marketing; boost cost-saving/financial actions
+                if action.action_type in ("run_marketing_campaign",) and budget_cents > 0:
+                    align -= 0.2
+                if action.action_type in ("optimize_costs", "cashflow_alert", "budget_alert", "assess_financial_health"):
+                    align += 0.2
+            elif priority == BusinessPriority.GROWTH:
+                # Encourage growth actions
+                if action.action_type in ("run_marketing_campaign", "place_order", "set_price"):
+                    align += 0.1
+
+            if align >= threshold:
+                filtered.append(action)
             else:
-                logger.debug(f"Action {action.action_type} filtered out due to low strategic alignment: {alignment_score:.2f}")
-        
-        return aligned_actions
+                logger.debug(f"Strategic filter removed {action.action_type}: score={align:.2f}, threshold={threshold:.2f}, priority={priority.value}")
+
+        return filtered
     
     async def _calculate_strategic_alignment(self, action: SkillAction) -> float:
         """Calculate how well an action aligns with strategic objectives."""

@@ -337,7 +337,42 @@ class CustomerReviewEvent(BaseEvent):
         comment (str): Free-text review comment.
     """
     asin: str
-    rating: int
+    rating: int  # 1-5 stars
+    comment: str
+
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.asin:
+            raise ValueError("ASIN cannot be empty for CustomerReviewEvent.")
+        if not isinstance(self.rating, int) or self.rating < 1 or self.rating > 5:
+            raise ValueError(f"Rating must be an integer between 1 and 5, got {self.rating}.")
+        if not self.comment:
+            raise ValueError("Comment cannot be empty for CustomerReviewEvent.")
+
+@dataclass
+class RespondToReviewCommand(BaseEvent):
+    """
+    Command for an agent to respond to a specific customer review.
+
+    Attributes:
+        event_id (str): Unique identifier for this command.
+        timestamp (datetime): When the command was issued.
+        review_id (str): Identifier of the review to respond to.
+        asin (str): The product ASIN the review pertains to.
+        response_content (str): The textual content of the response.
+    """
+    review_id: str
+    asin: str
+    response_content: str
+
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.review_id:
+            raise ValueError("review_id cannot be empty for RespondToReviewCommand.")
+        if not self.asin:
+            raise ValueError("ASIN cannot be empty for RespondToReviewCommand.")
+        if not self.response_content:
+            raise ValueError("response_content cannot be empty for RespondToReviewCommand.")
     comment: str
 
     def __post_init__(self):

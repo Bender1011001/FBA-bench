@@ -135,7 +135,7 @@ class CustomerReviewEvent(Protocol):
     event_id: str
     timestamp: datetime
     asin: str
-    rating: int
+    rating: int  # 1-5 stars
     comment: str
 
 @runtime_checkable

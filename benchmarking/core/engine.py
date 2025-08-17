@@ -168,6 +168,8 @@ class BenchmarkEngine:
         await self.event_bus.start()
         await self.world_store.start()
         await self.agent_manager.start()
+        # Record full event stream for outcome analysis and reproducibility
+        self.event_bus.start_recording()
 
         # Start real services
         await self.ledger_service.start(self.event_bus)
@@ -183,6 +185,15 @@ class BenchmarkEngine:
         # Start customer reputation service
         await self.customer_reputation_service.start(self.event_bus, self.world_store)
         await self.metric_suite.subscribe_to_events(self.event_bus)
+
+        # Start OutcomeAnalysisService
+        try:
+            from services.outcome_analysis_service import OutcomeAnalysisService
+            self.outcome_analysis_service = OutcomeAnalysisService()
+            await self.outcome_analysis_service.start(self.event_bus)
+        except Exception as e:
+            logger.warning(f"OutcomeAnalysisService unavailable: {e}")
+            self.outcome_analysis_service = None
 
         # Initialize constraints and gateway
         await self.budget_enforcer.initialize()
@@ -213,9 +224,12 @@ class BenchmarkEngine:
         try:
             # Run each scenario defined in the configuration
             for scenario_conf in self.config.scenarios:
+                if not getattr(scenario_conf, "enabled", True):
+                    logger.info(f"Skipping disabled scenario: {getattr(scenario_conf, 'name', 'unknown')}")
+                    continue
                 scenario_result = await self.run_scenario(scenario_conf)
                 self.current_benchmark_result.scenario_results.append(scenario_result)
-            
+
             # Calculate overall KPIs for the benchmark
             self.current_benchmark_result.overall_kpis = self._calculate_overall_kpis()
 
@@ -272,17 +286,33 @@ class BenchmarkEngine:
 
         self.current_scenario_result = ScenarioResult(
             scenario_name=scenario_config.name,
-            scenario_type=scenario_config.scenario_type,
+            scenario_type=getattr(scenario_config, "scenario_type", scenario_config.name),
             start_time=scenario_start_time,
-            config=scenario_config.model_dump(),
+            config=scenario_config.model_dump() if hasattr(scenario_config, "model_dump") else scenario_config.__dict__,
             agent_run_results=[]
         )
 
         try:
-            # Run each agent defined for this scenario
-            for agent_conf in scenario_config.agents:
-                # Run the agent for the specified number of iterations (ticks)
-                for run_num in range(1, scenario_config.runs_per_agent + 1):
+            # Ensure agents from benchmark config are registered and active
+            for agent_cfg in self.config.agents:
+                if getattr(agent_cfg, "enabled", True):
+                    # Register if not present
+                    reg = self.agent_manager.agent_registry.get_agent(agent_cfg.agent_id)
+                    if reg is None or reg.runner is None:
+                        self.agent_manager.register_agent(agent_cfg.agent_id, agent_cfg.framework, agent_cfg.config or {})
+
+            # Execute scenario for each enabled agent in scenario (fallback to all config agents if scenario doesn't list)
+            scenario_agents: List[AgentConfig] = []
+            if getattr(scenario_config, "agents", None):
+                scenario_agents = [a for a in scenario_config.agents if getattr(a, "enabled", True)]
+            else:
+                scenario_agents = [a for a in self.config.agents if getattr(a, "enabled", True)]
+
+            total_ticks = getattr(scenario_config, "runs_per_agent", None) or getattr(scenario_config, "duration_ticks", 1)
+            total_ticks = int(total_ticks) if total_ticks and total_ticks > 0 else 1
+
+            for agent_conf in scenario_agents:
+                for run_num in range(1, total_ticks + 1):
                     agent_run_result = await self.run_agent_iteration(
                         agent_conf,
                         scenario_instance,
@@ -294,7 +324,7 @@ class BenchmarkEngine:
                         marketing_service=marketing_service,
                     )
                     self.current_scenario_result.agent_run_results.append(agent_run_result)
-            
+
             # Calculate scenario-level KPIs using MetricSuite and agent run results
             self.current_scenario_result.kpis = self._calculate_scenario_kpis()
 
@@ -374,102 +404,17 @@ class BenchmarkEngine:
         # This method returns `SimulationState` which contains `agent_decision_output`.
         # This `agent_decision_output` is what `scenario.run` expects.
 
-        agent_input = {
-            "scenario_config": scenario.config.model_dump(),
-            "run_number": run_number,
-            "world_state_snapshot": await self.world_store.get_current_state(), # Provide current world state
-            # Add other relevant inputs for the agent
-        }
-
-        simulation_state: Optional[SimulationState] = None
         try:
-            # Use AgentManager to trigger the agent's decision cycle
-            simulation_state = await self.agent_manager.trigger_agent_decision_cycle(
-                agent_id=agent_config.agent_id,
-                agent_input=agent_input
+            # Retrieve the managed runner from AgentManager and delegate execution to scenario
+            agent_runner = self.agent_manager.get_agent_runner(agent_config.agent_id)
+            if not agent_runner:
+                raise RuntimeError(f"Agent '{agent_config.agent_id}' is not registered or initialized.")
+
+            # Scenarios call agent.decide(...) internally, so pass the runner (it exposes decide)
+            agent_run_result = await scenario.run(
+                agent=agent_runner,
+                run_number=run_number
             )
-            
-            if simulation_state and simulation_state.success:
-                # The scenario.run method expects the agent_decision_output
-                agent_run_result = await scenario.run(
-                    agent=simulation_state.agent_instance, # Pass the actual agent instance from simulation_state
-                    run_number=run_number,
-                    # Pass other necessary args for scenario.run
-                )
-                # The scenario.run method now returns AgentRunResult.
-                # We need to ensure it uses the `agent_decision_output` from `simulation_state`.
-                # The `scenario.run` signature in `BaseScenario` is `async def run(self, agent: BaseAgent, run_number: int, *args, **kwargs) -> AgentRunResult:`
-                # The `agent.decide(agent_input)` call is *inside* `scenario.run`.
-                # This means `BenchmarkEngine` should not call `agent.decide` directly if `scenario.run` does it.
-
-                # This indicates a design conflict:
-                # Option A: `BenchmarkEngine` calls `agent.decide`, then passes output to `scenario.process_decision`.
-                # Option B: `BenchmarkEngine` calls `scenario.run`, and `scenario.run` internally calls `agent.decide`.
-                # The current `BaseScenario` and `BenchmarkEngine` structure implies Option B.
-
-                # If `scenario.run` calls `agent.decide`, then `BenchmarkEngine` should not do it beforehand.
-                # The `AgentManager.trigger_agent_decision_cycle` is thus not directly used by `BenchmarkEngine`
-                # in the way I was thinking. Instead, `scenario.run` would get the agent (perhaps from AgentManager or registry)
-                # and call `agent.decide()`.
-
-                # Let's re-evaluate `BaseScenario.run(agent: BaseAgent, ...)`.
-                # The `agent` parameter is a `BaseAgent` instance.
-                # `BenchmarkEngine` needs to provide this `BaseAgent` instance.
-                # `AgentManager` manages `AgentRunner` instances, which *contain* `BaseAgent` instances.
-                # `agent_registry` provides `BaseAgent` *classes*.
-
-                # How does `BenchmarkEngine` get a *configured instance* of `BaseAgent`?
-                # `AgentManager.register_agent` takes an `AgentConfig` and uses `RunnerFactory` to create an `AgentRunner`.
-                # This `AgentRunner` then instantiates the `BaseAgent`.
-                # So, `AgentManager` is the place to get a running `BaseAgent` instance from.
-
-                # Let's assume `AgentManager` has a method like `get_agent_instance(agent_id: str) -> BaseAgent`.
-                # This is not currently present in `agent_runners/agent_manager.py`.
-                # `AgentManager` has `self.runners: Dict[str, AgentRunner]`.
-                # So, `agent_runner = self.agent_manager.runners.get(agent_config.agent_id)`
-                # Then `agent_instance = agent_runner.agent`
-
-                # This is getting into deep refactoring of `AgentManager` interaction.
-                # For the purpose of this task, I will assume `BenchmarkEngine` can get a `BaseAgent` instance
-                # that it can pass to `scenario.run`. The exact mechanism (whether via `AgentManager` or `agent_registry`)
-                # is a separate architectural detail, but `AgentManager` is the more logical source.
-
-                # Let's assume `AgentManager` provides a `get_base_agent_instance(agent_id: str) -> Optional[BaseAgent]`
-                # For now, I will simulate this by directly using `agent_registry` to get an instance,
-                # as this is what `BenchmarkEngine` seemed to do originally in spirit, even if the code was flawed.
-                # This is a simplification to focus on the service integration.
-
-                agent_class = agent_registry.get(agent_config.agent_type)
-                if not agent_class:
-                    raise ValueError(f"Agent type '{agent_config.agent_type}' not found in agent_registry.")
-                
-                # This agent instance is not managed by AgentManager's lifecycle in this simplified path.
-                # This is a known issue with this part of the refactoring, prioritizing service integration.
-                actual_agent_instance = agent_class(agent_config) 
-                # await actual_agent_instance.setup() # If BaseAgent needs setup
-
-                agent_run_result = await scenario.run(
-                    agent=actual_agent_instance,
-                    run_number=run_number
-                )
-
-            else:
-                # Handle failure from AgentManager
-                error_msg = f"AgentManager failed to trigger decision for {agent_config.agent_id}"
-                if simulation_state:
-                    error_msg += f": {simulation_state.errors}"
-                logger.error(error_msg)
-                agent_run_result = AgentRunResult(
-                    agent_id=agent_config.agent_id,
-                    scenario_name=scenario.config.name,
-                    run_number=run_number,
-                    start_time=datetime.now(),
-                    end_time=datetime.now(),
-                    duration_seconds=0,
-                    success=False,
-                    errors=[error_msg],
-                    metrics={}
-                )
 
         except Exception as e:
             logger.error(f"Error during agent iteration for '{agent_config.agent_id}': {e}", exc_info=True)
@@ -477,7 +422,7 @@ class BenchmarkEngine:
                 agent_id=agent_config.agent_id,
                 scenario_name=scenario.config.name,
                 run_number=run_number,
-                start_time=datetime.now(), # Approximate
+                start_time=datetime.now(),  # Approximate
                 end_time=datetime.now(),
                 duration_seconds=0,
                 success=False,
@@ -524,6 +469,23 @@ class BenchmarkEngine:
         # For now, I will not directly call `metric_suite.calculate_kpis` here for each agent run.
         # It will be called once per scenario or per benchmark.
         # The `AgentRunResult.metrics` are populated by `scenario.run`.
+
+        # Learning loop: analyze outcome and inform agent runner
+        try:
+            if getattr(self, "outcome_analysis_service", None) is not None:
+                # Analyze all events since last tick/run for this agent
+                outcome = await self.outcome_analysis_service.analyze_tick_outcome(
+                    agent_id=agent_config.agent_id
+                )
+                if outcome:
+                    try:
+                        agent_runner = self.agent_manager.get_agent_runner(agent_config.agent_id)
+                        if agent_runner and hasattr(agent_runner, "learn"):
+                            await agent_runner.learn(outcome)
+                    except Exception as lrn_err:
+                        logger.warning(f"Agent {agent_config.agent_id} learn() failed: {lrn_err}")
+        except Exception as e:
+            logger.warning(f"Outcome analysis failed for agent {agent_config.agent_id}: {e}")
 
         return agent_run_result
 
@@ -635,11 +597,10 @@ class BenchmarkEngine:
         Calculate KPIs for the current scenario.
         This would typically aggregate KPIs from agent runs within the scenario.
         """
-        # Placeholder: Implement actual scenario KPI aggregation logic
+        # Aggregate scenario-level metrics across agent runs
         if self.current_scenario_result and self.current_scenario_result.agent_run_results:
-            # Example: Average duration of agent runs
-            avg_duration = sum(r.duration_seconds for r in self.current_scenario_result.agent_run_results if r.duration_seconds) / len(self.current_scenario_result.agent_run_results)
-            # Example: Count errors in agent runs
+            durations = [r.duration_seconds for r in self.current_scenario_result.agent_run_results if r.duration_seconds]
+            avg_duration = sum(durations) / len(durations) if durations else 0.0
             total_agent_errors = sum(len(r.errors) for r in self.current_scenario_result.agent_run_results)
 
             # Get KPIs from MetricSuite for the scenario's duration

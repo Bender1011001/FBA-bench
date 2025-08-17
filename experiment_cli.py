@@ -260,6 +260,13 @@ def main() -> int:
     analyze_parser = subparsers.add_parser("analyze", help="Analyze results from a previous run")
     analyze_parser.add_argument("results_dir", help="Path to results directory to analyze")
 
+    # Optional reproducibility validation against golden run
+    parser.add_argument(
+        "--validate-reproducibility",
+        dest="validate_repro",
+        help="Path to golden run JSON file for reproducibility validation"
+    )
+
     args = parser.parse_args()
 
     if args.command == "run":
@@ -308,6 +315,50 @@ def main() -> int:
                 json.dump(summary, f, indent=2, default=str)
         except Exception as e:
             logger.warning(f"Failed to compute summary: {e}")
+
+        # Final reproducibility validation if requested
+        try:
+            if args.validate_repro:
+                golden_path = Path(args.validate_repro)
+                if not golden_path.exists():
+                    logger.error(f"Golden run file not found: {golden_path}")
+                    return 2
+                golden = json.loads(golden_path.read_text(encoding="utf-8"))
+                # Build a minimal current_results vector set for validator
+                # Use summary overall_profit as one metric and per-run profits if present
+                current_results = {"total_profit_series": []}
+                for f in sorted(results_dir.glob("run_*.json")):
+                    try:
+                        data = json.loads(f.read_text(encoding="utf-8"))
+                        profit = data.get("metrics", {}).get("total_profit")
+                        if isinstance(profit, (int, float)):
+                            current_results["total_profit_series"].append(float(profit))
+                    except Exception:
+                        continue
+                reference_results = {"total_profit_series": []}
+                ref_runs = golden.get("runs") or golden.get("run_files") or []
+                # If golden is a directory-like summary, attempt to extract numbers
+                if isinstance(ref_runs, list) and ref_runs:
+                    for item in ref_runs:
+                        if isinstance(item, (int, float)):
+                            reference_results["total_profit_series"].append(float(item))
+                # Or if golden itself is a summary with total_profit_series
+                if "total_profit_series" in golden:
+                    reference_results["total_profit_series"] = golden["total_profit_series"]
+
+                from benchmarking.validators.reproducibility_validator import ReproducibilityValidator
+                validator = ReproducibilityValidator()
+                report = validator.validate_reproducibility(
+                    run_id=results_dir.name,
+                    reference_results=reference_results,
+                    current_results=current_results
+                )
+                with open(results_dir / "reproducibility_report.json", "w", encoding="utf-8") as f:
+                    json.dump(report.to_dict(), f, indent=2)
+                logger.info(f"Reproducibility validation completed with score {report.overall_score:.2f}")
+        except Exception as e:
+            logger.error(f"Reproducibility validation failed: {e}")
+
         return 0
 
     elif args.command == "analyze":

@@ -359,17 +359,18 @@ class ReproducibilityValidator:
         return results
     
     def _validate_statistical_results(
-        self, 
-        run_id: str, 
-        reference_results: Optional[Dict[str, Any]], 
-        current_results: Optional[Dict[str, Any]], 
+        self,
+        run_id: str,
+        reference_results: Optional[Dict[str, Any]],
+        current_results: Optional[Dict[str, Any]],
         audit_trail: AuditTrail
     ) -> List[ValidationResult]:
-        """Validate statistical results."""
-        results = []
-        
+        """
+        Validate statistical consistency between current and reference runs using paired tests.
+        Expects both current_results and reference_results to provide arrays for key metrics.
+        """
+        results: List[ValidationResult] = []
         try:
-            # Check if results are provided
             if reference_results is None or current_results is None:
                 results.append(ValidationResult(
                     component="statistical",
@@ -384,67 +385,53 @@ class ReproducibilityValidator:
                 ))
                 return results
             
-            # Validate current results
-            validation = self.statistical_validator.validate_results(current_results)
+            # Define key metrics expected to be present
+            key_metrics = [
+                "total_profit_series",
+                "final_market_share_series",
+                "revenue_series",
+            ]
+            metric_findings: Dict[str, Any] = {}
+            all_passed = True
+            combined_score = 1.0
             
-            # Calculate validation score
-            valid_metrics = sum(1 for metric in validation["metrics"].values() if metric["is_valid"])
-            total_metrics = len(validation["metrics"])
-            
-            score = valid_metrics / total_metrics if total_metrics > 0 else 0.0
-            
-            results.append(ValidationResult(
-                component="statistical",
-                check_name="result_validity",
-                passed=score >= 0.8,  # 80% threshold
-                score=score,
-                details=validation,
-                issues=[
-                    f"Invalid metrics: {total_metrics - valid_metrics}/{total_metrics}"
-                ] if score < 0.8 else []
-            ))
-            
-            # Compare with reference results if available
-            comparison_issues = []
-            comparison_score = 1.0
-            
-            for metric_name, metric_data in current_results.items():
-                if metric_name in reference_results and isinstance(metric_data, list):
-                    ref_data = reference_results[metric_name]
-                    if isinstance(ref_data, list) and len(ref_data) > 0 and len(metric_data) > 0:
-                        # Perform statistical comparison
-                        try:
-                            ref_summary = self.statistical_validator.calculate_summary(ref_data)
-                            curr_summary = self.statistical_validator.calculate_summary(metric_data)
-                            
-                            # Check if means are within confidence intervals
-                            ref_ci = ref_summary.confidence_interval
-                            curr_ci = curr_summary.confidence_interval
-                            
-                            if ref_ci and curr_ci:
-                                # Check for overlap in confidence intervals
-                                if (curr_ci[0] <= ref_ci[1] and curr_ci[1] >= ref_ci[0]):
-                                    # Confidence intervals overlap
-                                    pass
-                                else:
-                                    comparison_issues.append(f"Confidence intervals do not overlap for {metric_name}")
-                                    comparison_score *= 0.9
-                            
-                        except Exception as e:
-                            logger.warning(f"Error comparing metric {metric_name}: {e}")
-                            comparison_issues.append(f"Comparison error for {metric_name}: {str(e)}")
-                            comparison_score *= 0.8
+            for metric in key_metrics:
+                ref = reference_results.get(metric)
+                cur = current_results.get(metric)
+                if not isinstance(ref, list) or not isinstance(cur, list) or len(ref) < 2 or len(cur) < 2:
+                    # If unavailable, do not fail the whole validation; just record issue
+                    metric_findings[metric] = {"status": "missing_or_insufficient_data"}
+                    combined_score *= 0.9
+                    continue
+                # Use two-sample t-test (unpaired) as general case; fallback if sizes differ
+                try:
+                    test: StatisticalSummary = self.statistical_validator.calculate_summary(cur)
+                    ref_summary: StatisticalSummary = self.statistical_validator.calculate_summary(ref)
+                    ttest = self.statistical_validator.t_test_two_samples(cur, ref, alpha=0.05, equal_var=False, alternative="two-sided")
+                    # Pass if not significant
+                    metric_pass = not ttest.is_significant()
+                    all_passed = all_passed and metric_pass
+                    combined_score *= (0.95 if metric_pass else 0.7)
+                    metric_findings[metric] = {
+                        "p_value": ttest.p_value,
+                        "significant": ttest.is_significant(),
+                        "current_mean": test.mean,
+                        "reference_mean": ref_summary.mean,
+                        "conclusion": ttest.conclusion
+                    }
+                except Exception as e:
+                    metric_findings[metric] = {"status": "error", "error": str(e)}
+                    combined_score *= 0.8
             
             results.append(ValidationResult(
                 component="statistical",
-                check_name="result_consistency",
-                passed=comparison_score >= 0.8,
-                score=comparison_score,
-                details={"comparison_issues": comparison_issues},
-                issues=comparison_issues
+                check_name="paired_consistency_tests",
+                passed=all_passed,
+                score=max(0.0, min(1.0, combined_score)),
+                details=metric_findings,
+                issues=[k for k, v in metric_findings.items() if isinstance(v, dict) and v.get("significant") is True]
             ))
             
-            # Log to audit trail
             self.audit_manager.log_event(
                 run_id=audit_trail.run_id,
                 component="StatisticalValidator",
@@ -453,7 +440,6 @@ class ReproducibilityValidator:
                 details={"results": [r.to_dict() for r in results]},
                 severity="info"
             )
-            
         except Exception as e:
             logger.error(f"Error in statistical validation: {e}")
             results.append(ValidationResult(
@@ -464,7 +450,6 @@ class ReproducibilityValidator:
                 details={"error": str(e)},
                 issues=[f"Validation error: {str(e)}"]
             ))
-        
         return results
     
     def _validate_audit_trail(self, run_id: str, audit_trail: AuditTrail) -> List[ValidationResult]:

@@ -254,7 +254,21 @@ class SupplyManagerSkill(BaseSkill):
             await self._review_supplier_performance()
         
         return actions
-    
+
+    async def learn(self, outcome: SkillOutcome) -> None:
+        """
+        Adjust supplier reliability heuristics from fulfillment-related outcomes.
+        For simplicity, penalize reliability when success=False or no units sold.
+        """
+        try:
+            success = bool(outcome.success)
+            units = int(outcome.impact_metrics.get("units_sold", 0))
+            delta = 0.01 if success and units > 0 else -0.02
+            for sid, prof in self.suppliers.items():
+                prof.reliability_score = max(0.0, min(1.0, prof.reliability_score + delta))
+        except Exception as e:
+            logger.warning(f"SupplyManagerSkill.learn failed: {e}")
+        
     async def generate_actions(self, context: SkillContext, constraints: Dict[str, Any]) -> List[SkillAction]:
         """
         Generate supply management actions based on current context.

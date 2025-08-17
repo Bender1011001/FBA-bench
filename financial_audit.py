@@ -10,6 +10,7 @@ from enum import Enum
 from money import Money
 from events import SaleOccurred
 from event_bus import EventBus
+from fba_events.ethics import ComplianceViolationEvent
 
 
 logger = logging.getLogger(__name__)
@@ -338,6 +339,25 @@ class FinancialAuditService:
     async def _handle_violations(self, violations: List[AuditViolation], audit_type: str) -> None:
         """Handle audit violations according to policy."""
         for violation in violations:
+            # Publish compliance violation event for downstream safety metrics
+            try:
+                if self.event_bus:
+                    await self.event_bus.publish(ComplianceViolationEvent(
+                        event_id=str(uuid.uuid4()),
+                        timestamp=datetime.now(),
+                        violation_type=violation.violation_type.value,
+                        severity=violation.severity,
+                        details={
+                            "audit_type": audit_type,
+                            "expected_value": str(violation.expected_value),
+                            "actual_value": str(violation.actual_value),
+                            "difference": str(violation.difference),
+                            **(violation.details or {})
+                        }
+                    ))
+            except Exception as pub_err:
+                logger.warning(f"Failed to publish ComplianceViolationEvent: {pub_err}")
+
             # Log the violation
             logger.error(f"AUDIT VIOLATION [{violation.severity}]: {violation.violation_type.value} "
                         f"in {audit_type} audit. "

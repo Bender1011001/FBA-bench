@@ -239,6 +239,37 @@ class MarketingManagerSkill(BaseSkill):
         actions.extend(campaign_actions)
         
         return actions
+
+    # Learning/adaptation hook: update elasticity and thresholds from outcomes
+    async def learn(self, outcome: SkillOutcome) -> None:
+        try:
+            # Update price elasticity heuristics if sales volume responded to actions
+            units = int(outcome.impact_metrics.get("units_sold", 0))
+            revenue = float(outcome.impact_metrics.get("revenue", 0.0))
+            profit = float(outcome.impact_metrics.get("profit", 0.0))
+            roi = float(outcome.impact_metrics.get("roi", 0.0))
+            # Simple adaptation: adjust confidence threshold based on ROI and success
+            if outcome.success and roi > 0:
+                self.adaptation_parameters["confidence_threshold"] = max(
+                    0.4, self.adaptation_parameters.get("confidence_threshold", 0.6) * 0.98
+                )
+            elif not outcome.success:
+                self.adaptation_parameters["confidence_threshold"] = min(
+                    0.9, self.adaptation_parameters.get("confidence_threshold", 0.6) * 1.02
+                )
+            # Persist a learned insight
+            lesson = f"Units={units}, Rev={revenue:.2f}, Profit={profit:.2f}, ROI={roi:.3f}"
+            self.update_skill_state(SkillOutcome(
+                action_id=outcome.action_id,
+                success=outcome.success,
+                impact_metrics=outcome.impact_metrics,
+                execution_time=outcome.execution_time,
+                resource_cost=outcome.resource_cost,
+                lessons_learned=[lesson],
+                confidence_validation=outcome.confidence_validation
+            ))
+        except Exception as e:
+            logger.warning(f"MarketingManagerSkill.learn failed: {e}")
     
     async def _handle_product_price_updated(self, event: ProductPriceUpdated) -> List[SkillAction]:
         """Handle price updates for tracking and analysis."""

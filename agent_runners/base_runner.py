@@ -79,6 +79,8 @@ class ToolCall:
     priority: int = 0
 
 
+from agents.skill_modules.base_skill import SkillOutcome
+
 class AgentRunner:
     """
     Abstract base class for all agent runners.
@@ -234,6 +236,16 @@ class AgentRunner:
         # Default adaptation: wrap the decision dict into a single ToolCall.
         return [ToolCall(tool_name="decision", parameters=decision, confidence=1.0)]
     
+    @abc.abstractmethod
+    async def learn(self, outcome: SkillOutcome) -> None:
+        """
+        Process the outcome of a decision cycle for learning and adaptation.
+
+        Args:
+            outcome: The SkillOutcome object detailing the results of the last action.
+        """
+        raise NotImplementedError("AgentRunner.learn must be implemented by subclasses")
+
     def update_context(self, context_update: Dict[str, Any]) -> None:
         """
         Update the agent's context.

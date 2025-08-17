@@ -230,6 +230,14 @@ class AgentManager:
         else:
             logger.warning(f"Agent {agent_id} not found, cannot deregister.")
 
+    def get_agent_runner(self, agent_id: str) -> Optional[AgentRunner]:
+        """
+        Retrieve the AgentRunner instance for a registered agent.
+        Returns None if the agent is not found or has no active runner.
+        """
+        reg = self.agent_registry.get_agent(agent_id)
+        return reg.runner if reg else None
+
     async def run_decision_cycle(self) -> None:
         """
         Executes a decision-making cycle for all active agents.
@@ -477,6 +485,26 @@ class UnifiedAgentRunnerWrapper(AgentRunner):
             logger.info(f"Unified agent runner wrapper {self.agent_id} cleaned up")
         except Exception as e:
             raise AgentRunnerCleanupError(f"Failed to cleanup unified agent runner {self.agent_id}: {e}")
+
+    async def learn(self, outcome: "SkillOutcome") -> None:
+        """
+        Forward learning signal to the underlying unified agent if supported.
+        Falls back to no-op if the agent doesn't expose a learn method.
+        """
+        try:
+            # Prefer a direct learn on unified runner
+            target = getattr(self.unified_runner, "learn", None)
+            if callable(target):
+                await target(outcome)
+                return
+            # Fallback to underlying agent's learn
+            agent_obj = getattr(self.unified_runner, "agent", None)
+            if agent_obj is not None:
+                agent_learn = getattr(agent_obj, "learn", None)
+                if callable(agent_learn):
+                    await agent_learn(outcome)
+        except Exception as e:
+            logger.warning(f"Unified agent {self.agent_id} learn() forwarding failed: {e}")
     
     def _convert_to_agent_context(self, state: SimulationState) -> AgentContext:
         """Convert a SimulationState to an AgentContext."""

@@ -196,7 +196,7 @@ class BsrEngineV3Service:
         conversion_index = _clamp((p_c + self.smoothing_eps) / denom_c, self.index_floor, self.index_ceiling)
         composite_index = _clamp((velocity_index * conversion_index) ** Decimal("0.5"), self.index_floor, self.index_ceiling)
 
-        # Apply reputation adjustment: low reputation dampens index
+        # Apply reputation adjustment: low reputation dampens index, very high slightly boosts
         rep_score = Decimal("0.7")
         try:
             if self._reputation_provider is not None:
@@ -204,8 +204,8 @@ class BsrEngineV3Service:
                 rep_score = _to_decimal(rep_val)
         except Exception:
             rep_score = Decimal("0.7")
-        # Map rep in [0,1] to factor in [0.5, 1.0]
-        rep_factor = _clamp(Decimal("0.5") + (rep_score * Decimal("0.5")), Decimal("0.5"), Decimal("1.0"))
+        # Map rep in [0,1] to factor in [0.4, 1.1] with gentle curve
+        rep_factor = _clamp(Decimal("0.4") + (rep_score * Decimal("0.7")), Decimal("0.4"), Decimal("1.1"))
         composite_index = _clamp(composite_index * rep_factor, self.index_floor, self.index_ceiling)
         
         # Quantize for determinism
