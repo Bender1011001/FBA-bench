@@ -98,10 +98,21 @@ class SetPriceCommand(Protocol):
     price: float
 
 
+@runtime_checkable
+class PlaceOrderCommand(Protocol):
+    """Structural protocol for supply chain order events."""
+    event_id: str
+    agent_id: str
+    supplier_id: str
+    asin: str
+    quantity: int
+
+
 __all__ = [
     "SimulationState",
     "ToolCall",
     "AgentObservation",
     "TickEvent",
     "SetPriceCommand",
+    "PlaceOrderCommand",
 ]

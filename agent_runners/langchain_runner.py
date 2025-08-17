@@ -13,6 +13,8 @@ from datetime import datetime
 
 from .base_runner import AgentRunner, AgentRunnerStatus, AgentRunnerError, AgentRunnerInitializationError, AgentRunnerDecisionError
 from benchmarking.config.pydantic_config import FrameworkType, LLMConfig, MemoryConfig
+from pydantic import ValidationError
+from fba_bench.core.llm_outputs import FbaDecision
 
 logger = logging.getLogger(__name__)
 
@@ -99,9 +101,9 @@ class LangChainRunner(AgentRunner):
         )
     
     def _create_llm(self) -> None:
-        """Create the LangChain LLM."""
+        """Create the LangChain LLM with JSON structured output enabled."""
         from langchain_openai import ChatOpenAI
-        
+
         # Create the LLM
         self.llm = ChatOpenAI(
             model=self.llm_config.model,
@@ -109,12 +111,14 @@ class LangChainRunner(AgentRunner):
             base_url=self.llm_config.base_url,
             max_tokens=self.llm_config.max_tokens,
             temperature=self.llm_config.temperature,
+            # Enforce JSON-object responses to align with Pydantic schema parsing
             model_kwargs={
                 "top_p": self.llm_config.top_p,
-                "request_timeout": self.llm_config.timeout
-            }
+                "request_timeout": self.llm_config.timeout,
+                "response_format": {"type": "json_object"},
+            },
         )
-        
+
         logger.debug(f"Created LangChain LLM with model: {self.llm_config.model}")
     
     def _create_memory(self) -> None:
@@ -170,6 +174,7 @@ class LangChainRunner(AgentRunner):
         agent_params = self.config.get('parameters', {})
         
         # Create the agent
+        schema_text = json.dumps(FbaDecision.model_json_schema(), indent=2)
         self.agent = initialize_agent(
             tools=self.tools,
             llm=self.llm,
@@ -177,11 +182,20 @@ class LangChainRunner(AgentRunner):
             verbose=False,
             memory=self.memory,
             agent_kwargs={
-                "prefix": agent_params.get('prefix', "You are an FBA pricing expert. Your goal is to optimize product pricing for maximum profit."),
-                "suffix": agent_params.get('suffix', "Begin! When you have a final answer, provide it in JSON format with ASINs as keys and objects containing 'price' (numeric) and 'reasoning' (string) as values.")
-            }
+                "prefix": agent_params.get(
+                    'prefix',
+                    "You are an FBA pricing expert. Your goal is to optimize product pricing for maximum profit."
+                ),
+                "suffix": agent_params.get(
+                    'suffix',
+                    "Respond ONLY with a valid JSON object that conforms exactly to this schema:\n"
+                    f"{schema_text}\n"
+                    "Do not include any prose or explanation outside the JSON. "
+                    "Use floating-point dollars for prices (e.g., 19.99)."
+                ),
+            },
         )
-        
+
         logger.debug("Created LangChain agent")
     
     def make_decision(self, context: Dict[str, Any]) -> Dict[str, Any]:
@@ -204,7 +218,7 @@ class LangChainRunner(AgentRunner):
             # Execute the agent
             result = self.agent.run(input_text)
             
-            # Parse the result
+            # Parse and validate structured output using Pydantic
             decision = self._parse_langchain_result(result)
             
             # Update metrics
@@ -264,75 +278,50 @@ class LangChainRunner(AgentRunner):
         return input_text
     
     def _parse_langchain_result(self, result: Any) -> Dict[str, Any]:
-        """Parse the result from the LangChain agent."""
-        decision = {
-            'agent_id': self.agent_id,
-            'framework': 'LangChain',
-            'timestamp': datetime.now().isoformat(),
-            'pricing_decisions': {},
-            'reasoning': ''
-        }
-        
-        try:
-            # Convert result to string if it's not already
-            result_str = str(result)
-            
-            # Try to parse as JSON
+        """
+        Validate the LLM output against the FbaDecision schema and adapt to legacy dict format.
+        Raises AgentRunnerDecisionError if validation fails.
+        """
+        # Ensure we have raw JSON text
+        raw_text = result if isinstance(result, str) else str(result)
+
+        # Attempt to extract a JSON object if the response accidentally contains prose
+        json_text = raw_text
+        if not raw_text.strip().startswith("{"):
             try:
-                pricing_data = json.loads(result_str)
-                
-                # Extract pricing decisions
-                if isinstance(pricing_data, dict):
-                    for asin, price_data in pricing_data.items():
-                        if isinstance(price_data, dict):
-                            decision['pricing_decisions'][asin] = {
-                                'price': float(price_data.get('price', 0)),
-                                'confidence': float(price_data.get('confidence', 0.8)),
-                                'reasoning': price_data.get('reasoning', 'LangChain pricing decision')
-                            }
-                        elif isinstance(price_data, (int, float)):
-                            decision['pricing_decisions'][asin] = {
-                                'price': float(price_data),
-                                'confidence': 0.8,
-                                'reasoning': 'LangChain pricing decision'
-                            }
-                
-                decision['reasoning'] = "Successfully parsed LangChain pricing decisions"
-                
-            except json.JSONDecodeError:
-                # If not JSON, try to extract pricing information using regex
-                price_pattern = r'(?:price|pricing|cost)\s*[:=]?\s*\$?(\d+(?:\.\d+)?)'
-                matches = re.findall(price_pattern, result_str, re.IGNORECASE)
-                
-                if matches:
-                    # Create generic pricing decisions
-                    for i, price in enumerate(matches):
-                        decision['pricing_decisions'][f'product_{i+1}'] = {
-                            'price': float(price),
-                            'confidence': 0.6,
-                            'reasoning': 'Extracted from LangChain text response'
-                        }
-                    
-                    decision['reasoning'] = "Extracted pricing information from LangChain text response"
-                else:
-                    # Fallback to a default decision
-                    decision['pricing_decisions']['default'] = {
-                        'price': 10.0,
-                        'confidence': 0.3,
-                        'reasoning': 'Fallback decision due to unparseable LangChain response'
-                    }
-                    decision['reasoning'] = "Could not parse LangChain response, using fallback"
-            
-        except Exception as e:
-            logger.error(f"Error parsing LangChain result: {e}")
-            decision['pricing_decisions']['default'] = {
-                'price': 10.0,
-                'confidence': 0.1,
-                'reasoning': f'Error parsing result: {str(e)}'
+                start = raw_text.index("{")
+                end = raw_text.rindex("}") + 1
+                json_text = raw_text[start:end]
+            except Exception:
+                json_text = raw_text  # fallback; validation will fail with clear error
+
+        try:
+            validated: FbaDecision = FbaDecision.model_validate_json(json_text)
+        except ValidationError as e:
+            logger.error(f"LLM output validation failed: {e}")
+            raise AgentRunnerDecisionError(
+                f"Decision making failed for LangChain agent {self.agent_id}: invalid structured output",
+                agent_id=self.agent_id,
+                framework="LangChain",
+            ) from e
+
+        # Adapt to legacy decision dict shape expected downstream
+        adapted: Dict[str, Any] = {
+            "agent_id": self.agent_id,
+            "framework": "LangChain",
+            "timestamp": datetime.now().isoformat(),
+            "pricing_decisions": {},
+            "reasoning": "Validated structured output",
+        }
+        for pd in validated.pricing_decisions:
+            adapted["pricing_decisions"][pd.asin] = {
+                "price": float(pd.new_price),
+                "confidence": 0.9,
+                "reasoning": pd.reasoning,
             }
-            decision['reasoning'] = f"Error parsing LangChain result: {str(e)}"
-        
-        return decision
+        if validated.meta:
+            adapted["meta"] = validated.meta
+        return adapted
     
     def _do_cleanup(self) -> None:
         """Clean up LangChain resources."""

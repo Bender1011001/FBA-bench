@@ -13,6 +13,8 @@ from datetime import datetime
 
 from .base_runner import AgentRunner, AgentRunnerStatus, AgentRunnerError, AgentRunnerInitializationError, AgentRunnerDecisionError
 from benchmarking.config.pydantic_config import FrameworkType, LLMConfig, CrewConfig
+from pydantic import ValidationError
+from fba_bench.core.llm_outputs import FbaDecision
 
 logger = logging.getLogger(__name__)
 
@@ -162,7 +164,7 @@ class CrewAIRunner(AgentRunner):
             # Execute the crew
             result = self.crew.kickoff()
             
-            # Parse the result
+            # Parse and validate structured output using Pydantic
             decision = self._parse_crewai_result(result)
             
             # Update metrics
@@ -216,80 +218,60 @@ class CrewAIRunner(AgentRunner):
             for event in recent_events[-5:]:  # Only include last 5 events
                 task_description += f"- {event}\n"
         
-        task_description += "\nProvide your response as a JSON object with ASINs as keys and objects containing 'price' (numeric) and 'reasoning' (string) as values."
-        
+        # Require exact schema compliance for robust parsing
+        schema_text = json.dumps(FbaDecision.model_json_schema(), indent=2)
+        task_description += (
+            "\nRespond ONLY with a valid JSON object that conforms exactly to this schema:\n"
+            f"{schema_text}\n"
+            "Do not include any prose or explanation outside the JSON. "
+            "Use floating-point dollars for prices (e.g., 19.99)."
+        )
+
         return task_description
     
     def _parse_crewai_result(self, result: Any) -> Dict[str, Any]:
-        """Parse the result from the CrewAI agent."""
-        decision = {
-            'agent_id': self.agent_id,
-            'framework': 'CrewAI',
-            'timestamp': datetime.now().isoformat(),
-            'pricing_decisions': {},
-            'reasoning': ''
-        }
-        
-        try:
-            # Convert result to string if it's not already
-            result_str = str(result)
-            
-            # Try to parse as JSON
+        """
+        Validate the LLM output against the FbaDecision schema and adapt to legacy dict format.
+        Raises AgentRunnerDecisionError if validation fails.
+        """
+        raw_text = result if isinstance(result, str) else str(result)
+
+        json_text = raw_text
+        if not raw_text.strip().startswith("{"):
             try:
-                pricing_data = json.loads(result_str)
-                
-                # Extract pricing decisions
-                if isinstance(pricing_data, dict):
-                    for asin, price_data in pricing_data.items():
-                        if isinstance(price_data, dict):
-                            decision['pricing_decisions'][asin] = {
-                                'price': float(price_data.get('price', 0)),
-                                'confidence': float(price_data.get('confidence', 0.8)),
-                                'reasoning': price_data.get('reasoning', 'CrewAI pricing decision')
-                            }
-                        elif isinstance(price_data, (int, float)):
-                            decision['pricing_decisions'][asin] = {
-                                'price': float(price_data),
-                                'confidence': 0.8,
-                                'reasoning': 'CrewAI pricing decision'
-                            }
-                
-                decision['reasoning'] = "Successfully parsed CrewAI pricing decisions"
-                
-            except json.JSONDecodeError:
-                # If not JSON, try to extract pricing information using regex
-                price_pattern = r'(?:price|pricing|cost)\s*[:=]?\s*\$?(\d+(?:\.\d+)?)'
-                matches = re.findall(price_pattern, result_str, re.IGNORECASE)
-                
-                if matches:
-                    # Create generic pricing decisions
-                    for i, price in enumerate(matches):
-                        decision['pricing_decisions'][f'product_{i+1}'] = {
-                            'price': float(price),
-                            'confidence': 0.6,
-                            'reasoning': 'Extracted from CrewAI text response'
-                        }
-                    
-                    decision['reasoning'] = "Extracted pricing information from CrewAI text response"
-                else:
-                    # Fallback to a default decision
-                    decision['pricing_decisions']['default'] = {
-                        'price': 10.0,
-                        'confidence': 0.3,
-                        'reasoning': 'Fallback decision due to unparseable CrewAI response'
-                    }
-                    decision['reasoning'] = "Could not parse CrewAI response, using fallback"
-            
-        except Exception as e:
-            logger.error(f"Error parsing CrewAI result: {e}")
-            decision['pricing_decisions']['default'] = {
-                'price': 10.0,
-                'confidence': 0.1,
-                'reasoning': f'Error parsing result: {str(e)}'
+                start = raw_text.index("{")
+                end = raw_text.rindex("}") + 1
+                json_text = raw_text[start:end]
+            except Exception:
+                json_text = raw_text
+
+        try:
+            validated: FbaDecision = FbaDecision.model_validate_json(json_text)
+        except ValidationError as e:
+            logger.error(f"LLM output validation failed: {e}")
+            raise AgentRunnerDecisionError(
+                f"Decision making failed for CrewAI agent {self.agent_id}: invalid structured output",
+                agent_id=self.agent_id,
+                framework="CrewAI",
+            ) from e
+
+        # Build adapted legacy-shaped decision dict
+        adapted: Dict[str, Any] = {
+            "agent_id": self.agent_id,
+            "framework": "CrewAI",
+            "timestamp": datetime.now().isoformat(),
+            "pricing_decisions": {},
+            "reasoning": "Validated structured output",
+        }
+        for pd in validated.pricing_decisions:
+            adapted["pricing_decisions"][pd.asin] = {
+                "price": float(pd.new_price),
+                "confidence": 0.9,
+                "reasoning": pd.reasoning,
             }
-            decision['reasoning'] = f"Error parsing CrewAI result: {str(e)}"
-        
-        return decision
+        if validated.meta:
+            adapted["meta"] = validated.meta
+        return adapted
     
     def _do_cleanup(self) -> None:
         """Clean up CrewAI resources."""

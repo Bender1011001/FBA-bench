@@ -14,7 +14,11 @@ from benchmarking.scenarios.base import BaseScenario, ScenarioConfig
 from benchmarking.core.results import AgentRunResult
 from benchmarking.agents.base import BaseAgent
 from services.world_store import WorldStore
+from services.market_simulator import MarketSimulationService
+from services.supply_chain_service import SupplyChainService
 from pydantic import Field, PositiveInt, confloat
+from money import Money
+from fba_events.supplier import PlaceOrderCommand
 
 logger = logging.getLogger(__name__)
 
@@ -70,13 +74,24 @@ class SupplyChainDisruptionScenario(BaseScenario):
     async def setup(self, *args, **kwargs) -> None:
         """
         Set up the supply chain disruption scenario.
-        Initialize inventory and supply levels.
+        Initialize inventory and supply levels, and ensure WorldStore has the product.
         """
         logger.info(f"Setting up Supply Chain Disruption Scenario: {self.scenario_id}")
         self.current_tick = 0
         self.current_inventory = self.initial_inventory
         self.total_revenue_lost = 0.0
         self.current_supply_per_tick = self.original_supply_per_tick
+
+        world_store: Optional[WorldStore] = kwargs.get("world_store")
+        if world_store:
+            # Initialize product in canonical state with a reasonable default price
+            try:
+                world_store.initialize_product(self.product_asin, Money.from_dollars("25.00"), initial_inventory=self.initial_inventory)
+                logger.info(f"Product {self.product_asin} initialized in WorldStore with initial inventory {self.initial_inventory}.")
+            except Exception:
+                # If initialize_product already done, ensure inventory aligns
+                pass
+
         logger.info(f"Initial inventory for {self.product_asin}: {self.initial_inventory}")
 
     async def run(self, agent: BaseAgent, run_number: int, *args, **kwargs) -> AgentRunResult:
@@ -96,10 +111,10 @@ class SupplyChainDisruptionScenario(BaseScenario):
         else:
             self.current_supply_per_tick = self.original_supply_per_tick
 
-        # Simulate demand
-        actual_demand = self.demand_per_tick # Simplified for now, can add variability
-        
-        # Agent decides on actions (e.g., re-order, change pricing, communicate with customers)
+        # Simulate demand placeholder (for metrics); MarketSimulationService computes realized sales
+        actual_demand = self.demand_per_tick
+
+        # Agent decides on actions (e.g., place replenishment orders)
         agent_decision_output: Dict[str, Any] = {}
         success = True
         errors: List[str] = []
@@ -116,44 +131,81 @@ class SupplyChainDisruptionScenario(BaseScenario):
             }
             agent_decision_output = await agent.decide(agent_input)
 
-            # Agent's mitigation actions could be processed here by WorldStore
-            # For this scenario, we primarily track inventory and revenue loss
-            # Example: Agent might request a new supply order, which would update current_inventory
-            # This would typically involve an interaction with WorldStore through EventBus
-            # For now, we'll assume the agent's "decision" itself is the metric.
+            # Publish PlaceOrderCommand if agent proposed one
+            event_bus = kwargs.get("event_bus")
+            world_store: Optional[WorldStore] = kwargs.get("world_store")
+            supply_chain: Optional[SupplyChainService] = kwargs.get("supply_chain_service")
+            market_simulator: Optional[MarketSimulationService] = kwargs.get("market_simulator")
+
+            prev_inventory = world_store.get_product_inventory_quantity(self.product_asin) if world_store else self.current_inventory
+
+            if event_bus and world_store:
+                order_qty = int(agent_decision_output.get("order_quantity", 0) or 0)
+                if order_qty > 0:
+                    supplier_id = str(agent_decision_output.get("supplier_id", "default_supplier"))
+                    max_unit_price = float(agent_decision_output.get("max_unit_price", 100.0))
+                    cmd = PlaceOrderCommand(
+                        event_id=f"order_{agent.agent_id}_{self.current_tick}",
+                        timestamp=datetime.now(),
+                        agent_id=agent.agent_id,
+                        supplier_id=supplier_id,
+                        asin=self.product_asin,
+                        quantity=order_qty,
+                        max_price=Money.from_dollars(f"{max_unit_price:.2f}"),
+                        reason="SupplyChainDisruptionScenario",
+                    )
+                    await event_bus.publish(cmd)
+                    logger.info(f"Published PlaceOrderCommand for {self.product_asin} qty={order_qty} supplier={supplier_id}")
+
+            # Apply disruption to supply chain parameters this tick
+            if kwargs.get("supply_chain_service"):
+                disruption_active = (self.disruption_start_tick <= self.current_tick <
+                                     self.disruption_start_tick + self.disruption_duration_ticks)
+                # Increase lead time by 1x magnitude in disruption window and reduce fulfillment rate
+                kwargs["supply_chain_service"].set_disruption(
+                    active=disruption_active,
+                    lead_time_increase=max(0, int(round(self.disruption_magnitude * 2))),
+                    fulfillment_rate=max(0.0, 1.0 - self.disruption_magnitude),
+                )
+                # Process arrivals for this tick
+                await kwargs["supply_chain_service"].process_tick()
+
+            # Run market processing for this ASIN for the tick
+            if market_simulator and hasattr(market_simulator, "process_for_asin"):
+                await market_simulator.process_for_asin(self.product_asin)
+
+            # Read updated inventory and infer units sold
+            latest_inventory = world_store.get_product_inventory_quantity(self.product_asin) if world_store else prev_inventory
+            units_sold = max(0, prev_inventory - latest_inventory)
+            unmet_demand = max(0, actual_demand - units_sold)
+
+            if unmet_demand > 0:
+                # Estimate lost revenue using current canonical price (fallback $100 if unavailable)
+                price_money = world_store.get_product_state(self.product_asin).price if world_store else Money(10000)
+                unit_price = float(price_money.cents) / 100.0
+                lost_revenue_this_tick = unmet_demand * unit_price
+                self.total_revenue_lost += lost_revenue_this_tick
+                logger.warning(f"Unmet demand: {unmet_demand}. Lost revenue this tick: ${lost_revenue_this_tick:.2f}")
             
         except Exception as e:
             logger.error(f"Error in Supply Chain Disruption scenario run for agent {agent.agent_id}: {e}")
             success = False
             errors.append(str(e))
-            # If agent fails, assume no effective mitigation
-
-        # Update inventory based on supply and demand
-        self.current_inventory += self.current_supply_per_tick # New supply arrives
-        
-        # Fulfill demand as much as possible
-        units_sold = min(actual_demand, self.current_inventory)
-        self.current_inventory -= units_sold
-
-        # Calculate lost revenue due to unmet demand
-        unmet_demand = actual_demand - units_sold
-        if unmet_demand > 0:
-            # Assuming a standard price of 100 per unit for lost revenue calculation
-            lost_revenue_this_tick = unmet_demand * 100.0 # Placeholder price
-            self.total_revenue_lost += lost_revenue_this_tick
-            logger.warning(f"Unmet demand: {unmet_demand}. Lost revenue this tick: ${lost_revenue_this_tick:.2f}")
+            units_sold = 0
+            unmet_demand = actual_demand
 
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds()
 
         metrics = {
-            "current_inventory": self.current_inventory,
+            "current_inventory": (world_store.get_product_inventory_quantity(self.product_asin) if world_store else self.current_inventory),
             "units_sold_this_tick": units_sold,
             "unmet_demand_this_tick": unmet_demand,
             "total_revenue_lost_so_far": self.total_revenue_lost,
             "supply_rate_this_tick": self.current_supply_per_tick,
-            "is_disruption_active": (self.disruption_start_tick <= self.current_tick < \
-                                     self.disruption_start_tick + self.disruption_duration_ticks)
+            "is_disruption_active": (self.disruption_start_tick <= self.current_tick <
+                                     self.disruption_start_tick + self.disruption_duration_ticks),
+            "stockout": (world_store.get_product_inventory_quantity(self.product_asin) == 0) if world_store else False,
         }
 
         self.current_tick += 1
