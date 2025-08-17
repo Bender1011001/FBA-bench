@@ -910,29 +910,92 @@ class AgentFactory:
     
     def _create_diy_agent(self, agent_id: str, config: PydanticAgentConfig,
                          adapter_class: Type[BaseUnifiedAgent]) -> BaseUnifiedAgent:
-        """Create a DIY agent instance."""
+        """
+        Create a DIY/baseline agent instance (Greedy/LLM/Advanced) in a unified way.
+ 
+        This consolidates the legacy BotFactory behavior into the unified factory. The selection
+        is controlled via config.parameters and optional config.custom_config values:
+          - parameters.agent_type: 'baseline' | 'llm' | 'advanced'
+          - parameters.bot_name: 'GreedyScript' | 'GPT-3.5' | 'GPT-4o mini-budget' | 'Grok-4' | 'Claude 3.5 Sonnet'
+          - parameters.strategy / other fields are passed through
+          - custom_config._services: injected by AgentManager, contains world_store, budget_enforcer,
+            trust_metrics, agent_gateway, openrouter_api_key
+        """
+        from typing import cast
+ 
         agent_params = config.parameters or {}
-        agent_type = agent_params.get('agent_type', 'baseline')
-        
+        custom_config = config.custom_config or {}
+        services = (custom_config.get("_services") or {})
+ 
+        agent_type = agent_params.get('agent_type', 'baseline').lower()
+        bot_name = agent_params.get('bot_name') or agent_params.get('bot_type')  # support both keys
+ 
         try:
-            if agent_type == 'baseline':
+            if agent_type == 'baseline' and (bot_name is None or bot_name == 'GreedyScript'):
+                # Greedy rule-based bot
                 from baseline_bots.greedy_script_bot import GreedyScriptBot
-                diy_agent = GreedyScriptBot(config.dict())
-            elif agent_type == 'llm':
+                # Allow tier-style knobs via parameters or custom_config
+                reorder_threshold = agent_params.get('reorder_threshold') or custom_config.get('reorder_threshold', 10)
+                reorder_quantity = agent_params.get('reorder_quantity') or custom_config.get('reorder_quantity', 50)
+                diy_agent = GreedyScriptBot(reorder_threshold=int(reorder_threshold), reorder_quantity=int(reorder_quantity))
+                return adapter_class(agent_id, config, diy_agent)
+ 
+            if agent_type in ('llm', 'baseline'):
+                # Build LLM-based baseline bots using shared dependencies
+                from llm_interface.openrouter_client import OpenRouterClient
+                from llm_interface.prompt_adapter import PromptAdapter
+                from llm_interface.response_parser import LLMResponseParser
+                from baseline_bots.gpt_3_5_bot import GPT35Bot
+                from baseline_bots.gpt_4o_mini_bot import GPT4oMiniBot
+                from baseline_bots.grok_4_bot import Grok4Bot
                 from baseline_bots.claude_sonnet_bot import ClaudeSonnetBot
-                diy_agent = ClaudeSonnetBot(config.dict())
-            elif agent_type == 'advanced':
+ 
+                world_store = services.get('world_store')
+                budget_enforcer = services.get('budget_enforcer')
+                trust_metrics = services.get('trust_metrics')
+                agent_gateway = services.get('agent_gateway')
+ 
+                if not (world_store and budget_enforcer and trust_metrics and agent_gateway):
+                    raise ValueError("Unified DIY LLM agent requires world_store, budget_enforcer, trust_metrics, and agent_gateway services.")
+ 
+                api_key = (config.llm_config or {}).get('api_key') or services.get('openrouter_api_key')
+                model_name = (config.llm_config or {}).get('model')
+                temperature = (config.llm_config or {}).get('temperature', 0.1)
+                max_tokens = (config.llm_config or {}).get('max_tokens', 1000)
+                top_p = (config.llm_config or {}).get('top_p', 1.0)
+ 
+                llm_client = OpenRouterClient(model_name=model_name, api_key=api_key)
+                prompt_adapter = PromptAdapter(world_store, budget_enforcer)
+                response_parser = LLMResponseParser(trust_metrics)
+                model_params = {
+                    "temperature": temperature,
+                    "max_tokens_per_action": max_tokens,
+                    "top_p": top_p,
+                }
+ 
+                # Choose concrete bot by bot_name or fallback to GPT-3.5
+                chosen = (bot_name or "").lower() if bot_name else ""
+                if 'claude' in chosen or 'sonnet' in chosen:
+                    diy_agent = ClaudeSonnetBot(agent_id, llm_client, prompt_adapter, response_parser, agent_gateway, model_params)
+                elif '4o' in chosen:
+                    diy_agent = GPT4oMiniBot(agent_id, llm_client, prompt_adapter, response_parser, agent_gateway, model_params)
+                elif 'grok' in chosen:
+                    diy_agent = Grok4Bot(agent_id, llm_client, prompt_adapter, response_parser, agent_gateway, model_params)
+                else:
+                    diy_agent = GPT35Bot(agent_id, llm_client, prompt_adapter, response_parser, agent_gateway, model_params)
+ 
+                return adapter_class(agent_id, config, diy_agent)
+ 
+            if agent_type == 'advanced':
                 from agents.advanced_agent import AdvancedAgent
                 diy_agent = AdvancedAgent(config.dict())
-            else:
-                # Default to a simple agent
-                diy_agent = self._create_default_agent(config)
-            
-            return adapter_class(agent_id, config, diy_agent)
-            
+                return adapter_class(agent_id, config, diy_agent)
+ 
+            # Default fallback
+            return adapter_class(agent_id, config, self._create_default_agent(config))
+ 
         except ImportError as e:
             logger.error(f"DIY agent type '{agent_type}' not available: {e}")
-            # Fall back to default agent
             return adapter_class(agent_id, config, self._create_default_agent(config))
         except Exception as e:
             logger.error(f"Error creating DIY agent: {e}")

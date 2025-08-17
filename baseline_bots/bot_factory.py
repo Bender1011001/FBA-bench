@@ -1,136 +1,33 @@
-import os
-import yaml
-import inspect
-from typing import Dict, Any, Type, Optional
+# DEPRECATED: BotFactory has been consolidated into benchmarking.agents.unified_agent.AgentFactory
+# This module remains importable for legacy patches, but methods raise to guide callers.
 
-from llm_interface.contract import BaseLLMClient
-from llm_interface.openrouter_client import OpenRouterClient
-from llm_interface.prompt_adapter import PromptAdapter
-from llm_interface.response_parser import LLMResponseParser
+import logging
+from typing import Any, Dict, Optional
 
-from constraints.budget_enforcer import BudgetEnforcer
-from constraints.agent_gateway import AgentGateway
+logger = logging.getLogger(__name__)
 
-from services.world_store import WorldStore
-from metrics.trust_metrics import TrustMetrics # Assuming this will be used by ResponseParser
 
-# Import bot implementations
-from baseline_bots.greedy_script_bot import GreedyScriptBot, SimulationState as GreedySimulationState
-from baseline_bots.gpt_3_5_bot import GPT35Bot, SimulationState as LLMSimulationState
-from baseline_bots.gpt_4o_mini_bot import GPT4oMiniBot
-from baseline_bots.grok_4_bot import Grok4Bot
-from baseline_bots.claude_sonnet_bot import ClaudeSonnetBot
+class BotFactory:  # legacy shim
+    def __init__(
+        self,
+        config_dir: str = "baseline_bots/configs",
+        world_store: Optional[Any] = None,
+        budget_enforcer: Optional[Any] = None,
+        trust_metrics: Optional[Any] = None,
+        agent_gateway: Optional[Any] = None,
+        openrouter_api_key: Optional[str] = None,
+    ):
+        logger.warning(
+            "baseline_bots.bot_factory.BotFactory is deprecated. "
+            "Use benchmarking.agents.unified_agent.AgentFactory via AgentManager."
+        )
 
-class BotFactory:
-    def __init__(self, 
-                 config_dir: str = "baseline_bots/configs",
-                 world_store: Optional[WorldStore] = None,
-                 budget_enforcer: Optional[BudgetEnforcer] = None,
-                 trust_metrics: Optional[TrustMetrics] = None, # Used by LLMResponseParser
-                 agent_gateway: Optional[AgentGateway] = None,
-                 openrouter_api_key: Optional[str] = None):
-        
-        self.config_dir = os.path.join(os.getcwd(), config_dir)
-        self.world_store = world_store
-        self.budget_enforcer = budget_enforcer
-        self.trust_metrics = trust_metrics
-        self.agent_gateway = agent_gateway
-        self.openrouter_api_key = openrouter_api_key
-
-        self.bot_configs: Dict[str, Dict[str, Any]] = self._load_bot_configs()
-        self.bot_classes: Dict[str, Type] = {
-            "GreedyScript": GreedyScriptBot,
-            "GPT-3.5": GPT35Bot,
-            "GPT-4o mini-budget": GPT4oMiniBot,
-            "Grok-4": Grok4Bot,
-            "Claude 3.5 Sonnet": ClaudeSonnetBot,
-        }
-
-    def _load_bot_configs(self) -> Dict[str, Dict[str, Any]]:
-        configs = {}
-        for filename in os.listdir(self.config_dir):
-            if filename.endswith(".yaml"):
-                filepath = os.path.join(self.config_dir, filename)
-                with open(filepath, 'r') as f:
-                    config = yaml.safe_load(f)
-                    bot_name = config.get("bot_name")
-                    if bot_name:
-                        configs[bot_name] = config
-        return configs
-
-    def create_bot(self, bot_name: str, tier: str):
-        config = self.bot_configs.get(bot_name)
-        if not config:
-            raise ValueError(f"Bot configuration not found for: {bot_name}")
-
-        bot_class = self.bot_classes.get(bot_name)
-        if not bot_class:
-            raise ValueError(f"Bot class not found for: {bot_name}")
-
-        tier_config = config.get("tier_configs", {}).get(tier)
-        if not tier_config:
-            raise ValueError(f"Tier configuration '{tier}' not found for bot: {bot_name}")
-
-        # Common parameters for LLM bots
-        llm_client = None
-        prompt_adapter = None
-        response_parser = None
-        agent_gateway = None
-
-        if issubclass(bot_class, (GPT35Bot, GPT4oMiniBot, Grok4Bot, ClaudeSonnetBot)):
-            # LLM-based bot, ensure dependencies are available
-            if not self.world_store or not self.budget_enforcer or not self.trust_metrics:
-                raise ValueError("WorldStore, BudgetEnforcer, and TrustMetrics instances are required for LLM-based bots.")
-            
-            # Re-initialize AgentGateway if not already provided or if it needs specific WorldStore/BudgetEnforcer
-            # For now, let's assume it's passed or can be instantiated simply if dependencies are there.
-            if not self.agent_gateway:
-                # If agent_gateway is not explicitly passed, create a new one.
-                # Note: This might lead to multiple gateway instances per simulation depending on how it's used.
-                # Ideally, a single AgentGateway instance is managed by the simulation orchestrator.
-                # For this factory, we'll ensure it has the core dependencies required.
-                from event_bus import get_event_bus # Assuming event_bus is accessible
-                agent_gateway = AgentGateway(self.budget_enforcer, get_event_bus())
-            else:
-                agent_gateway = self.agent_gateway
-
-            # LLM Client
-            llm_client = OpenRouterClient(
-                model_name=config["model"], 
-                api_key=self.openrouter_api_key
-            )
-            
-            # Prompt Adapter
-            prompt_adapter = PromptAdapter(self.world_store, self.budget_enforcer)
-            
-            # Response Parser
-            response_parser = LLMResponseParser(self.trust_metrics) # Requires TrustMetrics
-
-            # Model specific parameters for LLM bots
-            model_params = {
-                "max_tokens_per_action": tier_config.get("max_tokens_per_action"),
-                "temperature": tier_config.get("temperature"),
-                "top_p": tier_config.get("top_p", 1.0) # Default for top_p if not in config
-            }
-
-            # Instantiate LLM bots with their specific dependencies
-            if bot_class == GPT35Bot:
-                return GPT35Bot(bot_name, llm_client, prompt_adapter, response_parser, agent_gateway, model_params)
-            elif bot_class == GPT4oMiniBot:
-                return GPT4oMiniBot(bot_name, llm_client, prompt_adapter, response_parser, agent_gateway, model_params)
-            elif bot_class == Grok4Bot:
-                return Grok4Bot(bot_name, llm_client, prompt_adapter, response_parser, agent_gateway, model_params)
-            elif bot_class == ClaudeSonnetBot:
-                return ClaudeSonnetBot(bot_name, llm_client, prompt_adapter, response_parser, agent_gateway, model_params)
-
-        elif bot_class == GreedyScriptBot:
-            # GreedyScriptBot does not need LLM-related dependencies
-            reorder_threshold = tier_config.get("reorder_threshold", 10) # Example default
-            reorder_quantity = tier_config.get("reorder_quantity", 50) # Example default
-            return GreedyScriptBot(reorder_threshold=reorder_threshold, reorder_quantity=reorder_quantity)
-        
-        else:
-            raise NotImplementedError(f"Bot type {bot_name} not supported by factory.")
+    @staticmethod
+    def create_bot(bot_name: str, tier: str = "T1") -> Any:
+        raise ImportError(
+            "BotFactory.create_bot is deprecated. "
+            "Use AgentManager with unified AgentFactory to create DIY/baseline agents."
+        )
 
 # Example usage (for testing/demonstration)
 # if __name__ == "__main__":

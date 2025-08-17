@@ -55,96 +55,91 @@ class PriceOptimizationScenario(BaseScenario):
     async def run(self, agent: BaseAgent, run_number: int, *args, **kwargs) -> AgentRunResult:
         """
         Execute a single iteration (tick) of the price optimization scenario.
-        An agent will make pricing decisions and the market response will be simulated.
+        New orchestration:
+          1) Agent proposes a price.
+          2) Scenario publishes a SetPriceCommand to the EventBus.
+          3) MarketSimulationService processes demand and publishes SaleOccurred.
+          4) Scenario reads world state to populate AgentRunResult.
         """
+        from fba_events.pricing import SetPriceCommand  # Ensure proper event class
+ 
         start_time = datetime.now()
         logger.info(f"Running Price Optimization for agent {agent.agent_id}, run {run_number}, tick {self.current_tick}")
-
+ 
+        revenue_this_tick = Money.zero()
+        units_sold = 0
+        success = True
+        errors: List[str] = []
+ 
         try:
-            # Get current product state from world_store
             world_store = kwargs.get("world_store")
+            event_bus = kwargs.get("event_bus")
+            market_simulator = kwargs.get("market_simulator")  # Optional direct service reference
+ 
             current_product_state = world_store.get_product_state(self.product_asin) if world_store else None
-            
-            # Simulate agent's pricing decision using hypothetical price setting tool
-            # The agent would call a tool like 'set_price'
+ 
+            # Ask agent for price
             agent_input = {
                 "current_product_price": str(current_product_state.price) if current_product_state else str(self.current_price),
                 "product_asin": self.product_asin,
                 "current_tick": self.current_tick,
-                "sales_history": [] # In a real scenario, full history would be provided
+                "sales_history": []
             }
             agent_decision_output = await agent.decide(agent_input)
-
-            # Extract new price from agent's decision, if available
+ 
+            prev_inventory = world_store.get_product_inventory_quantity(self.product_asin) if world_store else 0
+ 
+            # Publish SetPriceCommand
             new_price_str = agent_decision_output.get("new_price")
-            if new_price_str:
+            if new_price_str and event_bus and world_store:
                 proposed_price = Money(new_price_str)
-                # In a real system, WorldStore's handle_set_price_command would manage this.
-                # Here, we directly update for simplicity in scenario.
-                if world_store:
-                    # Publish event to WorldStore for arbitration
-                    event_bus = kwargs.get("event_bus")
-                    if event_bus:
-                        await event_bus.publish("SetPriceCommand", {
-                            "agent_id": agent.agent_id,
-                            "asin": self.product_asin,
-                            "new_price": proposed_price
-                        })
-                        # Assuming WorldStore will eventually update the actual state and we will observe it next tick.
-                        # For this tick, we can use the proposed price for simulation calculation
-                        self.current_price = proposed_price # Temporary, WorldStore is canonical truth
-                        logger.info(f"Agent {agent.agent_id} proposed new price: {proposed_price}")
-                    else:
-                        logger.warning("Event bus not available, cannot publish SetPriceCommand.")
-                        self.current_price = proposed_price
-                else:
-                    self.current_price = proposed_price
+                cmd = SetPriceCommand(
+                    event_id=f"set_price_{agent.agent_id}_{self.current_tick}",
+                    timestamp=datetime.now(),
+                    agent_id=agent.agent_id,
+                    asin=self.product_asin,
+                    new_price=proposed_price,
+                    reason="PriceOptimizationScenario"
+                )
+                await event_bus.publish(cmd)
+                logger.info(f"Published SetPriceCommand for {self.product_asin} at {proposed_price}")
             else:
-                logger.info(f"Agent {agent.agent_id} did not propose new price, current price {self.current_price} retained.")
-
-            # Simulate units sold based on price and demand elasticity
-            # Simplified demand model: quantity = base_demand * (current_price / initial_product_price)^(-elasticity)
-            base_demand = 100 
-            price_ratio = self.current_price.amount / self.initial_product_price.amount
-            if price_ratio <= 0: price_ratio = 0.01 # Avoid division by zero or log of zero/negative
-            
-            units_sold_float = base_demand * (price_ratio ** (-self.demand_elasticity))
-            units_sold = max(0, int(round(units_sold_float)))
-
-            revenue_this_tick = self.current_price * units_sold
-            self.total_revenue += revenue_this_tick
-            self.total_units_sold += units_sold
-
-            # Update world state (e.g., inventory via InventoryUpdate event)
-            if world_store:
-                current_inventory = world_store.get_product_inventory_quantity(self.product_asin)
-                await world_store.event_bus.publish("InventoryUpdate", {
-                    "asin": self.product_asin,
-                    "new_quantity": current_inventory - units_sold,
-                    "cost_basis": world_store.get_product_cost_basis(self.product_asin) # Pass current cost basis
-                })
-
+                logger.info(f"Agent {agent.agent_id} did not propose new price or missing event_bus/world_store.")
+ 
+            # Allow the simulation services to process this tick (if provided)
+            if market_simulator and hasattr(market_simulator, "process_for_asin"):
+                await market_simulator.process_for_asin(self.product_asin)
+ 
+            # Read metrics from world state
+            latest_state = world_store.get_product_state(self.product_asin) if world_store else None
+            if latest_state:
+                self.current_price = latest_state.price
+                new_inventory = world_store.get_product_inventory_quantity(self.product_asin)
+                sold = max(0, prev_inventory - new_inventory)
+                units_sold = sold
+                revenue_this_tick = self.current_price * units_sold
+                self.total_revenue += revenue_this_tick
+                self.total_units_sold += units_sold
+ 
+            # Advance tick
             self.current_tick += 1
-            success = True
-            errors: List[str] = []
 
         except Exception as e:
             logger.error(f"Error in Price Optimization scenario run for agent {agent.agent_id}: {e}")
             success = False
             errors = [str(e)]
-
+ 
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds()
-
+ 
         metrics = {
             "current_price": str(self.current_price),
             "units_sold_this_tick": units_sold,
             "revenue_this_tick": str(revenue_this_tick),
             "total_revenue": str(self.total_revenue),
             "total_units_sold": self.total_units_sold
-            # Potentially add profit margin, inventory levels from world_store
         }
-
+ 
         return AgentRunResult(
             agent_id=agent.agent_id,
             scenario_name=self.config.name,

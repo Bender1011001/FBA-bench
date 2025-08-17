@@ -25,8 +25,9 @@ class AgentRegistration:
         self.config = config
         self.is_active = True
         self.created_at = datetime.now()
-from .runner_factory import RunnerFactory  # Import RunnerFactory
-from typing import TYPE_CHECKING
+# Removed legacy RunnerFactory import; unified AgentFactory is used exclusively
+# from .runner_factory import RunnerFactory
+# TYPE_CHECKING already imported at module top; no need to import again
 
 if TYPE_CHECKING:
     # Type-only imports to avoid circular dependencies at runtime
@@ -96,14 +97,13 @@ class AgentManager:
     """
     
     def __init__(self,
-                 event_bus: Optional['EventBus'] = None, # Use forward reference
-                 world_store: Optional['WorldStore'] = None, # Use forward reference
-                 budget_enforcer: Optional['BudgetEnforcer'] = None, # Use forward reference
-                 trust_metrics: Optional['TrustMetrics'] = None, # Use forward reference
-                 agent_gateway: Optional['AgentGateway'] = None, # Use forward reference
+                 event_bus: Optional['EventBus'] = None,  # Use forward reference
+                 world_store: Optional['WorldStore'] = None,  # Use forward reference
+                 budget_enforcer: Optional['BudgetEnforcer'] = None,  # Use forward reference
+                 trust_metrics: Optional['TrustMetrics'] = None,  # Use forward reference
+                 agent_gateway: Optional['AgentGateway'] = None,  # Use forward reference
                  bot_config_dir: str = "baseline_bots/configs",
-                 openrouter_api_key: Optional[str] = None,
-                 use_unified_agents: bool = True):  # New parameter to control agent system
+                 openrouter_api_key: Optional[str] = None) -> None:
         
         # Lazy import to avoid import-time cycles
         if event_bus is None:
@@ -117,22 +117,19 @@ class AgentManager:
         self.agent_gateway = agent_gateway
         self.bot_config_dir = bot_config_dir
         self.openrouter_api_key = openrouter_api_key
-        self.use_unified_agents = use_unified_agents  # Store the flag
-
-        self.agent_registry: AgentRegistry = AgentRegistry() # agent_id -> AgentRegistration
-        self.last_global_state: Optional[SimulationState] = None # Last state provided to agents
-        
+ 
+        self.agent_registry: AgentRegistry = AgentRegistry()  # agent_id -> AgentRegistration
+        self.last_global_state: Optional[SimulationState] = None  # Last state provided to agents
+ 
         # Unified agent system components (lazy import to avoid circulars)
         self.unified_agent_factory = None
         self.unified_agent_runners: Dict[str, Any] = {}
-        if use_unified_agents:
-            try:
-                from benchmarking.agents.unified_agent import AgentFactory, UnifiedAgentRunner  # runtime import
-                self.unified_agent_factory = AgentFactory()
-                self.use_unified_agents = True
-            except Exception as e:
-                logger.warning(f"Unified agent system unavailable: {e}")
-                self.use_unified_agents = False
+        try:
+            from benchmarking.agents.unified_agent import AgentFactory, UnifiedAgentRunner  # runtime import
+            self.unified_agent_factory = AgentFactory()
+        except Exception as e:
+            logger.error(f"Unified agent system unavailable: {e}")
+            raise
         
         # Statistics
         self.decision_cycles_completed = 0
@@ -140,7 +137,7 @@ class AgentManager:
         self.total_decisions_skipped = 0
         self.total_errors = 0
         
-        logger.info(f"AgentManager initialized with {'unified' if use_unified_agents else 'legacy'} agent system.")
+        logger.info("AgentManager initialized with unified agent system.")
 
     async def start(self) -> None:
         """Start the AgentManager and its agents."""
@@ -196,54 +193,19 @@ class AgentManager:
             return
 
         try:
-            if self.use_unified_agents and self.unified_agent_factory:
-                # Use the unified agent system
-                # Convert the config dict to a PydanticAgentConfig
-                pydantic_config = self._create_pydantic_config_from_dict(agent_id, framework, config)
-                
-                # Create the unified agent
-                unified_agent = self.unified_agent_factory.create_agent(agent_id, pydantic_config)
-                
-                # Create a unified agent runner
-                unified_runner = UnifiedAgentRunner(unified_agent)
-                
-                # Create a wrapper that implements the AgentRunner interface
-                runner_wrapper = UnifiedAgentRunnerWrapper(unified_runner, agent_id)
-                
-                self.agent_registry.add_agent(agent_id, runner_wrapper, framework, config)
-                self.unified_agent_runners[agent_id] = unified_runner
-                
-                logger.info(f"Unified agent {agent_id} ({framework}) registered successfully.")
-            else:
-                # Use the legacy RunnerFactory system
-                # If a specific "GreedyScript" bot is intended, it should be handled as a 'diy' framework agent
-                # with specific configuration parameters.
-                if framework == "diy" and config.get("agent_type") == "baseline" and config.get("custom_config", {}).get("bot_type") == "greedy":
-                    # Adapt the config for the 'diy' runner to behave like a 'GreedyScript' bot
-                    # This assumes the DIYRunner knows how to handle these specific config parameters
-                    # to instantiate or behave as a GreedyScript bot.
-                    # The 'tier' concept from BotFactory might need to be translated into DIY config parameters.
-                    diy_config = config.copy() # Start with the original config
-                    diy_config.setdefault("custom_config", {}).update({
-                        "bot_type": "greedy_script", # Explicitly tell DIY runner to use greedy_script logic
-                        "tier": "T1" # Pass tier information if needed by the DIY runner
-                    })
-                    # Ensure agent_type is correctly set for baseline
-                    diy_config["agent_type"] = "baseline"
-                    runner = RunnerFactory.create_runner(
-                        framework="diy", # Explicitly use 'diy' framework
-                        agent_id=agent_id,
-                        config=diy_config # Pass the adapted config
-                    )
-                else:
-                    runner = RunnerFactory.create_runner(
-                        framework,
-                        agent_id,
-                        config
-                    )
-                
-                self.agent_registry.add_agent(agent_id, runner, framework, config)
-                logger.info(f"Legacy agent {agent_id} ({framework}) registered successfully.")
+            # Always use the unified agent system
+            pydantic_config = self._create_pydantic_config_from_dict(agent_id, framework, config)
+ 
+            unified_agent = self.unified_agent_factory.create_agent(agent_id, pydantic_config)
+ 
+            unified_runner = UnifiedAgentRunner(unified_agent)
+ 
+            runner_wrapper = UnifiedAgentRunnerWrapper(unified_runner, agent_id)
+ 
+            self.agent_registry.add_agent(agent_id, runner_wrapper, framework, config)
+            self.unified_agent_runners[agent_id] = unified_runner
+ 
+            logger.info(f"Unified agent {agent_id} ({framework}) registered successfully.")
             
         except Exception as e:
             logger.error(f"Failed to register agent {agent_id} ({framework}): {e}")
@@ -326,8 +288,7 @@ class AgentManager:
             return []
     
     def _create_pydantic_config_from_dict(self, agent_id: str, framework: str, config: Dict[str, Any]) -> PydanticAgentConfig:
-        """Create a PydanticAgentConfig instance from a raw dictionary."""
-        # Extract LLM configuration with safe defaults
+        """Create a PydanticAgentConfig instance from a raw dictionary and inject core services for DIY/LLM bots."""
         llm_config_dict = config.get('llm_config', {}) or {}
         llm_config = {
             'model': llm_config_dict.get('model', 'gpt-3.5-turbo'),
@@ -336,13 +297,24 @@ class AgentManager:
             'api_key': llm_config_dict.get('api_key', self.openrouter_api_key),
             'base_url': llm_config_dict.get('base_url'),
             'timeout': llm_config_dict.get('timeout', 60),
+            'top_p': llm_config_dict.get('top_p', 1.0),
         }
-
+ 
         # Extract general parameters
         agent_params = config.get('parameters', {}) or {}
-        custom_config = config.get('custom_config', {}) or {}
-
-        # Construct the Pydantic model
+        custom_config = (config.get('custom_config', {}) or {}).copy()
+ 
+        # Inject core services to enable unified factory to build DIY/LLM baseline bots
+        # These objects are used by baseline LLM bots (PromptAdapter, ResponseParser, AgentGateway)
+        custom_config.setdefault('_services', {})
+        custom_config['_services'].update({
+            'world_store': self.world_store,
+            'budget_enforcer': self.budget_enforcer,
+            'trust_metrics': self.trust_metrics,
+            'agent_gateway': self.agent_gateway,
+            'openrouter_api_key': self.openrouter_api_key,
+        })
+ 
         return PydanticAgentConfig(
             agent_id=agent_id,
             framework=framework,

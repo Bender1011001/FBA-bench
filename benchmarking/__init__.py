@@ -3,28 +3,12 @@ Benchmarking module for FBA-Bench.
 """
 
 import logging
-import os
-import sys
 
 # Configure logging at a basic level
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 logger.info(f"Loading benchmarking package: __name__={__name__}, __package__={__package__}, __file__={__file__}")
-
-# Dynamically add project root to path for absolute imports
-# This assumes the script is run from the project root or its parent is the project root
-if os.path.basename(os.getcwd()) == 'fba':
-    project_root = os.getcwd()
-elif os.path.basename(os.path.dirname(os.getcwd())) == 'fba':
-    project_root = os.path.dirname(os.getcwd())
-else:
-    logger.warning("Could not determine project root. Assuming current working directory is fine.")
-    project_root = os.getcwd()
-
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
-    logger.info(f"Added project root to sys.path: {project_root}")
 
 # Import core submodules
 from .core.engine import BenchmarkEngine

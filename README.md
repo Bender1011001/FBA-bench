@@ -127,8 +127,10 @@ graph TD
     source .venv/bin/activate
     ```
 
-3.  **Install Python dependencies**:
+3.  **Install the project in editable mode (recommended for development)**:
     ```bash
+    pip install -e .
+    # Optional extra requirements:
     pip install -r requirements.txt
     pip install -r requirements-dev.txt
     pip install -r requirements-frameworks.txt

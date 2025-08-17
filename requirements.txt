@@ -54,3 +54,4 @@ paho-mqtt
 aiohttp
 aiohttp-retry
 gymnasium
+jsonschema
