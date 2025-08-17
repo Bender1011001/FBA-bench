@@ -1,13 +1,43 @@
 import logging
 import time
 import os
-import psutil # For system resource monitoring
 from collections import defaultdict
-from typing import Dict, Any, Tuple, List
+from typing import Dict, Any, Tuple, List, Optional
+
+# Attempt to import psutil, but make it optional
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    psutil = None
+    PSUTIL_AVAILABLE = False
+    logging.warning("psutil not available. System resource monitoring will be limited. Please install it with 'pip install psutil'.")
 
 logger = logging.getLogger(__name__)
 
 class ResourceManager:
+    """
+    Manages and monitors simulation resources, including LLM tokens, memory, and performance.
+
+    - Token budgeting: Manages LLM token allocation across agents and operations.
+    - Memory monitoring: Tracks memory usage and triggers cleanup.
+    - Performance optimization: Identifies bottlenecks and optimization opportunities.
+    - Cost tracking: Monitors API costs and enforces spending limits.
+    """
+
+    def __init__(self, scalability_config: Optional[Any] = None): # Use Any to avoid circular deps
+        self.scalability_config = scalability_config
+        self._token_budgets: Dict[str, float] = defaultdict(lambda: float('inf')) # agent_id -> remaining_tokens
+        self._global_token_cap: float = float('inf')
+        self._token_usage_tracking: Dict[str, float] = defaultdict(float) # agent_id or operation_type -> tokens used
+        self._current_memory_usage: float = 0.0 # in MB
+        self._llm_api_costs: Dict[str, float] = defaultdict(float) # model_name -> total cost
+        self._total_api_cost: float = 0.0
+        self._spending_limit: float = float('inf') # Initialized to infinity, set by ScalabilityConfig or enforce_cost_limits
+
+        if self.scalability_config:
+            self.set_global_token_cap(self.scalability_config.max_total_tokens)
+            self.enforce_cost_limits(self.scalability_config.cost_limit_per_run)
     """
     Manages and monitors simulation resources, including LLM tokens, memory, and performance.
 

@@ -27,12 +27,8 @@ class TrustMetrics:
         if not has_violation_today:
             self.violation_free_days += 1
         
-        # Integrate with trust_score_service for overall buyer feedback
-        # Assuming trust_score_service aggregates and provides a current score
-        current_buyer_feedback = self.trust_score_service.get_current_trust_score()
-        if current_buyer_feedback is not None:
-            # We might already have it from events, but this is a fallback/aggregation point
-            pass # The individual scores are tracked in self.buyer_feedback_scores
+        # The TrustScoreService is now used to calculate a holistic score in get_metrics_breakdown.
+        # No direct integration needed here unless the service itself needs to be updated with events.
 
 
     def calculate_violation_free_days(self) -> float:
@@ -49,9 +45,31 @@ class TrustMetrics:
 
     def get_metrics_breakdown(self) -> Dict[str, float]:
         violation_free_days_pct = self.calculate_violation_free_days()
-        avg_buyer_feedback_score = self.calculate_buyer_feedback_score()
+        # avg_buyer_feedback_score = self.calculate_buyer_feedback_score() # Old way
+
+        # New way: Use TrustScoreService for a more holistic trust score
+        holistic_trust_score = 0.0
+        if hasattr(self.trust_score_service, 'calculate_trust_score'):
+             try:
+                holistic_trust_score = self.trust_score_service.calculate_trust_score(
+                    violations_count=self.violations_count,
+                    buyer_feedback_scores=self.buyer_feedback_scores,
+                    total_days=self.total_days
+                )
+             except Exception as e:
+                logger.error(f"Error calculating holistic trust score: {e}")
+                holistic_trust_score = 0.0 # Fallback
+        else:
+            logger.warning("TrustScoreService does not have calculate_trust_score method. Using fallback.")
+            # Fallback to old average if service is not as expected, or some other default
+            if self.buyer_feedback_scores:
+                 holistic_trust_score = sum(self.buyer_feedback_scores) / len(self.buyer_feedback_scores)
+            else: # If no feedback, use violation_free_days_pct as a proxy or a default
+                 holistic_trust_score = violation_free_days_pct
+
 
         return {
             "violation_free_days_percentage": violation_free_days_pct,
-            "average_buyer_feedback_score": avg_buyer_feedback_score,
+            # "average_buyer_feedback_score": avg_buyer_feedback_score, # Replaced
+            "holistic_trust_score": holistic_trust_score, # New
         }

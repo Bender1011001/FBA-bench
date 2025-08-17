@@ -1,0 +1,35 @@
+# Optional configuration for Golden Run v1 (informational; runner is self-contained)
+asin: "B00GOLDEN"
+
+competitors:
+  - asin: "COMP1"
+    price_dollars: "17.99"
+    bsr: 1200
+    sales_velocity: 2.0
+  - asin: "COMP2"
+    price_dollars: "21.49"
+    bsr: 800
+    sales_velocity: 3.0
+
+sale_price_dollars: "19.99"
+cost_per_unit_dollars: "6.00"
+
+sales:
+  - units_sold: 2
+    units_demanded: 5
+  - units_sold: 3
+    units_demanded: 6
+  - units_sold: 1
+    units_demanded: 3
+
+product:
+  category: "default"
+  weight_oz: 16
+  dimensions_inches: [10, 6, 3]
+
+context:
+  peak_season: false
+  requires_prep: false
+  requires_labeling: false
+  advertising_spend_dollars: "0.00"
+  months_in_storage: 0

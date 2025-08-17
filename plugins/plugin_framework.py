@@ -151,39 +151,189 @@ class PluginManager:
 
     async def validate_plugin_security(self, plugin_module: Any) -> bool:
         """
-        Performs basic security checks on plugin code.
-        This is a placeholder and should be greatly expanded for
-        real-world secure plugin execution (e.g., sandboxing,
-        static analysis, restricted imports).
+        Performs comprehensive security checks on plugin code.
+        Implements multiple layers of security validation including:
+        - Static code analysis for dangerous patterns
+        - Import restriction validation
+        - Code complexity analysis
+        - Resource access pattern detection
         
-        :param plugin_code: The plugin module itself (or its source code).
+        :param plugin_module: The plugin module to validate.
         :return: True if the plugin passes security checks, False otherwise.
         """
-        logging.warning(f"Performing _basic_ security validation for plugin: {plugin_module.__name__}. THIS IS NOT PRODUCTION READY.")
-        # Example naive checks:
-        # - Disallow certain imports (e.g., `os`, `subprocess`, `sys`)
-        # - Check for dangerous patterns in code (regex for exec, eval etc.)
+        import ast
+        import re
         
-        # For demonstration, let's assume 'os.system' is forbidden.
-        # This requires reading the source code, which isn't directly available from the module object.
-        # A real sandbox would involve stricter execution environments like separate processes/containers.
+        logging.info(f"Performing comprehensive security validation for plugin: {plugin_module.__name__}")
         
         try:
+            # Get source code for analysis
             source_code = inspect.getsource(plugin_module)
-            if "os.system" in source_code or "subprocess.run" in source_code:
-                logging.error(f"Potential security risk: Plugin {plugin_module.__name__} tries to call restricted OS commands.")
+            
+            # 1. Check for dangerous imports and function calls
+            dangerous_patterns = [
+                # System execution
+                r'os\.system\s*\(',
+                r'subprocess\.(run|call|Popen|check_output)\s*\(',
+                r'exec\s*\(',
+                r'eval\s*\(',
+                r'__import__\s*\(',
+                
+                # File system manipulation
+                r'open\s*\([^)]*\,\s*[\'"]w[\'"]\)',  # Write mode
+                r'open\s*\([^)]*\,\s*[\'"]a[\'"]\)',  # Append mode
+                r'open\s*\([^)]*\,\s*[\'"]wb[\'"]\)',  # Binary write mode
+                r'open\s*\([^)]*\,\s*[\'"]ab[\'"]\)',  # Binary append mode
+                
+                # Network access
+                r'socket\.',
+                r'requests\.',
+                r'urllib\.',
+                r'httplib\.',
+                
+                # Memory manipulation
+                r'ctypes\.',
+                r'mmap\.',
+                
+                # Process manipulation
+                r'psutil\.',
+                r'multiprocessing\.',
+                
+                # Dangerous built-ins
+                r'globals\s*\(',
+                r'locals\s*\(',
+                r'vars\s*\(',
+                r'dir\s*\(',
+                r'getattr\s*\(',
+                r'setattr\s*\(',
+                r'delattr\s*\(',
+            ]
+            
+            for pattern in dangerous_patterns:
+                if re.search(pattern, source_code):
+                    logging.error(f"Security risk: Plugin {plugin_module.__name__} contains dangerous pattern: {pattern}")
+                    return False
+            
+            # 2. Parse AST for deeper analysis
+            try:
+                tree = ast.parse(source_code)
+                
+                # Check for dangerous imports
+                forbidden_imports = {
+                    'os', 'subprocess', 'sys', 'ctypes', 'mmap', 'socket',
+                    'requests', 'urllib', 'httplib', 'ftplib', 'smtplib',
+                    'poplib', 'imaplib', 'nntplib', 'psutil', 'multiprocessing',
+                    'threading', 'asyncio'  # Restrict async to prevent event loop manipulation
+                }
+                
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Import):
+                        for alias in node.names:
+                            if alias.name in forbidden_imports:
+                                logging.error(f"Security risk: Plugin {plugin_module.__name__} imports forbidden module: {alias.name}")
+                                return False
+                    
+                    elif isinstance(node, ast.ImportFrom):
+                        if node.module and node.module in forbidden_imports:
+                            logging.error(f"Security risk: Plugin {plugin_module.__name__} imports from forbidden module: {node.module}")
+                            return False
+                    
+                    # Check for dangerous function calls
+                    elif isinstance(node, ast.Call):
+                        if isinstance(node.func, ast.Name):
+                            if node.func.id in ['exec', 'eval', 'compile', '__import__']:
+                                logging.error(f"Security risk: Plugin {plugin_module.__name__} calls dangerous function: {node.func.id}")
+                                return False
+                        
+                        elif isinstance(node.func, ast.Attribute):
+                            if (isinstance(node.func.value, ast.Name) and
+                                node.func.value.id == 'os' and
+                                node.func.attr == 'system'):
+                                logging.error(f"Security risk: Plugin {plugin_module.__name__} calls os.system")
+                                return False
+                
+                # 3. Code complexity analysis
+                class ComplexityAnalyzer(ast.NodeVisitor):
+                    def __init__(self):
+                        self.complexity = 0
+                        self.functions = []
+                    
+                    def visit_FunctionDef(self, node):
+                        # Calculate cyclomatic complexity for each function
+                        func_complexity = 1  # Base complexity
+                        
+                        for child in ast.walk(node):
+                            if isinstance(child, (ast.If, ast.While, ast.For, ast.ExceptHandler)):
+                                func_complexity += 1
+                            elif isinstance(child, ast.BoolOp):
+                                func_complexity += len(child.values) - 1
+                        
+                        self.functions.append({
+                            'name': node.name,
+                            'complexity': func_complexity,
+                            'line': node.lineno
+                        })
+                        
+                        if func_complexity > 15:  # Threshold for complex functions
+                            logging.warning(f"Complex function detected in plugin {plugin_module.__name__}: {node.name} (complexity: {func_complexity})")
+                        
+                        self.generic_visit(node)
+                
+                analyzer = ComplexityAnalyzer()
+                analyzer.visit(tree)
+                
+                # 4. Check for excessive resource usage patterns
+                resource_patterns = [
+                    r'while\s+True\s*:',  # Infinite loops
+                    r'for\s+.*\s+in\s+range\s*\(\s*[0-9]{6,}\s*\)',  # Very large ranges
+                    r'\[\s*x\s+for\s+.*\s+in\s+.*\s+if\s+.*\]',  # List comprehensions (potential memory issues)
+                ]
+                
+                for pattern in resource_patterns:
+                    if re.search(pattern, source_code):
+                        logging.warning(f"Resource usage concern: Plugin {plugin_module.__name__} contains pattern: {pattern}")
+                
+                # 5. Check for direct access to internal attributes
+                internal_access_patterns = [
+                    r'\._.*__.*',  # Access to private/mangled attributes
+                    r'__dict__',
+                    r'__class__',
+                ]
+                
+                for pattern in internal_access_patterns:
+                    if re.search(pattern, source_code):
+                        logging.warning(f"Internal access concern: Plugin {plugin_module.__name__} contains pattern: {pattern}")
+                
+            except SyntaxError as e:
+                logging.error(f"Syntax error in plugin {plugin_module.__name__}: {e}")
                 return False
-            # Add more sophisticated checks here
-        except TypeError: # Can happen if source is not readily available
+            
+            # 6. Plugin metadata validation
+            if hasattr(plugin_module, '__dict__'):
+                module_dict = plugin_module.__dict__
+                
+                # Check for required plugin metadata
+                for name, obj in module_dict.items():
+                    if inspect.isclass(obj) and hasattr(obj, '__is_fba_plugin__'):
+                        plugin_id = getattr(obj, 'plugin_id', None)
+                        if not plugin_id or not isinstance(plugin_id, str):
+                            logging.error(f"Invalid plugin_id in plugin {plugin_module.__name__}")
+                            return False
+                        
+                        version = getattr(obj, 'version', None)
+                        if not version or not isinstance(version, str):
+                            logging.error(f"Invalid version in plugin {plugin_module.__name__}")
+                            return False
+            
+            logging.info(f"Plugin {plugin_module.__name__} passed comprehensive security validation.")
+            return True
+            
+        except TypeError:  # Can happen if source is not readily available
             logging.warning(f"Cannot inspect source code for plugin {plugin_module.__name__}. Skipping deep security analysis.")
+            return True  # Allow if we can't inspect, but log the warning
         except Exception as e:
             logging.error(f"Error during plugin security validation for {plugin_module.__name__}: {e}")
             return False
-
-        # Placeholder for real security sandboxing implementations (e.g., using a separate process, Docker container)
-        # For competitive scenarios, sandboxing could be done by running plugins in a constrained environment.
-        logging.info(f"Plugin {plugin_module.__name__} passed basic security validation.")
-        return True
 
     def get_available_plugins(self) -> Dict[str, Dict[str, Any]]:
         """

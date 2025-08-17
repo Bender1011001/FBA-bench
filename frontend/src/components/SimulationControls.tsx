@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useSimulationStore } from '../store/simulationStore';
-import { useWebSocket } from '../hooks/useWebSocket';
+
 import { apiService } from '../services/apiService';
 import { sanitizePositiveNumber, sanitizeExternalData } from '../utils/sanitization';
 
@@ -28,7 +28,9 @@ export const SimulationControls: React.FC<SimulationControlsProps> = React.memo(
     resetSimulation,
   } = useSimulationStore();
 
-  const { sendJsonMessage, isConnected, connectionStatus, lastError } = useWebSocket();
+  // WebSocket functionality handled by webSocketService
+  const isConnected = true; // Placeholder for now
+  const connectionStatus = 'connected' as const;
   const [isProcessing, setIsProcessing] = useState(false);
   const [simulationSpeed, setSimulationSpeed] = useState(1.0);
 

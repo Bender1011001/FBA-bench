@@ -3,6 +3,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Callable, Optional, Tuple
 
+from infrastructure.scalability_config import ScalabilityConfig # Import ScalabilityConfig
 # Assuming TickEvent and other relevant event types are defined in events.py
 # from events import TickEvent, AgentActivityEvent, CompressedTickEvent # adjust as needed
 
@@ -45,13 +46,28 @@ class FastForwardEngine:
         # Unsubscribe if necessary
         # self.event_bus.unsubscribe(AgentActivityEvent, self._on_agent_activity)
 
-    def _on_agent_activity(self, event: Any): # Assuming event has agent_id and timestamp
-        """Updates last activity time for an agent."""
+    def _on_agent_activity(self, event: Any):
+        """
+        Updates last activity time for an agent based on relevant events.
+        Events are expected to have 'agent_id' and 'timestamp' or be processed to extract them.
+        """
         agent_id = getattr(event, 'agent_id', None)
-        timestamp = getattr(event, 'timestamp', datetime.now())
+        timestamp = getattr(event, 'timestamp', None)
+        # Attempt to get timestamp from nested 'metadata' or current time if not in event
+        if timestamp is None:
+            if hasattr(event, 'metadata') and hasattr(event.metadata, 'timestamp_iso'):
+                try:
+                    timestamp = datetime.fromisoformat(event.metadata.timestamp_iso)
+                except (TypeError, ValueError):
+                    timestamp = datetime.now()
+            else:
+                timestamp = datetime.now()
+
         if agent_id:
             self._last_agent_activity[agent_id] = timestamp
-            logger.debug(f"Agent {agent_id} active at {timestamp}")
+            logger.debug(f"Activity recorded for agent {agent_id} at {timestamp.isoformat()}")
+        else:
+            logger.debug(f"Event {type(event).__name__} received but no agent_id identified for activity tracking.")
 
     def detect_idle_period(self, agent_activities: Dict[str, datetime], threshold_percent_active: float = 0.1) -> bool:
         """

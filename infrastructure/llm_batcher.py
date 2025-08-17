@@ -5,9 +5,7 @@ import uuid
 from collections import defaultdict
 from typing import Dict, List, Callable, Any, Optional, Tuple
 
-# Assuming BaseEvent and other necessary types/classes are available in the FBA-Bench context
-# For simplicity, we'll define a basic structure for LLM request/response here.
-# In a real scenario, these would likely integrate with an existing LLM client.
+from infrastructure.scalability_config import ScalabilityConfig # Import ScalabilityConfig
 
 logger = logging.getLogger(__name__)
 

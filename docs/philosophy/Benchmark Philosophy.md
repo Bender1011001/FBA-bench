@@ -193,4 +193,4 @@ This is our North Star: building agents tough enough for the marketplace, then u
 
 ---
 
-*For technical implementation details, see the [FBA-Bench v3 Master Blueprint](fba_bench_blueprint_v_3.md) and [Implementation Plan](FBA-Bench-Implementation-Plan.md).*
+*For technical implementation details, see the [FBA-Bench v3 Master Blueprint](../fba_bench_blueprint_v_3.md) and [Implementation Plan](../development/FBA-Bench-Implementation-Plan.md).*

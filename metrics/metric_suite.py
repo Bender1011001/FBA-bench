@@ -1,5 +1,6 @@
 # metrics/metric_suite.py
 import json
+import logging
 from datetime import datetime
 from typing import Dict, Any, List, Tuple, Optional
 
@@ -18,6 +19,7 @@ from instrumentation.tracer import setup_tracing
 
 # Initialize tracer for MetricSuite module
 metric_suite_tracer = setup_tracing(service_name="fba-bench-metric-suite")
+logger = logging.getLogger(__name__)
 
 # Define the standard weights for the metrics domains
 STANDARD_WEIGHTS: Dict[str, float] = {
@@ -103,34 +105,33 @@ class MetricSuite:
         self.current_tick = event.tick_number if hasattr(event, 'tick_number') else self.current_tick # Update tick
         
         if event_type == 'SaleOccurred':
-            self.finance_metrics.track_sale(event)
-            self.operations_metrics.track_sale(event) # Added, assuming OperationsMetrics tracks sales
-            self.marketing_metrics.track_sale(event, current_tick=self.current_tick)
-            self.cost_metrics.track_revenue(event.total_revenue) # Revenue affects cost
-            self.cost_metrics.track_profit(event.total_profit)
+            self.finance_metrics.update(self.current_tick, [event])
+            self.operations_metrics.update(self.current_tick, [event])
+            self.marketing_metrics.update([event])
+            self.cost_metrics.record_token_usage(0, "sale")  # Track sale-related costs
         elif event_type == 'SetPriceCommand':
-            self.cognitive_metrics.track_decision_frequency()
+            self.cognitive_metrics.update(self.current_tick, [event])
         elif event_type == 'ComplianceViolationEvent':
-            self.trust_metrics.track_compliance_violation()
+            self.trust_metrics.update(self.current_tick, [event])
         elif event_type == 'NewBuyerFeedbackEvent':
-            self.trust_metrics.track_buyer_feedback(event.feedback_type)
+            self.trust_metrics.update(self.current_tick, [event])
         elif event_type == 'AgentDecisionEvent':
-            self.cognitive_metrics.track_decision_made()
+            self.cognitive_metrics.update(self.current_tick, [event])
         elif event_type == 'AdSpendEvent':
-            self.marketing_metrics.track_ad_spend(event.amount)
-            self.cost_metrics.track_ad_spend(event.amount) # Ad spend affects cost
+            self.marketing_metrics.update([event])
+            self.cost_metrics.record_token_usage(0, "ad_spend")  # Track ad spend
         elif event_type == 'AgentPlannedGoalEvent':
-            self.cognitive_metrics.track_goal_planned()
+            self.cognitive_metrics.update(self.current_tick, [event])
         elif event_type == 'AgentGoalStatusUpdateEvent':
-            self.cognitive_metrics.track_goal_status(event.status)
+            self.cognitive_metrics.update(self.current_tick, [event])
         elif event_type == 'ApiCallEvent':
-            self.cost_metrics.track_api_call(event.cost) # API calls affect cost
+            self.cost_metrics.record_token_usage(0, "api_call")  # Track API calls
         elif event_type == 'PlanningCoherenceScoreEvent':
-            self.cognitive_metrics.track_planning_coherence(event.score)
+            self.cognitive_metrics.update(self.current_tick, [event])
         
         # Adversarial event tracking
         elif event_type in ['AdversarialEvent', 'PhishingEvent', 'MarketManipulationEvent', 'ComplianceTrapEvent']:
-            self.adversarial_metrics.track_adversarial_event(event)
+            self.adversarial_metrics.update(self.current_tick, [event])
 
         # Update latest processed event timestamp
         self.evaluation_start_time = datetime.now() # Use latest event time
@@ -154,14 +155,29 @@ class MetricSuite:
             span.set_attribute("tick.number", tick_number)
             
             # Calculate metrics for each domain
-            finance_score, finance_breakdown = self.finance_metrics.calculate_metrics()
-            ops_score, ops_breakdown = self.operations_metrics.calculate_metrics()
-            marketing_score, marketing_breakdown = self.marketing_metrics.calculate_metrics()
-            trust_score, trust_breakdown = self.trust_metrics.calculate_metrics()
-            cognitive_score, cognitive_breakdown = self.cognitive_metrics.calculate_metrics()
-            stress_score, stress_breakdown = self.stress_metrics.calculate_metrics()
-            cost_score, cost_breakdown = self.cost_metrics.calculate_metrics()
-            adversarial_score, adversarial_breakdown = self.adversarial_metrics.calculate_metrics()
+            finance_breakdown = self.finance_metrics.get_metrics_breakdown()
+            finance_score = finance_breakdown.get("overall_score", 0.0)
+            
+            ops_breakdown = self.operations_metrics.get_metrics_breakdown()
+            ops_score = ops_breakdown.get("overall_score", 0.0)
+            
+            marketing_breakdown = self.marketing_metrics.get_metrics_breakdown()
+            marketing_score = marketing_breakdown.get("overall_score", 0.0)
+            
+            trust_breakdown = self.trust_metrics.get_metrics_breakdown()
+            trust_score = trust_breakdown.get("overall_score", 0.0)
+            
+            cognitive_breakdown = self.cognitive_metrics.get_metrics_breakdown()
+            cognitive_score = cognitive_breakdown.get("cra_score", 0.0)
+            
+            stress_breakdown = self.stress_metrics.get_metrics_breakdown()
+            stress_score = stress_breakdown.get("overall_score", 0.0)
+            
+            cost_breakdown = self.cost_metrics.get_metrics_breakdown()
+            cost_score = cost_breakdown.get("cost_penalty_score", 0.0)
+            
+            adversarial_breakdown = self.adversarial_metrics.get_metrics_breakdown()
+            adversarial_score = adversarial_breakdown.get("ars_score", 0.0)
 
             breakdown = {
                 "finance": {"score": finance_score, "details": finance_breakdown},

@@ -48,7 +48,8 @@ FBA-Bench's observability data can be integrated with popular external tools for
 -   **Custom Data Warehouses**: Using `instrumentation/export_utils.py` to push data.
 
 For detailed instructions on setting up dashboards, performing trace analysis, handling errors, and configuring alerts, refer to:
-- [`Trace Analysis`](trace-analysis.md)
-- [`Error Handling`](error-handling.md)
-- [`Dashboard Setup`](dashboard-setup.md)
-- [`Alert Configuration`](alert-configuration.md)
+-   [`Trace Analysis`](trace-analysis.md)
+-   [`Error Handling`](error-handling.md)
+-   [`Dashboard Setup`](dashboard-setup.md)
+-   [`Alert Configuration`](alert-configuration.md)
+-   [`OpenTelemetry Setup`](opentelemetry-setup.md)

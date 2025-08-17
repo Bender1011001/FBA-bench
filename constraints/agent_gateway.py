@@ -80,21 +80,6 @@ class AgentGateway:
             self.token_counter.count_tokens(raw_prompt, model_name) + completion_tokens
         )
         
-        # We already made an initial recording in preprocess_request for estimated prompt tokens.
-        # Now we need to adjust or record the *difference* or the *actual total* including completion,
-        # ensuring we don't double-count.
-        # For simplicity, we'll re-record the full action tokens and adjust the enforcer
-        # to handle the deltas or ensure atomic 'action' tracking.
-        # For now, let's assume `record_token_usage` replaces the temp estimate with actual.
-        # A more robust system would involve updating the *estimated* tokens to *actual* or tracking
-        # prompt and completion tokens separately.
-        
-        # For the purpose of this task, let's simplify and make `record_token_usage` cumulative,
-        # and ensure `total_tokens_for_action` is the complete cost for this interaction.
-        # This implies `preprocess_request` *must not* fully commit the tokens.
-        # Let's revise: `preprocess_request` simulates cost for *checking*, `record_token_usage`
-        # is called only once after *actual* event.
-
         # Corrected flow: `preprocess_request` just estimates, `postprocess_response` commits.
         self.budget_enforcer.record_token_usage(total_tokens_for_action, action_type)
         
@@ -120,6 +105,20 @@ class AgentGateway:
              # This event might be redundant if BudgetEnforcer already publishes BudgetWarning.
              # Need to ensure event types are distinct and serve different purposes.
             pass # Currently, let BudgetEnforcer handle event publishing for warnings/exceedences
+
+    # Minimal non-invasive exposure of budget snapshots via AgentGateway
+    def get_budget_usage(self, agent_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Returns a deep-copy usage snapshot for the given agent if BudgetEnforcer supports it.
+        This is a pass-through to BudgetEnforcer.get_usage_snapshot and is safe/no-op if unsupported.
+        """
+        be = getattr(self, "budget_enforcer", None)
+        if be and hasattr(be, "get_usage_snapshot") and callable(be.get_usage_snapshot):
+            try:
+                return be.get_usage_snapshot(agent_id)
+            except Exception:
+                return None
+        return None
 
 # Dummy LLM interaction function for illustration
 async def mock_llm_call(prompt: str) -> str:

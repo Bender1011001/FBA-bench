@@ -6,6 +6,7 @@ MetricSuite system to measure memory effectiveness and consolidation quality.
 """
 
 import logging
+import math
 import statistics
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Tuple
@@ -311,10 +312,11 @@ class MemoryMetrics:
         for count in domain_counts.values():
             if count > 0:
                 probability = count / total_memories
-                entropy -= probability * (probability.bit_length() - 1) if probability > 0 else 0
+                entropy -= probability * math.log2(probability) if probability > 0 else 0
         
         # Normalize entropy by maximum possible entropy
-        max_entropy = (len(self.memory_manager.config.memory_domains).bit_length() - 1) if len(self.memory_manager.config.memory_domains) > 1 else 1
+        max_domains = len(self.memory_manager.config.memory_domains)
+        max_entropy = math.log2(max_domains) if max_domains > 1 else 1.0
         coverage = entropy / max_entropy if max_entropy > 0 else 0.0
         
         return MemoryMetricResult(
@@ -423,9 +425,6 @@ class MemoryMetrics:
     async def calculate_memory_performance_correlation(self) -> MemoryMetricResult:
         """Calculate correlation between memory usage and performance."""
         
-        # This would require integration with performance metrics
-        # For now, return a placeholder based on memory retrieval patterns
-        
         injection_history = self.memory_enforcer.memory_injection_history
         
         if len(injection_history) < 5:
@@ -436,23 +435,86 @@ class MemoryMetrics:
                 metadata={"reason": "insufficient_data"}
             )
         
-        # Simple proxy: correlation between memory usage and successful retrievals
-        memory_usage = [inj["memory_tokens"] for inj in injection_history[-10:]]
-        retrieval_success = [1.0 if inj["within_budget"] else 0.0 for inj in injection_history[-10:]]
+        # Extract memory usage and performance indicators from injection history
+        recent_history = injection_history[-20:]  # Use last 20 injections for better statistical significance
         
-        if len(set(memory_usage)) > 1 and len(set(retrieval_success)) > 1:
-            correlation = statistics.correlation(memory_usage, retrieval_success)
-        else:
-            correlation = 0.0
+        # Memory usage metrics
+        memory_usage = [inj.get("memory_tokens", 0) for inj in recent_history]
+        memories_retrieved = [inj.get("retrieved_memories", 0) for inj in recent_history]
+        
+        # Performance indicators (proxy metrics since we don't have direct performance data)
+        # 1. Budget efficiency (higher is better)
+        budget_efficiency = [1.0 if inj.get("within_budget", False) else 0.0 for inj in recent_history]
+        
+        # 2. Memory utilization efficiency (optimal range is 0.6-0.8)
+        utilization_efficiency = []
+        for inj in recent_history:
+            memory_ratio = inj.get("memory_tokens", 0) / max(1, inj.get("token_budget", 1000))
+            if 0.6 <= memory_ratio <= 0.8:
+                utilization_efficiency.append(1.0)
+            else:
+                # Score decreases as utilization moves away from optimal range
+                utilization_efficiency.append(max(0.0, 1.0 - abs(memory_ratio - 0.7) * 2))
+        
+        # 3. Memory diversity score (based on variety of memories retrieved)
+        diversity_scores = []
+        for inj in recent_history:
+            # Use retrieved memories count as a proxy for diversity
+            diversity = min(1.0, inj.get("retrieved_memories", 0) / 10.0)  # Normalize by expected max
+            diversity_scores.append(diversity)
+        
+        # Calculate composite performance score
+        performance_scores = []
+        for i in range(len(recent_history)):
+            # Weighted combination of performance indicators
+            perf_score = (
+                budget_efficiency[i] * 0.4 +  # 40% weight for budget efficiency
+                utilization_efficiency[i] * 0.4 +  # 40% weight for utilization efficiency
+                diversity_scores[i] * 0.2  # 20% weight for diversity
+            )
+            performance_scores.append(perf_score)
+        
+        # Calculate correlations between memory metrics and performance
+        correlations = {}
+        
+        # Memory usage vs performance correlation
+        if len(set(memory_usage)) > 1 and len(set(performance_scores)) > 1:
+            try:
+                usage_perf_corr = statistics.correlation(memory_usage, performance_scores)
+                correlations["usage_performance"] = usage_perf_corr
+            except statistics.StatisticsError:
+                correlations["usage_performance"] = 0.0
+        
+        # Memory count vs performance correlation
+        if len(set(memories_retrieved)) > 1 and len(set(performance_scores)) > 1:
+            try:
+                count_perf_corr = statistics.correlation(memories_retrieved, performance_scores)
+                correlations["count_performance"] = count_perf_corr
+            except statistics.StatisticsError:
+                correlations["count_performance"] = 0.0
+        
+        # Calculate overall correlation score (weighted average of individual correlations)
+        overall_correlation = 0.0
+        if correlations:
+            weights = {"usage_performance": 0.7, "count_performance": 0.3}
+            for corr_name, weight in weights.items():
+                if corr_name in correlations:
+                    overall_correlation += correlations[corr_name] * weight
         
         return MemoryMetricResult(
             metric_name="memory_performance_correlation",
-            value=correlation,
+            value=overall_correlation,
             timestamp=datetime.now(),
             metadata={
-                "sample_size": len(memory_usage),
-                "avg_memory_tokens": statistics.mean(memory_usage),
-                "success_rate": statistics.mean(retrieval_success)
+                "sample_size": len(recent_history),
+                "correlations": correlations,
+                "avg_memory_usage": statistics.mean(memory_usage) if memory_usage else 0.0,
+                "avg_performance_score": statistics.mean(performance_scores) if performance_scores else 0.0,
+                "performance_distribution": {
+                    "min": min(performance_scores) if performance_scores else 0.0,
+                    "max": max(performance_scores) if performance_scores else 0.0,
+                    "std_dev": statistics.stdev(performance_scores) if len(performance_scores) > 1 else 0.0
+                }
             }
         )
     

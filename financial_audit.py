@@ -95,6 +95,8 @@ class FinancialAuditService:
         """Initialize the financial audit service."""
         self.config = config
         self.event_bus: Optional[EventBus] = None
+        # Optional integration with the DoubleEntryLedgerService for source-of-truth balances
+        self.ledger_service: Optional[Any] = None
         
         # Audit configuration
         self.halt_on_violation = config.get('halt_on_violation', True)
@@ -147,8 +149,10 @@ class FinancialAuditService:
     async def _handle_sale_occurred(self, event: SaleOccurred) -> None:
         """Handle SaleOccurred events and perform financial audit."""
         try:
-            # Update financial position based on the sale
-            await self._update_position_from_sale(event)
+            # When a ledger service is attached, use it as the system of record.
+            # Otherwise, update the internal position heuristically from the event.
+            if self.ledger_service is None:
+                await self._update_position_from_sale(event)
             
             # Perform comprehensive audit
             await self._perform_audit("TRANSACTION", event.event_id)
@@ -189,6 +193,25 @@ class FinancialAuditService:
         """Perform comprehensive financial audit."""
         if not self.audit_enabled:
             return
+        
+        # If a ledger service is attached, sync current position from ledger before validating.
+        if self.ledger_service is not None:
+            try:
+                pos = self.ledger_service.get_financial_position()
+                # Map ledger snapshot into FinancialPosition
+                self.current_position.cash = pos.get("cash", self.current_position.cash)
+                self.current_position.inventory_value = pos.get("inventory_value", self.current_position.inventory_value)
+                self.current_position.accounts_receivable = pos.get("accounts_receivable", self.current_position.accounts_receivable)
+                self.current_position.accounts_payable = pos.get("accounts_payable", self.current_position.accounts_payable)
+                # Accrued liabilities on ledger maps to accrued_fees in audit model
+                self.current_position.accrued_fees = pos.get("accrued_liabilities", self.current_position.accrued_fees)
+                self.current_position.retained_earnings = pos.get("retained_earnings", self.current_position.retained_earnings)
+                self.current_position.current_period_profit = pos.get("current_period_profit", self.current_position.current_period_profit)
+                # Recompute totals deterministically
+                self.current_position.timestamp = datetime.now()
+                self.current_position.__post_init__()
+            except Exception as e:
+                logger.error(f"Failed to sync audit position from ledger: {e}")
         
         violations_found = []
         
@@ -348,11 +371,22 @@ class FinancialAuditService:
         """Get the current financial position."""
         return self.current_position
 
+    def get_audited_revenue(self):
+        """Get the total audited revenue."""
+        return self.total_revenue_audited
+
+    def get_audited_profit(self):
+        """Get the total audited profit."""
+        return self.total_profit_audited
+
+    def get_audited_transactions_count(self) -> int:
+        """Get the total count of processed transactions."""
+        return self.processed_transactions
+
     def get_current_net_worth(self) -> float:
-        """Calculate and return the current net worth."""
-        # For simplicity, net worth is current assets minus liabilities (assuming equity is derived from this)
-        # Or, if we consider only liquid assets + inventory as "net worth" for a quick metric
-        # Let's consider Net Worth as Cash + Inventory Value for the purpose of this metric suite.
+        """Calculate and return the current net worth.
+        Net worth is considered as Cash + Inventory Value for metric purposes.
+        """
         return (self.current_position.cash + self.current_position.inventory_value).dollars
     
     def get_violations(self) -> List[AuditViolation]:

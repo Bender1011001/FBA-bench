@@ -1,224 +1,412 @@
 """
-Base AgentRunner interface and data structures for framework-agnostic agent abstraction.
+Base Agent Runner - Abstract base class for all agent runners.
 
-This module defines the core interface that all agent frameworks must implement,
-enabling seamless swapping between DIY, CrewAI, LangChain, and future frameworks.
+This module defines the interface and common functionality for all agent runners,
+regardless of the underlying framework (DIY, CrewAI, LangChain, etc.).
 """
 
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+import abc
+import logging
+import time
+import uuid
 from datetime import datetime
-from typing import List, Dict, Any, Optional
-from money import Money
-from models.product import Product
+from enum import Enum
+from typing import Dict, Any, Optional, List, Callable, Union
+from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
 
 
-@dataclass
-class SimulationState:
-    """
-    Unified simulation state containing all information an agent needs to make decisions.
-    
-    This standardized state format ensures all agent frameworks receive the same
-    comprehensive view of the simulation, regardless of their internal implementation.
-    """
-    # Core simulation metadata
-    tick: int
-    simulation_time: datetime
-    
-    # Product portfolio with full market context
-    products: List[Product]
-    
-    # Recent events for context-aware decision making
-    recent_events: List[Dict[str, Any]] = field(default_factory=list)
-    
-    # Financial position and constraints
-    financial_position: Dict[str, Any] = field(default_factory=dict)
-    
-    # Market conditions and competitor intelligence
-    market_conditions: Dict[str, Any] = field(default_factory=dict)
-    
-    # Agent-specific state (budget, tokens, etc.)
-    agent_state: Dict[str, Any] = field(default_factory=dict)
-    
-    def get_product(self, asin: str) -> Optional[Product]:
-        """Get a specific product by ASIN."""
-        for product in self.products:
-            if product.asin == asin:
-                return product
-        return None
-    
-    def get_recent_events_since_tick(self, since_tick: int) -> List[Dict[str, Any]]:
-        """Get recent events since a specific tick."""
-        return [event for event in self.recent_events 
-                if event.get('tick', 0) >= since_tick]
-
-
-@dataclass
-class ToolCall:
-    """
-    Standardized tool call representation for agent actions.
-    
-    All agent frameworks must return their intended actions in this format,
-    ensuring consistent interpretation by the simulation engine.
-    """
-    # Tool identification
-    tool_name: str
-    
-    # Tool parameters as key-value pairs
-    parameters: Dict[str, Any]
-    
-    # Agent's confidence in this decision (0.0 to 1.0)
-    confidence: float = 1.0
-    
-    # Optional reasoning for debugging/analysis
-    reasoning: str = ""
-    
-    # Priority for execution ordering (higher = more urgent)
-    priority: int = 0
-    
-    def __post_init__(self):
-        """Validate tool call data."""
-        if not self.tool_name:
-            raise ValueError("tool_name cannot be empty")
-        
-        if not isinstance(self.parameters, dict):
-            raise TypeError("parameters must be a dictionary")
-        
-        if not 0.0 <= self.confidence <= 1.0:
-            raise ValueError("confidence must be between 0.0 and 1.0")
-
-
-class AgentRunner(ABC):
-    """
-    Abstract base class for all agent framework runners.
-    
-    This interface provides a unified way for the simulation to interact with
-    agents regardless of their underlying framework (DIY, CrewAI, LangChain, etc.).
-    
-    Key design principles:
-    - Framework agnostic: Core simulation doesn't know which framework is running
-    - Async by default: Supports both local and remote agent execution
-    - Stateless interface: All state passed in SimulationState, no hidden dependencies
-    - Tool-based actions: All agent intentions expressed as standardized ToolCalls
-    """
-    
-    def __init__(self, agent_id: str, config: Dict[str, Any]):
-        """
-        Initialize the agent runner.
-        
-        Args:
-            agent_id: Unique identifier for this agent instance
-            config: Framework-specific configuration dictionary
-        """
-        self.agent_id = agent_id
-        self.config = config
-        self._initialized = False
-    
-    @abstractmethod
-    async def decide(self, state: SimulationState) -> List[ToolCall]:
-        """
-        Core decision-making interface that all agent frameworks must implement.
-        
-        This is the single point of interaction between the simulation and the agent.
-        The agent receives complete simulation state and returns a list of tool calls
-        representing its intended actions.
-        
-        Args:
-            state: Current simulation state with all relevant information
-            
-        Returns:
-            List of tool calls the agent wants to execute this tick
-            
-        Raises:
-            AgentRunnerError: If the agent encounters an error during decision making
-        """
-        pass
-    
-    @abstractmethod
-    async def initialize(self, config: Dict[str, Any]) -> None:
-        """
-        Initialize the agent with configuration.
-        
-        Called once before the first decide() call. Use this to set up
-        framework-specific resources, load models, establish connections, etc.
-        
-        Args:
-            config: Framework-specific configuration dictionary
-            
-        Raises:
-            AgentRunnerError: If initialization fails
-        """
-        pass
-    
-    @abstractmethod
-    async def cleanup(self) -> None:
-        """
-        Cleanup resources when simulation ends.
-        
-        Called once when the simulation is shutting down. Use this to
-        close connections, save state, release resources, etc.
-        
-        Raises:
-            AgentRunnerError: If cleanup fails (non-critical)
-        """
-        pass
-    
-    async def health_check(self) -> Dict[str, Any]:
-        """
-        Optional health check for monitoring agent status.
-        
-        Returns:
-            Dictionary with health status information
-        """
-        return {
-            "agent_id": self.agent_id,
-            "status": "healthy" if self._initialized else "not_initialized",
-            "framework": self.__class__.__name__,
-            "timestamp": datetime.utcnow().isoformat()
-        }
-    
-    def get_framework_info(self) -> Dict[str, Any]:
-        """
-        Get information about the agent framework.
-        
-        Returns:
-            Dictionary with framework metadata
-        """
-        return {
-            "framework_name": self.__class__.__name__,
-            "agent_id": self.agent_id,
-            "config_keys": list(self.config.keys()) if self.config else []
-        }
+class AgentRunnerStatus(str, Enum):
+    """Status of an agent runner."""
+    INITIALIZING = "initializing"
+    READY = "ready"
+    RUNNING = "running"
+    PAUSED = "paused"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CLEANING_UP = "cleaning_up"
+    TERMINATED = "terminated"
 
 
 class AgentRunnerError(Exception):
     """Base exception for agent runner errors."""
     
-    def __init__(self, message: str, agent_id: str = None, framework: str = None):
-        super().__init__(message)
+    def __init__(self, message: str, agent_id: Optional[str] = None, framework: Optional[str] = None):
         self.agent_id = agent_id
         self.framework = framework
-        self.timestamp = datetime.utcnow()
-    
-    def __str__(self):
-        parts = [self.args[0]]
-        if self.agent_id:
-            parts.append(f"agent_id={self.agent_id}")
-        if self.framework:
-            parts.append(f"framework={self.framework}")
-        return f"{' '.join(parts)} at {self.timestamp.isoformat()}"
+        super().__init__(message)
 
 
 class AgentRunnerInitializationError(AgentRunnerError):
-    """Raised when agent runner initialization fails."""
+    """Exception raised when agent runner initialization fails."""
     pass
 
 
 class AgentRunnerDecisionError(AgentRunnerError):
-    """Raised when agent runner decision making fails."""
+    """Exception raised when agent decision making fails."""
     pass
 
 
 class AgentRunnerCleanupError(AgentRunnerError):
-    """Raised when agent runner cleanup fails."""
+    """Exception raised when agent runner cleanup fails."""
     pass
+
+
+class AgentRunnerTimeoutError(AgentRunnerError):
+    """Exception raised when agent runner operation times out."""
+    pass
+
+# Shared data structures used across integration layers
+@dataclass
+class SimulationState:
+    """Canonical simulation state passed to agent runners."""
+    tick: int = 0
+    simulation_time: Optional[datetime] = None
+    products: List[Any] = field(default_factory=list)
+    recent_events: List[Dict[str, Any]] = field(default_factory=list)
+    financial_position: Dict[str, Any] = field(default_factory=dict)
+    market_conditions: Dict[str, Any] = field(default_factory=dict)
+    agent_state: Dict[str, Any] = field(default_factory=dict)
+
+@dataclass
+class ToolCall:
+    """Structured action emitted by agent runners."""
+    tool_name: str
+    parameters: Dict[str, Any]
+    confidence: float = 1.0
+    reasoning: Optional[str] = None
+    priority: int = 0
+
+
+class AgentRunner:
+    """
+    Abstract base class for all agent runners.
+    
+    This class defines the interface that all agent runners must implement,
+    providing a consistent way to interact with agents regardless of their
+    underlying framework.
+    """
+    
+    def __init__(self, agent_id: str, config: Optional[Dict[str, Any]] = None):
+        """
+        Initialize the agent runner.
+        
+        Args:
+            agent_id: Unique identifier for this agent instance
+            config: Configuration dictionary for the agent
+        """
+        self.agent_id = agent_id
+        self.config = config or {}
+        self.status = AgentRunnerStatus.INITIALIZING
+        self.created_at = datetime.now()
+        self.started_at: Optional[datetime] = None
+        self.completed_at: Optional[datetime] = None
+        self.last_activity_at = self.created_at
+        self.error_message: Optional[str] = None
+        self.metrics: Dict[str, Any] = {}
+        self.context: Dict[str, Any] = {}
+        self.callbacks: Dict[str, List[Callable]] = {
+            "on_status_change": [],
+            "on_decision": [],
+            "on_error": [],
+            "on_metric": []
+        }
+        
+        # Initialize the agent
+        self._initialize()
+    
+    def _initialize(self) -> None:
+        """
+        Initialize the agent-specific implementation.
+        
+        This method should be overridden by subclasses to perform
+        framework-specific initialization.
+        """
+        try:
+            self._do_initialize()
+            self.status = AgentRunnerStatus.READY
+            self._trigger_callbacks("on_status_change", self.status)
+            logger.info(f"Agent runner {self.agent_id} initialized successfully")
+        except Exception as e:
+            self.status = AgentRunnerStatus.FAILED
+            self.error_message = str(e)
+            self._trigger_callbacks("on_status_change", self.status)
+            self._trigger_callbacks("on_error", e)
+            raise AgentRunnerInitializationError(
+                f"Failed to initialize agent runner {self.agent_id}: {e}",
+                agent_id=self.agent_id,
+                framework=self.__class__.__name__
+            ) from e
+    
+    @abc.abstractmethod
+    def _do_initialize(self) -> None:
+        """
+        Perform framework-specific initialization.
+        
+        This method must be implemented by subclasses to initialize
+        the specific agent framework.
+        """
+        pass
+    
+    @abc.abstractmethod
+    def make_decision(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Make a decision using the agent.
+        
+        Args:
+            context: Context information for the decision
+            
+        Returns:
+            Dictionary containing the decision and any metadata
+            
+        Raises:
+            AgentRunnerDecisionError: If decision making fails
+        """
+        pass
+    
+    async def make_decision_async(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Make a decision using the agent asynchronously.
+        
+        Args:
+            context: Context information for the decision
+            
+        Returns:
+            Dictionary containing the decision and any metadata
+            
+        Raises:
+            AgentRunnerDecisionError: If decision making fails
+        """
+        # Default implementation wraps the synchronous method
+        # Subclasses can override this for true async support
+        try:
+            self.status = AgentRunnerStatus.RUNNING
+            self.started_at = datetime.now()
+            self._trigger_callbacks("on_status_change", self.status)
+            
+            result = self.make_decision(context)
+            
+            self.status = AgentRunnerStatus.READY
+            self.last_activity_at = datetime.now()
+            self._trigger_callbacks("on_status_change", self.status)
+            self._trigger_callbacks("on_decision", result)
+            
+            return result
+        except Exception as e:
+            self.status = AgentRunnerStatus.FAILED
+            self.error_message = str(e)
+            self._trigger_callbacks("on_status_change", self.status)
+            self._trigger_callbacks("on_error", e)
+            raise AgentRunnerDecisionError(
+                f"Decision making failed for agent {self.agent_id}: {e}",
+                agent_id=self.agent_id,
+                framework=self.__class__.__name__
+            ) from e
+
+    async def initialize(self, config: Dict[str, Any]) -> None:
+        """
+        Initialize the agent runner (async compatibility wrapper).
+        If already initialized, update config; otherwise perform initialization.
+        """
+        if config:
+            self.config.update(config)
+        if self.status != AgentRunnerStatus.READY:
+            # Perform initialization if not done in constructor
+            self._initialize()
+
+    async def decide(self, state: 'SimulationState') -> List['ToolCall']:
+        """
+        Standard async decision API expected by integration layers.
+        Converts SimulationState to a generic context, calls make_decision_async,
+        then adapts the result into a list of ToolCall objects.
+        """
+        context: Dict[str, Any] = {
+            "tick": getattr(state, "tick", 0),
+            "simulation_time": getattr(state, "simulation_time", None),
+            "products": getattr(state, "products", []),
+            "recent_events": getattr(state, "recent_events", []),
+            "financial_position": getattr(state, "financial_position", {}),
+            "market_conditions": getattr(state, "market_conditions", {}),
+            "agent_state": getattr(state, "agent_state", {}),
+        }
+        decision = await self.make_decision_async(context)
+        # Default adaptation: wrap the decision dict into a single ToolCall.
+        return [ToolCall(tool_name="decision", parameters=decision, confidence=1.0)]
+    
+    def update_context(self, context_update: Dict[str, Any]) -> None:
+        """
+        Update the agent's context.
+        
+        Args:
+            context_update: Dictionary containing context updates
+        """
+        self.context.update(context_update)
+        self.last_activity_at = datetime.now()
+    
+    def get_status(self) -> AgentRunnerStatus:
+        """
+        Get the current status of the agent runner.
+        
+        Returns:
+            Current status of the agent runner
+        """
+        return self.status
+    
+    def get_metrics(self) -> Dict[str, Any]:
+        """
+        Get metrics for the agent runner.
+        
+        Returns:
+            Dictionary containing agent metrics
+        """
+        return self.metrics.copy()
+    
+    def update_metrics(self, metrics_update: Dict[str, Any]) -> None:
+        """
+        Update agent metrics.
+        
+        Args:
+            metrics_update: Dictionary containing metric updates
+        """
+        self.metrics.update(metrics_update)
+        self.last_activity_at = datetime.now()
+        self._trigger_callbacks("on_metric", self.metrics)
+    
+    def add_callback(self, event_type: str, callback: Callable) -> None:
+        """
+        Add a callback for a specific event type.
+        
+        Args:
+            event_type: Type of event ("on_status_change", "on_decision", "on_error", "on_metric")
+            callback: Callback function to be invoked when the event occurs
+        """
+        if event_type in self.callbacks:
+            self.callbacks[event_type].append(callback)
+        else:
+            raise ValueError(f"Unknown event type: {event_type}")
+    
+    def remove_callback(self, event_type: str, callback: Callable) -> None:
+        """
+        Remove a callback for a specific event type.
+        
+        Args:
+            event_type: Type of event
+            callback: Callback function to be removed
+        """
+        if event_type in self.callbacks:
+            try:
+                self.callbacks[event_type].remove(callback)
+            except ValueError:
+                # Callback not found, ignore
+                pass
+    
+    def _trigger_callbacks(self, event_type: str, *args, **kwargs) -> None:
+        """
+        Trigger callbacks for a specific event type.
+        
+        Args:
+            event_type: Type of event
+            *args: Arguments to pass to callbacks
+            **kwargs: Keyword arguments to pass to callbacks
+        """
+        for callback in self.callbacks.get(event_type, []):
+            try:
+                callback(self, *args, **kwargs)
+            except Exception as e:
+                logger.error(f"Error in callback for {event_type}: {e}")
+    
+    def pause(self) -> None:
+        """
+        Pause the agent runner.
+        
+        This method should be overridden by subclasses that support pausing.
+        """
+        if self.status == AgentRunnerStatus.RUNNING:
+            self.status = AgentRunnerStatus.PAUSED
+            self._trigger_callbacks("on_status_change", self.status)
+            logger.info(f"Agent runner {self.agent_id} paused")
+        else:
+            logger.warning(f"Cannot pause agent runner {self.agent_id} in status {self.status}")
+    
+    def resume(self) -> None:
+        """
+        Resume the agent runner.
+        
+        This method should be overridden by subclasses that support resuming.
+        """
+        if self.status == AgentRunnerStatus.PAUSED:
+            self.status = AgentRunnerStatus.READY
+            self._trigger_callbacks("on_status_change", self.status)
+            logger.info(f"Agent runner {self.agent_id} resumed")
+        else:
+            logger.warning(f"Cannot resume agent runner {self.agent_id} in status {self.status}")
+    
+    def cleanup(self) -> None:
+        """
+        Clean up resources used by the agent runner.
+        
+        This method should be overridden by subclasses to perform
+        framework-specific cleanup.
+        """
+        try:
+            self.status = AgentRunnerStatus.CLEANING_UP
+            self._trigger_callbacks("on_status_change", self.status)
+            
+            self._do_cleanup()
+            
+            self.status = AgentRunnerStatus.TERMINATED
+            self.completed_at = datetime.now()
+            self._trigger_callbacks("on_status_change", self.status)
+            
+            logger.info(f"Agent runner {self.agent_id} cleaned up successfully")
+        except Exception as e:
+            self.status = AgentRunnerStatus.FAILED
+            self.error_message = str(e)
+            self._trigger_callbacks("on_status_change", self.status)
+            self._trigger_callbacks("on_error", e)
+            raise AgentRunnerCleanupError(
+                f"Cleanup failed for agent runner {self.agent_id}: {e}",
+                agent_id=self.agent_id,
+                framework=self.__class__.__name__
+            ) from e
+    
+    def _do_cleanup(self) -> None:
+        """
+        Perform framework-specific cleanup.
+        
+        This method should be overridden by subclasses to perform
+        framework-specific cleanup.
+        """
+        # Default implementation does nothing
+        pass
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert the agent runner to a dictionary representation.
+        
+        Returns:
+            Dictionary representation of the agent runner
+        """
+        return {
+            "agent_id": self.agent_id,
+            "config": self.config,
+            "status": self.status.value,
+            "created_at": self.created_at.isoformat(),
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "last_activity_at": self.last_activity_at.isoformat(),
+            "error_message": self.error_message,
+            "metrics": self.metrics,
+            "context": self.context,
+            "framework": self.__class__.__name__
+        }
+    
+    def __str__(self) -> str:
+        """String representation of the agent runner."""
+        return f"{self.__class__.__name__}(id={self.agent_id}, status={self.status.value})"
+    
+    def __repr__(self) -> str:
+        """Detailed string representation of the agent runner."""
+        return (f"{self.__class__.__name__}(agent_id={self.agent_id!r}, "
+                f"status={self.status.value!r}, framework={self.__class__.__name__!r})")

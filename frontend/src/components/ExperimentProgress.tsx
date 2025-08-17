@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import type { ExperimentExecution, ExperimentStatus, ExperimentProgressUpdate } from '../types'; // Import ExperimentProgressUpdate
-import { useWebSocket } from '../hooks/useWebSocket';
+import useWebSocket from '../hooks/useWebSocket';
 import { apiService } from '../services/apiService';
 
 interface ExperimentProgressProps {

@@ -10,8 +10,8 @@ const NotificationSystem: React.FC = () => {
     return null;
   }
 
-  // Convert Map to Array for rendering
-  const notificationsArray = Array.from(notifications.values()).sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+  // Convert Map to Array for rendering, ensuring timestamps are parsed as Dates for sorting
+  const notificationsArray = Array.from(notifications.values()).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
   return (
     <div className="fixed bottom-4 right-4 z-50 flex flex-col items-end space-y-3">
@@ -28,13 +28,10 @@ const NotificationSystem: React.FC = () => {
         >
           <div className="flex flex-col flex-grow">
             <p className="font-semibold">{notification.message}</p>
-            {notification.details && (
-              <p className="text-sm opacity-90 mt-1">{notification.details}</p>
-            )}
             {notification.action && (
               <button
                 className="mt-2 px-3 py-1 bg-white bg-opacity-20 hover:bg-opacity-30 rounded text-sm self-start"
-                onClick={notification.action.onClick}
+                onClick={notification.action.callback}
               >
                 {notification.action.label}
               </button>

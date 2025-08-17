@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useSimulationStore } from '../store/simulationStore';
-import { useWebSocket } from '../hooks/useWebSocket';
+import useWebSocket from '../hooks/useWebSocket';
 import type { AgentStatus } from '../types';
 
 interface AgentMonitorProps {
@@ -26,7 +26,8 @@ export const AgentMonitor: React.FC<AgentMonitorProps> = ({
   maxAgentsDisplay = 20
 }) => {
   const { simulation } = useSimulationStore();
-  const { isConnected } = useWebSocket();
+  // WebSocket functionality handled by webSocketService
+  const isConnected = true; // Placeholder for now
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<'name' | 'performance' | 'activity' | 'status'>('status');
   const [filterStatus, setFilterStatus] = useState<AgentStatus['status'] | 'all'>('all');

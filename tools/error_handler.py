@@ -35,7 +35,8 @@ class AgentErrorHandler:
     def handle_invalid_command(self, command: str, error_type: str) -> Dict[str, Any]:
         """
         Processes malformed commands gracefully without simulation crashes.
-        Logs the error and returns a structured error response.
+        Logs the error and returns a structured error response, ensuring continuous operation
+        even with malformed LLM agent inputs.
         """
         logging.error(f"Malformed command received (Type: {error_type}): {command}")
         return {
@@ -47,7 +48,8 @@ class AgentErrorHandler:
 
     def generate_error_feedback(self, error: Exception, context: Dict[str, Any]) -> str:
         """
-        Generates educational error messages to help agents learn from mistakes.
+        Generates actionable and educational error messages to help LLM agents learn from mistakes.
+        This structured feedback is crucial for iterative improvement of agent behavior.
         """
         error_message = str(error)
         tool_name = context.get("tool_name", "an unknown tool")
@@ -74,8 +76,8 @@ class AgentErrorHandler:
 
     def suggest_command_corrections(self, invalid_command: str) -> List[str]:
         """
-        Recommends fixes for common mistakes in agent commands.
-        (Simplified: focuses on common JSON errors; can be expanded with more NLP for intent)
+        Provides specific, actionable recommendations for fixing common mistakes in agent commands.
+        This aims to guide the LLM agent towards a correct invocation pattern.
         """
         suggestions = []
         try:
@@ -90,8 +92,7 @@ class AgentErrorHandler:
             elif not isinstance(command.get("parameters"), dict):
                 suggestions.append("The `\"parameters\"` value must be a JSON object.")
 
-            # Add general structure suggestion if none of the above caught specific issues
-            if not suggestions:
+            if not suggestions: # Only add general suggestions if more specific ones weren't found
                 suggestions.append("Ensure all string values are enclosed in double quotes and commas separate elements in lists/objects.")
 
         except json.JSONDecodeError:
@@ -107,21 +108,20 @@ class AgentErrorHandler:
 
 def handle_common_errors_for_agent(error: Exception, context: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Handle common errors for agents in a standardized way.
+    Centralized error handling function for LLM agents, providing standardized, educational feedback.
+    This function acts as a uniform interface for all errors encountered during agent operations.
     
     Args:
         error: The exception that occurred
-        context: Context information about the error
+        context: Context information about the error, typically including 'tool_name' and 'parameters'.
         
     Returns:
-        Dictionary with error handling information
+        A structured dictionary containing error details, educational feedback, and actionable suggestions.
     """
     error_handler = AgentErrorHandler()
     
-    # Generate educational feedback
     feedback = error_handler.generate_error_feedback(error, context)
     
-    # Create standardized error response
     error_response = {
         "status": "error",
         "error_type": type(error).__name__,
@@ -131,47 +131,56 @@ def handle_common_errors_for_agent(error: Exception, context: Dict[str, Any]) ->
         "suggestions": []
     }
     
-    # Add specific suggestions based on error type
     if isinstance(error, (ValueError, TypeError)):
-        error_response["suggestions"].append("Check parameter types and values")
+        error_response["suggestions"].append("Check parameter types and values. Ensure numbers are numeric, and strings are properly quoted.")
     elif isinstance(error, KeyError):
-        error_response["suggestions"].append("Verify all required keys are present")
+        error_response["suggestions"].append("Verify all required keys are present in the command's 'parameters' object.")
     elif isinstance(error, AttributeError):
-        error_response["suggestions"].append("Check if the attribute exists on the object")
+        error_response["suggestions"].append("Check if the attribute or method exists on the target object. This may indicate a schema mismatch.")
+    elif isinstance(error, json.JSONDecodeError):
+        error_response["suggestions"].append("Review the JSON syntax of your command. Look for unclosed quotes, missing commas, or incorrect bracing.")
+    elif "connection" in str(error).lower() or "network" in str(error).lower():
+         error_response["suggestions"].append("A network issue prevented the operation. Verify your internet connection or API endpoint accessibility.")
+    elif "authentication" in str(error).lower() or "api key" in str(error).lower():
+         error_response["suggestions"].append("Authentication failed. Ensure your API key is correct and has the necessary permissions.")
     
     return error_response
 
     def log_error_patterns(self, agent_id: str, error_history: List[Dict[str, Any]]):
         """
-        Tracks recurring agent mistakes for later analysis and learning.
-        Aggregates error patterns and logs them for monitoring and improvement.
+        Analyzes and logs recurring error patterns for a given agent from its error history.
+        This provides insights into common agent mistakes and informs agent design improvements.
         """
         if not error_history:
             logging.info(f"Agent {agent_id} has no error history to analyze.")
             return
             
-        logging.info(f"Agent {agent_id} error history snapshot: {len(error_history)} errors recorded.")
+        logging.info(f"Analyzing error history for Agent {agent_id}: {len(error_history)} errors recorded.")
         
-        # Count common error types
         error_types = [e.get("error_type", "unknown") for e in error_history if e.get("error_type")]
         count_errors = Counter(error_types)
         
-        # Log the most common errors
         if count_errors:
-            logging.info(f"Most common errors for Agent {agent_id}:")
-            for error_type, count in count_errors.most_common(5):  # Log top 5 errors
+            logging.info(f"Top 5 most common error types for Agent {agent_id}:")
+            for error_type, count in count_errors.most_common(5):
                 logging.info(f"  - {error_type}: {count} occurrences")
         
-        # Log error frequency over time if timestamps are available
         timestamps = [e.get("timestamp") for e in error_history if e.get("timestamp")]
         if timestamps:
-            logging.info(f"Error timestamps available for {len(timestamps)} errors. "
-                        "Consider implementing time-based analysis for error patterns.")
+            time_diffs = [(timestamps[i] - timestamps[i-1]).total_seconds() for i in range(1, len(timestamps))]
+            if time_diffs:
+                avg_interval = sum(time_diffs) / len(time_diffs)
+                logging.info(f"Average interval between errors for Agent {agent_id}: {avg_interval:.2f} seconds.")
+            else:
+                logging.info(f"Only one error recorded for Agent {agent_id}, cannot determine interval.")
         
-        # Note: In a production system, this data would be stored to a database
-        # for more sophisticated analysis and potential alerting.
+        # Further analysis could include:
+        # - Correlation of errors with specific tools or contexts.
+        # - Trend analysis over longer periods.
+        # - Automated alerting for persistent critical errors.
+        # This data would typically be stored in a time-series database for robust analytics.
 
 
 class BenchmarkError(Exception):
-    """Exception raised for benchmark-related errors."""
+    """Custom exception raised for benchmark-related errors during execution."""
     pass

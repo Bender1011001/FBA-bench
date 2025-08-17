@@ -6,7 +6,7 @@ benchmarking process, including agent lifecycle management, metrics collection,
 and reproducible execution.
 """
 
-from .engine import BenchmarkEngine, benchmark_engine, get_benchmark_engine
+from .engine import BenchmarkEngine
 from .config import BenchmarkConfig
 from .results import BenchmarkResult
 

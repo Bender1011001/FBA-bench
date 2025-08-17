@@ -1,6 +1,6 @@
 # Agent Runners - Framework-Agnostic Agent Abstraction
 
-This module provides a unified interface for different agent frameworks in FBA-Bench, enabling seamless swapping between DIY, CrewAI, LangChain, and future frameworks without changing simulation code.
+This module provides a unified interface for different agent frameworks in **FBA-Bench**, enabling seamless swapping between DIY, CrewAI, LangChain, and future frameworks without changing simulation code.
 
 ## 🎯 Key Benefits
 
@@ -16,30 +16,30 @@ This module provides a unified interface for different agent frameworks in FBA-B
 ┌─────────────────────────────────────────────────────────┐
 │                 Simulation Orchestrator                │
 └─────────────────────┬───────────────────────────────────┘
-                      │
+                       │
 ┌─────────────────────▼───────────────────────────────────┐
 │                  Agent Manager                         │
 │  • Lifecycle management                                 │
 │  • State conversion                                     │
 │  • Tool call execution                                  │
 └─────────────────────┬───────────────────────────────────┘
-                      │
+                       │
 ┌─────────────────────▼───────────────────────────────────┐
 │                 Runner Factory                         │
 │  • Framework registration                               │
 │  • Agent creation                                       │
 │  • Configuration validation                             │
 └─────────────────────┬───────────────────────────────────┘
-                      │
+                       │
 ┌─────────────────────▼───────────────────────────────────┐
 │               AgentRunner Interface                    │
 │  • async decide(state) -> [ToolCall]                   │
 │  • async initialize(config)                            │
 │  • async cleanup()                                      │
 └─────────────────────┬───────────────────────────────────┘
-                      │
-    ┌─────────────────┼─────────────────┬─────────────────┐
-    │                 │                 │                 │
+                       │
+     ┌─────────────────┼─────────────────┬─────────────────┐
+     │                 │                 │                 │
 ┌───▼───┐        ┌────▼────┐       ┌────▼────┐       ┌────▼────┐
 │  DIY  │        │ CrewAI  │       │LangChain│       │ Future  │
 │Runner │        │ Runner  │       │ Runner  │       │Framework│
@@ -295,58 +295,4 @@ await agent.start()
 from agent_runners import AgentManager, DIYConfig
 
 config = DIYConfig.advanced_agent("test", "B0TEST")
-runner = await agent_manager.register_agent("test", "diy", config.to_dict())
-```
-
-### From Baseline Bots
-**Before:**
-```python
-from baseline_bots.greedy_script_bot import GreedyScriptBot
-
-bot = GreedyScriptBot()
-actions = bot.decide(simulation_state)
-```
-
-**After:**
-```python
-from agent_runners import DIYConfig
-
-config = DIYConfig.baseline_greedy("greedy_agent")
-runner = await agent_manager.register_agent("greedy_agent", "diy", config.to_dict())
-# Agent automatically participates in simulation
-```
-
-## 📚 API Reference
-
-### Core Classes
-- **`AgentRunner`**: Base interface for all agent frameworks
-- **`SimulationState`**: Standardized state representation
-- **`ToolCall`**: Standardized action representation
-- **`RunnerFactory`**: Factory for creating agent runners
-- **`AgentManager`**: Integration with simulation orchestrator
-
-### Configuration Classes
-- **`AgentRunnerConfig`**: Unified configuration schema
-- **`DIYConfig`**: Pre-built DIY configurations
-- **`CrewAIConfig`**: Pre-built CrewAI configurations  
-- **`LangChainConfig`**: Pre-built LangChain configurations
-
-### Utility Functions
-- **`check_framework_availability(framework)`**: Check if framework is available
-- **`get_available_frameworks()`**: List available frameworks
-- **`create_agent_builder(framework, agent_id)`**: Create configuration builder
-
-## 🤝 Contributing
-
-To add support for a new framework:
-
-1. Create a new runner class implementing `AgentRunner`
-2. Add framework dependencies to `requirements-frameworks.txt`
-3. Register the framework in `runner_factory.py`
-4. Add configuration templates to `configs/framework_configs.py`
-5. Add tests for the new framework
-6. Update documentation
-
-## 📄 License
-
-Part of FBA-Bench project. See main project license for details.
+runner = await agent_manager.register_agent("test", "diy", config

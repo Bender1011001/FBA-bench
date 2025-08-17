@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional
 
 from money import Money 
-from events import BaseEvent, TickEvent, SaleOccurred, CompetitorPricesUpdated, BudgetWarning, BudgetExceeded, ConstraintViolation
+from fba_events import BaseEvent, TickEvent, SaleOccurred, CompetitorPricesUpdated, BudgetWarning, BudgetExceeded, ConstraintViolation
 from services.world_store import WorldStore, ProductState # Assuming WorldStore is accessible
 from constraints.budget_enforcer import BudgetEnforcer # For budget details
 

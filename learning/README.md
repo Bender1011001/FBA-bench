@@ -1,8 +1,8 @@
 # Agent Learning and Adaptation System
 
-This module implements advanced learning capabilities for FBA-Bench agents, enabling them to adapt and improve their performance across simulation runs through reinforcement learning and episodic memory.
+This module implements advanced learning capabilities for **FBA-Bench** agents, enabling them to adapt and improve their performance across simulation runs through reinforcement learning and episodic memory.
 
-## Overview
+## 🎯 Overview
 
 The learning system consists of three core components:
 
@@ -10,7 +10,7 @@ The learning system consists of three core components:
 - **[`FBABenchRLEnvironment`](rl_environment.py)**: OpenAI Gym-compatible reinforcement learning environment
 - **[`LearningConfig`](learning_config.py)**: Configuration management for learning parameters
 
-## Key Features
+## ✨ Key Features
 
 ### 🧠 Episodic Learning
 - **Experience Storage**: Persistent storage of agent decisions, outcomes, and contexts
@@ -30,7 +30,7 @@ The learning system consists of three core components:
 - **Safety Constraints**: Preventive measures against dangerous or unrealistic actions
 - **Exploration Strategies**: Configurable exploration vs. exploitation balance
 
-## Quick Start
+## 🚀 Quick Start
 
 ### Basic Learning Setup
 
@@ -91,7 +91,7 @@ python experiment_cli.py run --train-agent my_agent_id
 python experiment_cli.py run --export-agent my_agent_id v1.0
 ```
 
-## Advanced Usage
+## 🔧 Advanced Usage
 
 ### Custom Reward Functions
 
@@ -126,7 +126,7 @@ print(f"Average reward: {sum(p['reward'] for p in progress) / len(progress)}")
 strategy_export = await learning_manager.export_learned_agent("my_agent", "v1.0")
 ```
 
-## Configuration Options
+## ⚙️ Configuration Options
 
 The [`LearningConfig`](learning_config.py) class provides extensive customization:
 
@@ -164,7 +164,7 @@ learning_config = LearningConfig(
 )
 ```
 
-## Performance Metrics
+## 📊 Performance Metrics
 
 The learning system tracks various performance metrics:
 
@@ -174,7 +174,7 @@ The learning system tracks various performance metrics:
 - **Exploration Efficiency**: Balance between exploration and exploitation
 - **Transfer Learning**: Performance on new scenarios using learned knowledge
 
-## Best Practices
+## 🎯 Best Practices
 
 ### 1. Reward Function Design
 - Start with simple reward functions and gradually add complexity
@@ -200,7 +200,7 @@ The learning system tracks various performance metrics:
 - Monitor agent behavior for unexpected strategies
 - Maintain human oversight for critical decisions
 
-## Integration with Other Systems
+## 🔗 Integration with Other Systems
 
 The learning system integrates with:
 
@@ -209,7 +209,7 @@ The learning system integrates with:
 - **[Scenario Engine](../scenarios/scenario_engine.py)**: Test learned strategies across diverse scenarios
 - **[Reproducibility System](../reproducibility/)**: Ensure deterministic learning for research
 
-## Troubleshooting
+## 🔍 Troubleshooting
 
 ### Common Issues
 
@@ -231,7 +231,7 @@ The learning system integrates with:
 - Review safety constraint impacts
 - Ensure proper normalization
 
-## Research Applications
+## 🧪 Research Applications
 
 The learning system supports various research directions:
 
@@ -241,4 +241,26 @@ The learning system supports various research directions:
 - **Continual Learning**: Adaptation to changing market dynamics
 - **Interpretable AI**: Understanding learned strategies and decision processes
 
+## 📚 Related Documentation
+
+- **[Main README](../README.md)**: FBA-Bench project overview
+- **[Agent Runners](../agent_runners/README.md)**: Agent framework integration
+- **[Configuration Guide](../docs/configuration/)**: System configuration
+- **[Development Guide](../docs/development/)**: Contributing guidelines
+- **[Research Documentation](../docs/research/)**: Research background and philosophy
+
 For more examples and advanced usage patterns, see the [`examples/`](../examples/) directory.
+
+## 🤝 Contributing
+
+To contribute to the learning system:
+
+1. Review the [Development Guide](../docs/development/)
+2. Follow the established code patterns and conventions
+3. Add comprehensive tests for new features
+4. Update documentation for any changes
+5. Submit pull requests with clear descriptions
+
+---
+
+**FBA-Bench Learning System** - Advanced agent learning and adaptation capabilities for tier-1 benchmarking.

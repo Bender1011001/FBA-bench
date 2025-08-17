@@ -39,7 +39,7 @@ const useWebSocket = (options: WebSocketOptions): WebSocketHookResult => {
   const [readyState, setReadyState] = useState<number>(WebSocket.CLOSED);
   
   const websocketRef = useRef<WebSocket | null>(null);
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectCountRef = useRef<number>(0);
   const shouldConnectRef = useRef<boolean>(autoConnect);
 
@@ -49,12 +49,14 @@ const useWebSocket = (options: WebSocketOptions): WebSocketHookResult => {
     }
 
     try {
+      console.log('useWebSocket: Attempting to connect to:', url);
       setConnectionStatus('connecting');
       setReadyState(WebSocket.CONNECTING);
       
       const ws = new WebSocket(url, protocols);
       
       ws.onopen = (event: Event) => {
+        console.log('useWebSocket: Connection established successfully');
         setConnectionStatus('connected');
         setReadyState(WebSocket.OPEN);
         reconnectCountRef.current = 0;
@@ -62,6 +64,7 @@ const useWebSocket = (options: WebSocketOptions): WebSocketHookResult => {
       };
       
       ws.onclose = (event: CloseEvent) => {
+        console.log('useWebSocket: Connection closed, code:', event.code, 'reason:', event.reason);
         setConnectionStatus('disconnected');
         setReadyState(WebSocket.CLOSED);
         websocketRef.current = null;
@@ -69,6 +72,7 @@ const useWebSocket = (options: WebSocketOptions): WebSocketHookResult => {
         
         // Attempt to reconnect if the connection was not closed intentionally
         if (shouldConnectRef.current && event.code !== 1000 && reconnectCountRef.current < reconnectAttempts) {
+          console.log('useWebSocket: Attempting to reconnect, attempt:', reconnectCountRef.current + 1);
           reconnectCountRef.current++;
           reconnectTimeoutRef.current = setTimeout(() => {
             connect();
@@ -77,7 +81,7 @@ const useWebSocket = (options: WebSocketOptions): WebSocketHookResult => {
       };
       
       ws.onerror = (event: Event) => {
-        console.error('WebSocket error:', event);
+        console.error('useWebSocket: Error event:', event);
         onError?.(event);
       };
       

@@ -13,8 +13,9 @@ import uuid
 from typing import Dict, Optional, Any, List, Protocol
 from datetime import datetime
 from dataclasses import dataclass, field
+from pathlib import Path
 
-from money import Money 
+from money import Money
 from events import BaseEvent, SetPriceCommand, ProductPriceUpdated, InventoryUpdate, WorldStateSnapshotEvent
 from event_bus import EventBus, get_event_bus
 
@@ -22,7 +23,7 @@ from event_bus import EventBus, get_event_bus
 logger = logging.getLogger(__name__)
 
 
-# --- Persistence Layer for WorldStore (New) ---
+# --- Persistence Layer for WorldStore ---
 
 class PersistenceBackend(Protocol):
     """
@@ -94,6 +95,95 @@ class InMemoryStorageBackend:
             return snapshot_data["state"]
         logger.warning(f"In-memory state snapshot {snapshot_id} not found.")
         return None
+
+class JsonFileStorageBackend:
+    """
+    A file-based storage backend for WorldStore state snapshots using JSON files.
+    More suitable for production than InMemoryStorageBackend for single-instance setups.
+    """
+    def __init__(self, snapshot_dir: str = "world_store_snapshots"):
+        self.snapshot_dir = Path(snapshot_dir)
+        self._latest_snapshot_id: Optional[str] = None
+        logger.info(f"JsonFileStorageBackend initialized with directory: {self.snapshot_dir}")
+
+    async def initialize(self):
+        try:
+            self.snapshot_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"JsonFileStorageBackend ensured directory exists: {self.snapshot_dir}")
+            # Attempt to find the latest snapshot ID on startup
+            await self._find_latest_snapshot_id()
+        except Exception as e:
+            logger.error(f"Failed to initialize JsonFileStorageBackend directory: {e}", exc_info=True)
+            raise
+
+    async def shutdown(self):
+        logger.info("JsonFileStorageBackend shut down.")
+        pass
+
+    def _get_snapshot_path(self, snapshot_id: str) -> Path:
+        return self.snapshot_dir / f"{snapshot_id}.json"
+
+    async def _find_latest_snapshot_id(self):
+        """Finds the ID of the latest snapshot based on modification time."""
+        latest_mtime = 0
+        latest_id = None
+        try:
+            for file_path in self.snapshot_dir.glob("*.json"):
+                if file_path.is_file():
+                    mtime = file_path.stat().st_mtime
+                    if mtime > latest_mtime:
+                        latest_mtime = mtime
+                        latest_id = file_path.stem # filename without extension
+            self._latest_snapshot_id = latest_id
+            if latest_id:
+                logger.info(f"JsonFileStorageBackend identified latest snapshot as: {latest_id}")
+            else:
+                logger.info("JsonFileStorageBackend found no existing snapshots.")
+        except Exception as e:
+            logger.error(f"Error finding latest snapshot ID in JsonFileStorageBackend: {e}", exc_info=True)
+
+
+    async def save_state(self, state: Dict[str, Any], timestamp: datetime, tick: Optional[int] = None) -> str:
+        snapshot_id = f"snapshot_{timestamp.strftime('%Y%m%d_%H%M%S_%f')}_{tick or 'N'}"
+        snapshot_data = {
+            "id": snapshot_id,
+            "timestamp": timestamp.isoformat(),
+            "tick": tick,
+            "state": state
+        }
+        snapshot_path = self._get_snapshot_path(snapshot_id)
+        try:
+            with open(snapshot_path, 'w') as f:
+                json.dump(snapshot_data, f, indent=4)
+            self._latest_snapshot_id = snapshot_id
+            logger.info(f"Saved JSON state snapshot: {snapshot_id} to {snapshot_path}")
+            return snapshot_id
+        except Exception as e:
+            logger.error(f"Failed to save JSON state snapshot {snapshot_id}: {e}", exc_info=True)
+            raise
+
+    async def load_latest_state(self) -> Optional[Dict[str, Any]]:
+        if not self._latest_snapshot_id:
+            await self._find_latest_snapshot_id() # Ensure we have tried to find it
+        
+        if self._latest_snapshot_id:
+            return await self.load_state_by_id(self._latest_snapshot_id)
+        logger.info("No latest JSON state snapshot found.")
+        return None
+
+    async def load_state_by_id(self, snapshot_id: str) -> Optional[Dict[str, Any]]:
+        snapshot_path = self._get_snapshot_path(snapshot_id)
+        try:
+            if not snapshot_path.exists():
+                logger.warning(f"JSON state snapshot {snapshot_id} not found at {snapshot_path}.")
+                return None
+            with open(snapshot_path, 'r') as f:
+                snapshot_data = json.load(f)
+            logger.info(f"Loaded JSON state snapshot by ID: {snapshot_id} from {snapshot_path}")
+            return snapshot_data.get("state")
+        except Exception as e:
+            logger.error(f"Failed to load JSON state snapshot {snapshot_id}: {e}", exc_info=True)
+            return None
 
 # --- End Persistence Layer ---
 
@@ -185,15 +275,17 @@ class WorldStore:
         Args:
             event_bus: EventBus instance for pub/sub communication
             storage_backend: Optional backend for persisting state snapshots.
+                            If None, defaults to InMemoryStorageBackend.
         """
         self.event_bus = event_bus or get_event_bus()
-        self.storage_backend = storage_backend # New: Optional persistence backend
+        self.storage_backend = storage_backend if storage_backend is not None else InMemoryStorageBackend()
         
         # Canonical state storage
         self._product_state: Dict[str, ProductState] = {}
         
-        # Command processing state
-        self._pending_commands: List[SetPriceCommand] = []
+        # Command processing state for enhanced conflict resolution
+        self._pending_commands_by_asin_this_tick: Dict[str, List[SetPriceCommand]] = {}
+        self._processed_command_ids_this_tick: set[str] = set() # To avoid re-processing exact duplicates within a tick
         self._command_history: List[SetPriceCommand] = []
         
         # Arbitration configuration
@@ -204,7 +296,7 @@ class WorldStore:
         # Statistics
         self.commands_processed = 0
         self.commands_rejected = 0
-        self.conflicts_arbitrated = 0
+        self.conflicts_arbitrated = 0 # Counts when a command is rejected due to a prior accepted one for same ASIN in the tick
         self.snapshots_saved = 0
         
         logger.info("WorldStore initialized - ready for multi-agent command processing")
@@ -213,12 +305,11 @@ class WorldStore:
         """Start the WorldStore service, subscribe to events, and initialize storage."""
         await self.event_bus.subscribe('SetPriceCommand', self.handle_set_price_command)
         await self.event_bus.subscribe('InventoryUpdate', self._handle_inventory_update)
-        # Also subscribe to TickEvent to trigger periodic snapshots
-        await self.event_bus.subscribe('TickEvent', self._handle_tick_event_for_snapshot)
+        await self.event_bus.subscribe('TickEvent', self._handle_tick_event_for_snapshot) # To clear per-tick state
+        await self.event_bus.subscribe('TickEndEvent', self._handle_tick_end_event) # To clear per-tick state
 
         if self.storage_backend:
             await self.storage_backend.initialize()
-            # Attempt to load latest state on startup
             loaded_state = await self.storage_backend.load_latest_state()
             if loaded_state:
                 self._load_state_from_dict(loaded_state)
@@ -226,7 +317,7 @@ class WorldStore:
             else:
                 logger.info("No existing state found in persistence backend.")
         
-        logger.info("WorldStore started - subscribed to SetPriceCommand, InventoryUpdate, TickEvent events")
+        logger.info("WorldStore started - subscribed to SetPriceCommand, InventoryUpdate, TickEvent, TickEndEvent events")
     
     async def stop(self):
         """Stop the WorldStore service and shut down storage backend."""
@@ -234,12 +325,17 @@ class WorldStore:
             await self.storage_backend.shutdown()
         logger.info("WorldStore stopped")
 
-    async def _handle_tick_event_for_snapshot(self, event: Any): # Using Any to avoid circular import with TickEvent
+    async def _handle_tick_event_for_snapshot(self, event: Any): # Using Any to avoid circular import
         """Handles TickEvents to trigger periodic state snapshots."""
-        # This can be configured for frequency, e.g., every N ticks or every M minutes
         if event.tick_number % 100 == 0: # Example: save every 100 ticks
             logger.info(f"Tick {event.tick_number}: Triggering WorldStore state snapshot.")
             await self.save_state_snapshot(tick=event.tick_number)
+
+    async def _handle_tick_end_event(self, event: Any): # Using Any to avoid circular import
+        """Handles TickEndEvents to clear per-tick command tracking."""
+        logger.debug(f"Tick {event.tick_number} ended. Clearing per-tick command tracking.")
+        self._pending_commands_by_asin_this_tick.clear()
+        self._processed_command_ids_this_tick.clear()
     
     # Command Processing
     
@@ -251,8 +347,13 @@ class WorldStore:
         Publishes ProductPriceUpdated on successful changes.
         """
         try:
-            logger.debug(f"Processing SetPriceCommand: agent={event.agent_id}, asin={event.asin}, price={event.new_price}")
-            
+            logger.debug(f"Processing SetPriceCommand: agent={event.agent_id}, asin={event.asin}, price={event.new_price}, command_id={event.event_id}")
+
+            if event.event_id in self._processed_command_ids_this_tick:
+                logger.warning(f"Duplicate SetPriceCommand ignored: command_id={event.event_id} from agent={event.agent_id} for asin={event.asin}")
+                self.commands_rejected += 1
+                return
+
             # Arbitrate the command
             result = await self._arbitrate_price_command(event)
             
@@ -260,27 +361,35 @@ class WorldStore:
                 # Apply the state change
                 await self._apply_price_change(event, result)
                 self.commands_processed += 1
-                logger.info(f"SetPriceCommand accepted: agent={event.agent_id}, asin={event.asin}, new_price={result.final_price}")
+                # Mark this command as processed for this tick
+                self._processed_command_ids_this_tick.add(event.event_id)
+                # Add to pending commands for this ASIN for this tick to block subsequent ones
+                if event.asin not in self._pending_commands_by_asin_this_tick:
+                    self._pending_commands_by_asin_this_tick[event.asin] = []
+                self._pending_commands_by_asin_this_tick[event.asin].append(event)
+
+                logger.info(f"SetPriceCommand accepted: agent={event.agent_id}, asin={event.asin}, new_price={result.final_price}, command_id={event.event_id}")
             else:
                 # Reject the command
                 self.commands_rejected += 1
-                logger.warning(f"SetPriceCommand rejected: agent={event.agent_id}, asin={event.asin}, reason={result.reason}")
+                if "already accepted for this ASIN in the current tick" in result.reason:
+                    self.conflicts_arbitrated +=1
+                logger.warning(f"SetPriceCommand rejected: agent={event.agent_id}, asin={event.asin}, reason={result.reason}, command_id={event.event_id}")
             
             # Record in history
             self._command_history.append(event)
             
         except Exception as e:
-            logger.error(f"Error processing SetPriceCommand: {e}", exc_info=True)
+            logger.error(f"Error processing SetPriceCommand {event.event_id}: {e}", exc_info=True)
             self.commands_rejected += 1
     
     async def _handle_inventory_update(self, event: InventoryUpdate):
         """Handle InventoryUpdate events to update canonical inventory state."""
         try:
             asin = event.asin
-            # Assume event provides new quantity and possibly updated cost basis
             new_quantity = event.new_quantity
-            cost_basis = event.cost_basis # This should be provided by the inventory update source
-            
+            cost_basis = event.cost_basis 
+
             current_state = self._product_state.get(asin)
             if current_state:
                 current_state.inventory_quantity = new_quantity
@@ -288,12 +397,9 @@ class WorldStore:
                 current_state.last_updated = datetime.now()
                 logger.debug(f"Updated inventory for {asin}: new_quantity={new_quantity}, cost_basis={cost_basis}")
             else:
-                # If product state doesn't exist, initialize it with inventory info
-                # This depends on whether inventory can arrive before a price is set.
-                # For now, if no product state, we create a minimal one.
                 self._product_state[asin] = ProductState(
                     asin=asin,
-                    price=Money.zero(), # Default price if not set yet
+                    price=Money.zero(), 
                     inventory_quantity=new_quantity,
                     cost_basis=cost_basis if cost_basis else Money.zero(),
                     last_updated=datetime.now(),
@@ -308,17 +414,16 @@ class WorldStore:
     
     async def _arbitrate_price_command(self, command: SetPriceCommand) -> CommandArbitrationResult:
         """
-        Arbitrate a price change command.
+        Arbitrate a price change command with enhanced conflict resolution.
         
         Validation rules:
         1. Price must be within global min/max thresholds
         2. Price change cannot exceed max_price_change_per_tick
         3. Product must exist or be initializable
-        4. Agent must be authorized (future enhancement)
         
         Conflict resolution:
-        - For now, use simple timestamp-based ordering (first command wins per tick)
-        - Future: More sophisticated arbitration based on agent reputation, etc.
+        - If another command for the same ASIN has already been accepted in this tick, reject.
+        - Commands for the same ASIN within the same tick are processed in order of arrival (timestamp/event_id).
         """
         
         # Rule 1: Validate price bounds
@@ -334,24 +439,42 @@ class WorldStore:
                 reason=f"Price {command.new_price} above maximum threshold {self.max_price_threshold}"
             )
         
-        # Get current product state
         current_state = self._product_state.get(command.asin)
         
         if current_state:
             # Rule 2: Validate price change magnitude
             current_price = current_state.price
-            price_change_ratio = abs((command.new_price.cents / current_price.cents) - 1.0)
+            # Avoid division by zero if current_price is zero, though unlikely for Money type unless explicitly set.
+            if current_price.cents > 0:
+                price_change_ratio = abs((command.new_price.cents / current_price.cents) - 1.0)
+                if price_change_ratio > self.max_price_change_per_tick:
+                    return CommandArbitrationResult(
+                        accepted=False,
+                        reason=f"Price change {price_change_ratio:.2%} exceeds maximum {self.max_price_change_per_tick:.2%} per tick"
+                    )
             
-            if price_change_ratio > self.max_price_change_per_tick:
-                return CommandArbitrationResult(
-                    accepted=False,
-                    reason=f"Price change {price_change_ratio:.2%} exceeds maximum {self.max_price_change_per_tick:.2%} per tick"
-                )
-            
-            # Rule 3: Check for conflicts (multiple commands for same ASIN in current tick)
-            # For now, simple implementation - always accept if passes validation
-            # Future: More sophisticated conflict resolution
-            
+            # Rule 3: Enhanced Conflict Resolution
+            # Check if a command for this ASIN has already been processed and accepted in this tick
+            if command.asin in self._pending_commands_by_asin_this_tick and \
+               self._pending_commands_by_asin_this_tick[command.asin]:
+                # There's at least one pending/accepted command for this ASIN this tick.
+                # The current design processes sequentially, so if it's in the list, it's been accepted.
+                # We reject subsequent ones for the same ASIN in the same tick.
+                # The `handle_set_price_command` adds to this list *after* successful arbitration and application.
+                # So, if it's already here, it means another command for this ASIN was processed first.
+                # This check effectively means "only one price change per ASIN per tick".
+                # If more fine-grained ordering (e.g., by timestamp) is needed beyond "first come, first served"
+                # by the async event loop, the logic here would need to queue and sort.
+                # For now, this simple check prevents multiple updates to the same ASIN within one tick.
+                # The `handle_set_price_command` adds to `_pending_commands_by_asin_this_tick` *after* success.
+                # So, if we find it here during a new call, it means a previous one succeeded.
+                 # This check is now effectively: "has a command for this ASIN already been accepted in this tick?"
+                # The list `_pending_commands_by_asin_this_tick[command.asin]` holds commands that were accepted.
+                if self._pending_commands_by_asin_this_tick[command.asin]: # If the list is not empty
+                    return CommandArbitrationResult(
+                        accepted=False,
+                        reason=f"Another price command for ASIN {command.asin} was already accepted for this tick."
+                    )
         else:
             # Product doesn't exist - initialize with command price
             logger.info(f"Initializing new product state: asin={command.asin}, price={command.new_price}")
@@ -372,10 +495,8 @@ class WorldStore:
         new_price = result.final_price
         current_state = self._product_state.get(asin)
         
-        # Determine previous price
         previous_price = current_state.price if current_state else Money(2000)  # Default $20.00
         
-        # Update canonical state
         if current_state:
             current_state.price = new_price
             current_state.last_updated = datetime.now()
@@ -383,25 +504,24 @@ class WorldStore:
             current_state.last_command_id = command.event_id
             current_state.version += 1
         else:
-            # Create new product state, inheriting inventory/cost if it was already initialized via InventoryUpdate
             existing_inventory = 0
             existing_cost_basis = Money.zero()
-            if asin in self._product_state: # Check if a stub was created by inventory update
+            # Check if a stub was created by inventory update before price was set
+            if asin in self._product_state: 
                 existing_inventory = self._product_state[asin].inventory_quantity
                 existing_cost_basis = self._product_state[asin].cost_basis
 
             self._product_state[asin] = ProductState(
                 asin=asin,
                 price=new_price,
-                inventory_quantity=existing_inventory, # Preserve existing inventory
-                cost_basis=existing_cost_basis, # Preserve existing cost basis
+                inventory_quantity=existing_inventory, 
+                cost_basis=existing_cost_basis, 
                 last_updated=datetime.now(),
                 last_agent_id=command.agent_id,
                 last_command_id=command.event_id,
                 version=1
             )
         
-        # Publish ProductPriceUpdated event
         update_event = ProductPriceUpdated(
             event_id=str(uuid.uuid4()),
             timestamp=datetime.now(),
@@ -487,7 +607,6 @@ class WorldStore:
             logger.warning("No storage backend configured for WorldStore, cannot save snapshot.")
             return None
         
-        # Convert all ProductState objects to dictionaries for serialization
         serializable_state = {
             asin: product_state.to_dict()
             for asin, product_state in self._product_state.items()
@@ -497,7 +616,6 @@ class WorldStore:
         snapshot_id = await self.storage_backend.save_state(serializable_state, timestamp, tick)
         self.snapshots_saved += 1
         
-        # Publish snapshot event
         snapshot_event = WorldStateSnapshotEvent(
             event_id=f"world_state_snapshot_{snapshot_id}",
             timestamp=timestamp,
@@ -538,16 +656,16 @@ class WorldStore:
 
     def _load_state_from_dict(self, state_data: Dict[str, Any]):
         """Internal helper to populate _product_state from a dictionary of serializable states."""
-        self._product_state.clear() # Clear current state before loading
+        self._product_state.clear()
         for asin, product_data in state_data.items():
             self._product_state[asin] = ProductState.from_dict(product_data)
         logger.info(f"Populated WorldStore state with {len(self._product_state)} products from dictionary.")
         
-
     def reset_state(self):
         """Reset all state - used for testing."""
         self._product_state.clear()
-        self._pending_commands.clear()
+        self._pending_commands_by_asin_this_tick.clear()
+        self._processed_command_ids_this_tick.clear()
         self._command_history.clear()
         self.commands_processed = 0
         self.commands_rejected = 0
@@ -560,11 +678,21 @@ class WorldStore:
 _world_store_instance: Optional[WorldStore] = None
 
 
-def get_world_store() -> WorldStore:
-    """Get the global WorldStore instance."""
+def get_world_store(storage_backend: Optional[PersistenceBackend] = None) -> WorldStore:
+    """
+    Get the global WorldStore instance.
+    Allows specifying a storage_backend on first call.
+    If no backend is provided on the first call, defaults to JsonFileStorageBackend.
+    """
     global _world_store_instance
     if _world_store_instance is None:
-        _world_store_instance = WorldStore(storage_backend=InMemoryStorageBackend()) # Default with in-memory persistence
+        # If a storage_backend is provided, use it; otherwise, default to JsonFileStorageBackend.
+        # This makes JsonFileStorageBackend the default for production-readiness.
+        backend_to_use = storage_backend if storage_backend is not None else JsonFileStorageBackend()
+        _world_store_instance = WorldStore(storage_backend=backend_to_use)
+        logger.info(f"Global WorldStore instance created with backend: {type(backend_to_use).__name__}")
+    elif storage_backend is not None:
+        logger.warning("Global WorldStore instance already exists. Provided storage_backend is ignored.")
     return _world_store_instance
 
 
@@ -572,3 +700,4 @@ def set_world_store(world_store: WorldStore):
     """Set the global WorldStore instance."""
     global _world_store_instance
     _world_store_instance = world_store
+    logger.info("Global WorldStore instance has been set.")

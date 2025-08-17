@@ -1,7 +1,8 @@
-import React, { useState, useCallback, Fragment } from 'react';
-import type { ExperimentConfig, ExperimentExecution, ExperimentRunResult } from '../types';
+import React, { useState, useCallback, Fragment, useEffect } from 'react';
+import type { ExperimentConfig, ExperimentExecution, ExperimentRunResult, ExecutionProgress } from '../types';
 import { apiService } from '../services/apiService';
 import { Dialog, Transition } from '@headlessui/react'; // For modal or simple dialog
+import useWebSocket from '../hooks/useWebSocket';
 
 interface ExperimentRunnerProps {
   config: ExperimentConfig;
@@ -13,6 +14,9 @@ export function ExperimentRunner({ config, onExperimentRun, onCancel }: Experime
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showConfigModal, setShowConfigModal] = useState(false);
+  const [progress, setProgress] = useState<ExecutionProgress | null>(null);
+  const [logs, setLogs] = useState<string[]>([]);
+  const [experimentId, setExperimentId] = useState<string | null>(null);
 
   const calculateCombinations = (expConfig: ExperimentConfig) => {
     return (expConfig.parameters || []).reduce((acc, param) => {
@@ -58,11 +62,11 @@ export function ExperimentRunner({ config, onExperimentRun, onCancel }: Experime
             payload.baseParameters = undefined;
         }
 
-        const result = await apiService.post<ExperimentRunResult>('/api/experiment/run', payload);
+        const result = await apiService.post<ExperimentRunResult>('/api/v1/experiments', payload);
         
         // Assuming the backend returns the experiment ID and a message
         const newExperiment: ExperimentExecution = {
-            id: result.experimentId,
+            id: result.data.experimentId,
             experimentName: config.experimentName || 'Untitled Experiment',
             description: config.description,
             config: config, // Store the original config for display
@@ -70,6 +74,7 @@ export function ExperimentRunner({ config, onExperimentRun, onCancel }: Experime
             startTime: new Date().toISOString(),
             progress: 0,
         };
+        setExperimentId(result.data.experimentId);
         onExperimentRun(newExperiment);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An unknown error occurred.');
@@ -79,6 +84,56 @@ export function ExperimentRunner({ config, onExperimentRun, onCancel }: Experime
   }, [config, onExperimentRun]);
 
   const totalCombinations = calculateCombinations(config);
+
+  // Set up WebSocket for real-time updates
+  const { sendMessage } = useWebSocket({
+    url: `ws://${window.location.host}/ws/benchmarking`,
+    autoConnect: false,
+    onMessage: (event) => {
+      const message = JSON.parse(event.data);
+      
+      if (message.type === 'benchmark_progress') {
+        setProgress(message.payload);
+      } else if (message.type === 'benchmark_started') {
+        setIsRunning(true);
+        setLogs(prev => [...prev, `Benchmark started: ${message.payload.timestamp}`]);
+      } else if (message.type === 'scenario_completed') {
+        setLogs(prev => [...prev, `Scenario completed: ${message.payload.scenario_name} (${message.payload.duration_seconds}s)`]);
+      } else if (message.type === 'agent_run_completed') {
+        setLogs(prev => [...prev, `Agent run completed: ${message.payload.agent_id} - ${message.payload.success ? 'Success' : 'Failed'}`]);
+      } else if (message.type === 'benchmark_completed') {
+        setIsRunning(false);
+        setLogs(prev => [...prev, `Benchmark completed successfully`]);
+      } else if (message.type === 'benchmark_error') {
+        setError(message.payload.error);
+        setIsRunning(false);
+        setLogs(prev => [...prev, `Error: ${message.payload.error}`]);
+      } else if (message.type === 'metrics_update') {
+        setLogs(prev => [...prev, `Metrics updated: ${message.payload.length} metrics received`]);
+      }
+    }
+  });
+
+  // Connect to WebSocket when experiment starts
+  useEffect(() => {
+    if (experimentId && isRunning) {
+      sendMessage(JSON.stringify({
+        type: 'benchmark_start',
+        benchmark_id: experimentId
+      }));
+    }
+  }, [experimentId, isRunning, sendMessage]);
+
+  // Handle experiment stop
+  const handleStopExperiment = useCallback(() => {
+    if (experimentId) {
+      sendMessage(JSON.stringify({
+        type: 'benchmark_stop',
+        benchmark_id: experimentId
+      }));
+      setIsRunning(false);
+    }
+  }, [experimentId, sendMessage]);
 
   return (
     <div className="bg-white shadow overflow-hidden sm:rounded-lg p-6">
@@ -119,20 +174,88 @@ export function ExperimentRunner({ config, onExperimentRun, onCancel }: Experime
         >
           Cancel
         </button>
-        <button
-          onClick={handleRunExperiment}
-          disabled={isRunning}
-          className={`inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white ${
-            isRunning ? 'bg-indigo-400' : 'bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500'
-          }`}
-        >
-          {isRunning ? 'Running...' : 'Run Experiment'}
-        </button>
+        {isRunning ? (
+          <button
+            onClick={handleStopExperiment}
+            className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+          >
+            Stop Experiment
+          </button>
+        ) : (
+          <button
+            onClick={handleRunExperiment}
+            disabled={isRunning}
+            className={`inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white ${
+              isRunning ? 'bg-indigo-400' : 'bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500'
+            }`}
+          >
+            Run Experiment
+          </button>
+        )}
       </div>
 
       {error && (
         <div className="mt-4 text-red-600 text-sm">
           Error: {error}
+        </div>
+      )}
+
+      {/* Progress and Logs Section */}
+      {isRunning && (
+        <div className="mt-6 space-y-4">
+          {/* Progress Bar */}
+          <div className="bg-gray-50 p-4 rounded-lg">
+            <h3 className="text-lg font-medium text-gray-700 mb-2">Progress</h3>
+            {progress ? (
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span>Status: <span className="font-medium capitalize">{progress.status}</span></span>
+                  <span>{progress.progress}%</span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2.5">
+                  <div
+                    className="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
+                    style={{ width: `${progress.progress}%` }}
+                  ></div>
+                </div>
+                {progress.current_scenario && (
+                  <p className="text-sm text-gray-600">
+                    Current Scenario: {progress.current_scenario}
+                  </p>
+                )}
+                {progress.current_agent && (
+                  <p className="text-sm text-gray-600">
+                    Current Agent: {progress.current_agent}
+                  </p>
+                )}
+                {progress.estimated_completion_time && (
+                  <p className="text-sm text-gray-600">
+                    Estimated Completion: {new Date(progress.estimated_completion_time).toLocaleString()}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p className="text-sm text-gray-600">Initializing...</p>
+            )}
+          </div>
+
+          {/* Real-time Logs */}
+          <div className="bg-gray-50 p-4 rounded-lg">
+            <h3 className="text-lg font-medium text-gray-700 mb-2">Real-time Logs</h3>
+            <div className="bg-gray-900 text-green-400 p-3 rounded-md h-48 overflow-y-auto font-mono text-sm">
+              {logs.length > 0 ? (
+                logs.map((log, index) => (
+                  <div key={index} className="mb-1">
+                    <span className="text-gray-400">
+                      [{new Date().toLocaleTimeString()}]
+                    </span> {log}
+                  </div>
+                ))
+              ) : (
+                <div className="text-gray-500">Waiting for logs...</div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 

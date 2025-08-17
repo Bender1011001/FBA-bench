@@ -3,6 +3,7 @@ import json
 from collections import defaultdict, deque
 from typing import Dict, Any, List
 from dataclasses import dataclass
+from datetime import datetime
 
 @dataclass
 class EpisodeData:
@@ -142,18 +143,59 @@ class EpisodicLearningManager:
     async def update_agent_strategy(self, agent_id: str, learnings: Dict[str, Any]):
         """
         Applies improvements to an agent's decision-making based on past outcomes.
-        This method would typically involve loading agent's model, applying learnings,
-        and saving the updated model. For now, it's a placeholder.
         
         :param agent_id: Identifier for the agent.
         :param learnings: Data representing the improvements (e.g., updated weights, new rules).
         """
         print(f"Applying learnings to agent {agent_id}: {learnings.keys()}")
-        # In a real system, this would interact with the agent's internal model/logic.
-        # Example: agent_manager.load_agent_model(agent_id)
-        #          agent_model.apply_learnings(learnings)
-        #          agent_manager.save_agent_model(agent_id, agent_model)
-        # Placeholder for demonstration:
+        
+        # Load agent's current strategy if it exists
+        agent_strategy_path = os.path.join(self.storage_dir, f"agent_{agent_id}_strategy.json")
+        current_strategy = {}
+        
+        if os.path.exists(agent_strategy_path):
+            try:
+                with open(agent_strategy_path, 'r') as f:
+                    current_strategy = json.load(f)
+            except (json.JSONDecodeError, IOError) as e:
+                print(f"Warning: Could not load strategy for agent {agent_id}: {e}")
+        
+        # Apply learnings to update the strategy
+        updated_strategy = current_strategy.copy()
+        
+        # Update pricing strategy if present in learnings
+        if "pricing_strategy" in learnings:
+            pricing_updates = learnings["pricing_strategy"]
+            if "pricing_rules" not in updated_strategy:
+                updated_strategy["pricing_rules"] = {}
+            updated_strategy["pricing_rules"].update(pricing_updates)
+        
+        # Update inventory strategy if present in learnings
+        if "inventory_strategy" in learnings:
+            inventory_updates = learnings["inventory_strategy"]
+            if "inventory_rules" not in updated_strategy:
+                updated_strategy["inventory_rules"] = {}
+            updated_strategy["inventory_rules"].update(inventory_updates)
+        
+        # Update decision weights if present in learnings
+        if "decision_weights" in learnings:
+            updated_strategy["decision_weights"] = learnings["decision_weights"]
+        
+        # Update performance patterns if present in learnings
+        if "performance_patterns" in learnings:
+            if "patterns" not in updated_strategy:
+                updated_strategy["patterns"] = {}
+            updated_strategy["patterns"].update(learnings["performance_patterns"])
+        
+        # Save the updated strategy
+        try:
+            with open(agent_strategy_path, 'w') as f:
+                json.dump(updated_strategy, f, indent=4)
+            print(f"Successfully updated strategy for agent {agent_id}")
+        except IOError as e:
+            print(f"Error saving strategy for agent {agent_id}: {e}")
+        
+        # Log the specific updates
         if "strategy_update" in learnings:
             print(f"Agent {agent_id} strategy updated based on: {learnings['strategy_update']}")
         else:
@@ -180,15 +222,107 @@ class EpisodicLearningManager:
         :return: Path to the exported agent model.
         """
         export_path = os.path.join(self.storage_dir, f"exported_agent_{agent_id}_v{version}.json")
-        # In a real system, this would involve serializing the actual agent model.
-        # For demonstration, we'll save a dummy file.
+        
+        # Load agent's learned strategy and experiences
+        agent_strategy_path = os.path.join(self.storage_dir, f"agent_{agent_id}_strategy.json")
+        agent_strategy = {}
+        
+        if os.path.exists(agent_strategy_path):
+            try:
+                with open(agent_strategy_path, 'r') as f:
+                    agent_strategy = json.load(f)
+            except (json.JSONDecodeError, IOError) as e:
+                print(f"Warning: Could not load strategy for agent {agent_id}: {e}")
+        
+        # Compile comprehensive agent data for export
         agent_data = {
             "agent_id": agent_id,
             "version": version,
+            "export_timestamp": datetime.now().isoformat(),
             "status": "exported",
-            "metadata": "This is a placeholder for the actual learned agent model."
+            "strategy": agent_strategy,
+            "performance_summary": self._generate_performance_summary(agent_id),
+            "learning_history": {
+                "total_episodes": len(self.agent_experiences.get(agent_id, [])),
+                "recent_performance": self.agent_metrics.get(agent_id, [])[-10:] if self.agent_metrics.get(agent_id, []) else []
+            },
+            "deployment_config": {
+                "environment": "production",
+                "safety_constraints": agent_strategy.get("safety_constraints", []),
+                "decision_thresholds": agent_strategy.get("decision_weights", {})
+            },
+            "metadata": {
+                "learning_mode": "episodic",
+                "export_format": "json",
+                "compatible_versions": ["1.0.0", "1.1.0"]
+            }
         }
-        with open(export_path, 'w') as f:
-            json.dump(agent_data, f, indent=4)
-        print(f"Exported learned agent {agent_id} (version {version}) to {export_path}")
+        
+        # Save the comprehensive agent data
+        try:
+            with open(export_path, 'w') as f:
+                json.dump(agent_data, f, indent=4)
+            print(f"Successfully exported learned agent {agent_id} (version {version}) to {export_path}")
+        except IOError as e:
+            print(f"Error exporting agent {agent_id}: {e}")
+            raise
+        
         return export_path
+    
+    def _generate_performance_summary(self, agent_id: str) -> Dict[str, Any]:
+        """
+        Generates a performance summary for the agent based on historical metrics.
+        
+        :param agent_id: Identifier for the agent.
+        :return: Dictionary containing performance summary.
+        """
+        metrics_history = self.agent_metrics.get(agent_id, [])
+        
+        if not metrics_history:
+            return {"status": "insufficient_data", "message": "No performance metrics available"}
+        
+        # Calculate aggregate metrics
+        total_episodes = len(metrics_history)
+        recent_metrics = metrics_history[-20:]  # Last 20 episodes
+        
+        summary = {
+            "total_episodes": total_episodes,
+            "recent_performance": {
+                "avg_reward": sum(m.get("reward", 0) for m in recent_metrics) / len(recent_metrics) if recent_metrics else 0,
+                "max_reward": max(m.get("reward", 0) for m in recent_metrics) if recent_metrics else 0,
+                "min_reward": min(m.get("reward", 0) for m in recent_metrics) if recent_metrics else 0,
+                "success_rate": sum(1 for m in recent_metrics if m.get("success", False)) / len(recent_metrics) if recent_metrics else 0
+            },
+            "overall_performance": {
+                "avg_reward": sum(m.get("reward", 0) for m in metrics_history) / len(metrics_history),
+                "improvement_trend": self._calculate_improvement_trend(metrics_history)
+            }
+        }
+        
+        return summary
+    
+    def _calculate_improvement_trend(self, metrics_history: List[Dict[str, Any]]) -> str:
+        """
+        Calculates the improvement trend based on historical metrics.
+        
+        :param metrics_history: List of historical metrics.
+        :return: String indicating trend ('improving', 'stable', 'declining').
+        """
+        if len(metrics_history) < 10:
+            return "insufficient_data"
+        
+        # Compare recent performance with earlier performance
+        recent_rewards = [m.get("reward", 0) for m in metrics_history[-10:]]
+        earlier_rewards = [m.get("reward", 0) for m in metrics_history[-20:-10]]
+        
+        recent_avg = sum(recent_rewards) / len(recent_rewards)
+        earlier_avg = sum(earlier_rewards) / len(earlier_rewards)
+        
+        improvement_ratio = (recent_avg - earlier_avg) / earlier_avg if earlier_avg != 0 else 0
+        
+        if improvement_ratio > 0.05:
+            return "improving"
+        elif improvement_ratio < -0.05:
+            return "declining"
+        else:
+            return "stable"

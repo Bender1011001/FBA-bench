@@ -1,316 +1,394 @@
 """
-DIY Agent Runner - Direct implementation for simple agents.
+DIY (Do It Yourself) Agent Runner for FBA-Bench.
 
-This runner wraps existing FBA-Bench agent patterns (AdvancedAgent, baseline bots)
-into the standardized AgentRunner interface without external dependencies.
+This module implements the AgentRunner interface for custom-built agents,
+enabling them to participate in the benchmarking system.
 """
 
 import logging
-import asyncio
-from typing import List, Dict, Any, Optional, Union
+import json
+import math
+from typing import Dict, Any, List, Optional, Union, Tuple
 from datetime import datetime
 
-from .base_runner import AgentRunner, SimulationState, ToolCall, AgentRunnerError
-from agents.advanced_agent import AdvancedAgent, AgentConfig
-from events import BaseEvent, SetPriceCommand, TickEvent
-from money import Money
+from .base_runner import AgentRunner, AgentRunnerStatus, AgentRunnerError, AgentRunnerInitializationError, AgentRunnerDecisionError
+from benchmarking.config.pydantic_config import FrameworkType, LLMConfig, AgentConfig
 
 logger = logging.getLogger(__name__)
 
 
+class PricingStrategy:
+    """Base class for pricing strategies."""
+    
+    def calculate_price(self, product_data: Dict[str, Any], market_data: Dict[str, Any]) -> float:
+        """Calculate the optimal price for a product."""
+        raise NotImplementedError
+
+
+class CompetitivePricingStrategy(PricingStrategy):
+    """Competitive pricing strategy based on market conditions."""
+    
+    def __init__(self, margin_target: float = 0.3, competitor_sensitivity: float = 0.5):
+        self.margin_target = margin_target  # Target profit margin (30% by default)
+        self.competitor_sensitivity = competitor_sensitivity  # How much to adjust based on competitors
+    
+    def calculate_price(self, product_data: Dict[str, Any], market_data: Dict[str, Any]) -> float:
+        """Calculate price based on competitive analysis."""
+        cost = product_data.get('cost', 0)
+        current_price = product_data.get('current_price', cost * 1.5)
+        sales_rank = product_data.get('sales_rank', 1000000)
+        inventory = product_data.get('inventory', 100)
+        
+        # Get competitor prices from market data
+        competitor_prices = market_data.get('competitor_prices', [])
+        avg_competitor_price = sum(competitor_prices) / len(competitor_prices) if competitor_prices else current_price
+        
+        # Base price calculation (cost + target margin)
+        base_price = cost * (1 + self.margin_target)
+        
+        # Adjust based on sales rank (lower rank = higher demand = higher price)
+        rank_factor = 1.0
+        if sales_rank < 10000:  # Top 10,000
+            rank_factor = 1.2
+        elif sales_rank < 50000:  # Top 50,000
+            rank_factor = 1.1
+        elif sales_rank > 500000:  # Poor selling
+            rank_factor = 0.9
+        
+        # Adjust based on inventory levels
+        inventory_factor = 1.0
+        if inventory < 10:  # Low inventory, can increase price
+            inventory_factor = 1.1
+        elif inventory > 100:  # High inventory, need to reduce price
+            inventory_factor = 0.95
+        
+        # Competitive adjustment
+        competitive_factor = 1.0
+        if avg_competitor_price > 0:
+            price_ratio = base_price / avg_competitor_price
+            if price_ratio > 1.2:  # We're much more expensive
+                competitive_factor = 1.0 - (self.competitor_sensitivity * 0.2)
+            elif price_ratio < 0.8:  # We're much cheaper
+                competitive_factor = 1.0 + (self.competitor_sensitivity * 0.1)
+        
+        # Calculate final price
+        final_price = base_price * rank_factor * inventory_factor * competitive_factor
+        
+        # Ensure minimum profit margin
+        minimum_price = cost * 1.1  # At least 10% margin
+        final_price = max(final_price, minimum_price)
+        
+        return round(final_price, 2)
+
+
+class DynamicPricingStrategy(PricingStrategy):
+    """Dynamic pricing strategy that adapts to market conditions."""
+    
+    def __init__(self, base_margin: float = 0.25, elasticity_factor: float = 0.3):
+        self.base_margin = base_margin
+        self.elasticity_factor = elasticity_factor
+        self.price_history = {}  # Track price history for each product
+    
+    def calculate_price(self, product_data: Dict[str, Any], market_data: Dict[str, Any]) -> float:
+        """Calculate price using dynamic pricing algorithm."""
+        asin = product_data.get('asin', 'unknown')
+        cost = product_data.get('cost', 0)
+        current_price = product_data.get('current_price', cost * 1.5)
+        sales_rank = product_data.get('sales_rank', 1000000)
+        inventory = product_data.get('inventory', 100)
+        
+        # Get market demand indicator
+        market_demand = market_data.get('market_demand', 1.0)  # 1.0 = neutral
+        
+        # Get seasonality factor
+        seasonality = market_data.get('seasonality', 1.0)  # 1.0 = neutral
+        
+        # Calculate base price
+        base_price = cost * (1 + self.base_margin)
+        
+        # Demand-based adjustment
+        demand_factor = 1.0 + (market_demand - 1.0) * self.elasticity_factor
+        
+        # Seasonality adjustment
+        seasonality_factor = seasonality
+        
+        # Sales rank adjustment (logarithmic scale)
+        rank_adjustment = 1.0
+        if sales_rank > 0:
+            rank_adjustment = 1.0 + 0.1 * math.log(1000000 / sales_rank)
+        
+        # Inventory adjustment
+        inventory_adjustment = 1.0
+        if inventory > 0:
+            inventory_adjustment = 1.0 - 0.05 * math.log(inventory / 10)
+        
+        # Price history adjustment (avoid frequent price changes)
+        history_adjustment = 1.0
+        if asin in self.price_history:
+            last_price = self.price_history[asin][-1]
+            price_change_ratio = abs(final_price - last_price) / last_price if last_price > 0 else 0
+            if price_change_ratio > 0.1:  # More than 10% change
+                history_adjustment = 0.9  # Dampen large changes
+        
+        # Calculate final price
+        final_price = base_price * demand_factor * seasonality_factor * rank_adjustment * inventory_adjustment * history_adjustment
+        
+        # Ensure minimum profit margin
+        minimum_price = cost * 1.1  # At least 10% margin
+        final_price = max(final_price, minimum_price)
+        
+        # Update price history
+        if asin not in self.price_history:
+            self.price_history[asin] = []
+        self.price_history[asin].append(final_price)
+        
+        # Keep only last 10 prices
+        if len(self.price_history[asin]) > 10:
+            self.price_history[asin] = self.price_history[asin][-10:]
+        
+        return round(final_price, 2)
+
+
 class DIYRunner(AgentRunner):
     """
-    DIY runner implementation for wrapping existing FBA-Bench agents.
+    Agent runner for DIY (Do It Yourself) agents.
     
-    Supports two agent patterns:
-    1. Event-driven agents (AdvancedAgent) - Subscribe to events, publish commands
-    2. Functional agents (baseline bots) - decide() method returning commands
-    
-    This runner bridges these patterns to the standardized AgentRunner interface.
+    This class integrates custom-built agents into the FBA-Bench system,
+    allowing them to make pricing decisions using custom algorithms.
     """
     
     def __init__(self, agent_id: str, config: Dict[str, Any]):
+        """Initialize the DIY agent runner."""
         super().__init__(agent_id, config)
-        self.agent: Optional[Union[AdvancedAgent, Any]] = None
-        self.agent_type: Optional[str] = None
-        self.event_bus = None
-        self.gateway = None
+        self.llm_config = None
+        self.agent_config = None
+        self.pricing_strategy = None
+        self.decision_history = []
         
-    async def initialize(self, config: Dict[str, Any]) -> None:
-        """Initialize the wrapped agent based on configuration."""
+    def _do_initialize(self) -> None:
+        """Initialize the DIY agent and its components."""
         try:
-            agent_type = config.get('agent_type', 'advanced')
+            # Extract configurations
+            self.llm_config = self._extract_llm_config()
+            self.agent_config = self._extract_agent_config()
             
-            if agent_type == 'advanced':
-                await self._initialize_advanced_agent(config)
-            elif agent_type == 'baseline':
-                await self._initialize_baseline_agent(config)
-            elif agent_type == 'llm':
-                await self._initialize_llm_agent(config)
-            else:
-                raise AgentRunnerError(
-                    f"Unknown agent type: {agent_type}", 
-                    agent_id=self.agent_id, 
-                    framework="DIY"
-                )
+            # Create the pricing strategy
+            self._create_pricing_strategy()
             
-            self.agent_type = agent_type
-            self._initialized = True
-            logger.info(f"DIY runner initialized for agent {self.agent_id} (type: {agent_type})")
+            logger.info(f"DIY agent runner {self.agent_id} initialized successfully")
             
         except Exception as e:
-            raise AgentRunnerError(
-                f"Failed to initialize DIY agent: {str(e)}",
+            raise AgentRunnerInitializationError(
+                f"Failed to initialize DIY agent {self.agent_id}: {e}",
                 agent_id=self.agent_id,
                 framework="DIY"
             ) from e
     
-    async def _initialize_advanced_agent(self, config: Dict[str, Any]) -> None:
-        """Initialize an AdvancedAgent instance."""
-        from event_bus import get_event_bus
-        from constraints.agent_gateway import AgentGateway
+    def _extract_llm_config(self) -> LLMConfig:
+        """Extract LLM configuration from the agent config."""
+        llm_config_dict = self.config.get('llm_config', {})
         
-        # Extract agent configuration
-        agent_config = AgentConfig(
-            agent_id=self.agent_id,
-            target_asin=config.get('target_asin', 'B0DEFAULT'),
-            strategy=config.get('strategy', 'profit_maximizer'),
-            price_sensitivity=config.get('price_sensitivity', 0.1),
-            reaction_speed=config.get('reaction_speed', 1),
-            min_price=Money(config.get('min_price_cents', 500)),
-            max_price=Money(config.get('max_price_cents', 5000))
+        # Create LLMConfig with defaults
+        return LLMConfig(
+            name=f"{self.agent_id}_llm",
+            model=llm_config_dict.get('model', 'gpt-4'),
+            api_key=llm_config_dict.get('api_key'),
+            base_url=llm_config_dict.get('base_url'),
+            max_tokens=llm_config_dict.get('max_tokens', 2048),
+            temperature=llm_config_dict.get('temperature', 0.7),
+            top_p=llm_config_dict.get('top_p', 1.0),
+            timeout=llm_config_dict.get('timeout', 30),
+            max_retries=llm_config_dict.get('max_retries', 3)
         )
-        
-        # Get event bus and gateway if available
-        self.event_bus = config.get('event_bus') or get_event_bus()
-        self.gateway = config.get('agent_gateway')
-        
-        # Create and start the agent
-        self.agent = AdvancedAgent(agent_config, self.event_bus, self.gateway)
-        await self.agent.start()
     
-    async def _initialize_baseline_agent(self, config: Dict[str, Any]) -> None:
-        """Initialize a baseline bot agent."""
-        bot_type = config.get('bot_type', 'greedy')
+    def _extract_agent_config(self) -> AgentConfig:
+        """Extract Agent configuration from the agent config."""
+        agent_config_dict = self.config.get('agent_config', {})
         
-        if bot_type == 'greedy':
-            from baseline_bots.greedy_script_bot import GreedyScriptBot
-            self.agent = GreedyScriptBot(
-                reorder_threshold=config.get('reorder_threshold', 10),
-                reorder_quantity=config.get('reorder_quantity', 50)
+        # Create AgentConfig with defaults
+        return AgentConfig(
+            name=f"{self.agent_id}_agent",
+            agent_id=self.agent_id,
+            type=agent_config_dict.get('type', 'pricing_agent'),
+            framework=FrameworkType.DIY,
+            parameters=agent_config_dict.get('parameters', {})
+        )
+    
+    def _create_pricing_strategy(self) -> None:
+        """Create the pricing strategy based on configuration."""
+        strategy_type = self.agent_config.parameters.get('pricing_strategy', 'competitive')
+        
+        if strategy_type == 'competitive':
+            margin_target = self.agent_config.parameters.get('margin_target', 0.3)
+            competitor_sensitivity = self.agent_config.parameters.get('competitor_sensitivity', 0.5)
+            self.pricing_strategy = CompetitivePricingStrategy(
+                margin_target=margin_target,
+                competitor_sensitivity=competitor_sensitivity
+            )
+        elif strategy_type == 'dynamic':
+            base_margin = self.agent_config.parameters.get('base_margin', 0.25)
+            elasticity_factor = self.agent_config.parameters.get('elasticity_factor', 0.3)
+            self.pricing_strategy = DynamicPricingStrategy(
+                base_margin=base_margin,
+                elasticity_factor=elasticity_factor
             )
         else:
-            raise AgentRunnerError(
-                f"Unknown baseline bot type: {bot_type}",
-                agent_id=self.agent_id,
-                framework="DIY"
-            )
+            # Default to competitive pricing
+            self.pricing_strategy = CompetitivePricingStrategy()
+        
+        logger.debug(f"Created pricing strategy: {strategy_type}")
     
-    async def _initialize_llm_agent(self, config: Dict[str, Any]) -> None:
-        """Initialize an LLM-based agent."""
-        llm_type = config.get('llm_type', 'claude')
-        
-        if llm_type == 'claude':
-            from baseline_bots.claude_sonnet_bot import ClaudeSonnetBot
-            from llm_interface.openrouter_client import OpenRouterClient
-            from llm_interface.prompt_adapter import PromptAdapter
-            from llm_interface.response_parser import ResponseParser
-            
-            # Initialize LLM client and supporting components
-            llm_client = OpenRouterClient(
-                model_name=config.get('model_name', 'anthropic/claude-3-sonnet:beta'),
-                api_key=config.get('api_key')
-            )
-            
-            prompt_adapter = PromptAdapter()
-            response_parser = ResponseParser()
-            
-            self.agent = ClaudeSonnetBot(
-                agent_id=self.agent_id,
-                llm_client=llm_client,
-                prompt_adapter=prompt_adapter,
-                response_parser=response_parser,
-                agent_gateway=config.get('agent_gateway'),
-                model_params=config.get('model_params', {})
-            )
-        elif llm_type == 'gpt':
-            from baseline_bots.gpt_4o_mini_bot import GPT4oMiniBot
-            # Similar initialization for GPT
-            # ... (implementation similar to claude)
-        else:
-            raise AgentRunnerError(
-                f"Unknown LLM agent type: {llm_type}",
-                agent_id=self.agent_id,
-                framework="DIY"
-            )
-    
-    async def decide(self, state: SimulationState) -> List[ToolCall]:
+    def make_decision(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Make decisions based on the wrapped agent type.
+        Make a pricing decision using the DIY agent.
         
-        This method bridges different agent patterns to the unified ToolCall interface.
+        Args:
+            context: Context information including market state and products
+            
+        Returns:
+            Dictionary containing the decision and metadata
         """
-        if not self._initialized or not self.agent:
-            raise AgentRunnerError(
-                "Agent not initialized",
-                agent_id=self.agent_id,
-                framework="DIY"
-            )
-        
         try:
-            if self.agent_type == 'advanced':
-                return await self._decide_advanced_agent(state)
-            elif self.agent_type in ['baseline', 'llm']:
-                return await self._decide_functional_agent(state)
-            else:
-                raise AgentRunnerError(
-                    f"Unknown agent type for decision: {self.agent_type}",
-                    agent_id=self.agent_id,
-                    framework="DIY"
-                )
+            # Update context
+            self.update_context(context)
+            
+            # Extract products and market data
+            products = context.get('products', [])
+            market_conditions = context.get('market_conditions', {})
+            tick = context.get('tick', 0)
+            
+            # Make pricing decisions for each product
+            pricing_decisions = {}
+            reasoning = ""
+            
+            for product in products:
+                asin = product.get('asin', 'unknown')
                 
+                # Calculate price using the pricing strategy
+                new_price = self.pricing_strategy.calculate_price(product, market_conditions)
+                
+                # Calculate confidence based on data quality
+                confidence = self._calculate_confidence(product, market_conditions)
+                
+                # Generate reasoning
+                product_reasoning = self._generate_reasoning(product, market_conditions, new_price)
+                
+                pricing_decisions[asin] = {
+                    'price': new_price,
+                    'confidence': confidence,
+                    'reasoning': product_reasoning
+                }
+                
+                reasoning += f"{asin}: {product_reasoning}\n"
+            
+            # Create decision object
+            decision = {
+                'agent_id': self.agent_id,
+                'framework': 'DIY',
+                'timestamp': datetime.now().isoformat(),
+                'pricing_decisions': pricing_decisions,
+                'reasoning': reasoning.strip()
+            }
+            
+            # Update decision history
+            self.decision_history.append({
+                'tick': tick,
+                'decision': decision,
+                'timestamp': datetime.now()
+            })
+            
+            # Keep only last 50 decisions
+            if len(self.decision_history) > 50:
+                self.decision_history = self.decision_history[-50:]
+            
+            # Update metrics
+            self.update_metrics({
+                'decision_timestamp': datetime.now().isoformat(),
+                'decision_type': 'pricing',
+                'products_count': len(products),
+                'average_confidence': sum(d['confidence'] for d in pricing_decisions.values()) / len(pricing_decisions) if pricing_decisions else 0,
+                'strategy_type': self.agent_config.parameters.get('pricing_strategy', 'competitive')
+            })
+            
+            return decision
+            
         except Exception as e:
-            raise AgentRunnerError(
-                f"Decision making failed: {str(e)}",
+            logger.error(f"Error in DIY decision making: {e}")
+            raise AgentRunnerDecisionError(
+                f"Decision making failed for DIY agent {self.agent_id}: {e}",
                 agent_id=self.agent_id,
                 framework="DIY"
             ) from e
     
-    async def _decide_advanced_agent(self, state: SimulationState) -> List[ToolCall]:
-        """Handle decision making for event-driven AdvancedAgent."""
-        # For AdvancedAgent, we need to trigger its decision-making through events
-        # and capture the commands it publishes
+    def _calculate_confidence(self, product: Dict[str, Any], market_data: Dict[str, Any]) -> float:
+        """Calculate confidence score for the pricing decision."""
+        confidence = 0.5  # Base confidence
         
-        commands_captured = []
+        # Increase confidence if we have good product data
+        if product.get('cost', 0) > 0:
+            confidence += 0.1
+        if product.get('current_price', 0) > 0:
+            confidence += 0.1
+        if product.get('sales_rank', 0) > 0:
+            confidence += 0.1
+        if product.get('inventory', 0) >= 0:
+            confidence += 0.1
         
-        # Create a temporary event capture mechanism
-        original_publish = self.event_bus.publish if self.event_bus else None
+        # Increase confidence if we have good market data
+        if market_data.get('market_demand', 0) > 0:
+            confidence += 0.05
+        if market_data.get('competitor_prices', []):
+            confidence += 0.05
         
-        async def capture_commands(event_type: str, event: BaseEvent):
-            if isinstance(event, SetPriceCommand) and event.agent_id == self.agent_id:
-                commands_captured.append(event)
-            # Call original publish to maintain event flow
-            if original_publish:
-                await original_publish(event_type, event)
-        
-        # Temporarily override publish to capture commands
-        if self.event_bus:
-            self.event_bus.publish = capture_commands
-        
-        try:
-            # Trigger agent decision making with a tick event
-            tick_event = TickEvent(
-                event_id=f"tick_{state.tick}",
-                timestamp=state.simulation_time,
-                tick_number=state.tick
-            )
-            
-            await self.agent.handle_tick_event(tick_event)
-            
-            # Convert captured commands to ToolCalls
-            tool_calls = []
-            for command in commands_captured:
-                if isinstance(command, SetPriceCommand):
-                    tool_calls.append(ToolCall(
-                        tool_name="set_price",
-                        parameters={
-                            "asin": command.asin,
-                            "price": command.new_price.to_float()
-                        },
-                        confidence=0.9,  # Default confidence
-                        reasoning=command.reason or "Advanced agent pricing decision"
-                    ))
-            
-            return tool_calls
-            
-        finally:
-            # Restore original publish method
-            if self.event_bus and original_publish:
-                self.event_bus.publish = original_publish
+        # Cap confidence at 0.95
+        return min(confidence, 0.95)
     
-    async def _decide_functional_agent(self, state: SimulationState) -> List[ToolCall]:
-        """Handle decision making for functional agents (baseline, LLM bots)."""
-        # Convert SimulationState to the format expected by baseline bots
-        if self.agent_type == 'baseline':
-            from baseline_bots.greedy_script_bot import SimulationState as GreedySimState
-            
-            bot_state = GreedySimState(
-                products=state.products,
-                current_tick=state.tick,
-                simulation_time=state.simulation_time
-            )
-            
-            # Call the bot's decide method
-            actions = self.agent.decide(bot_state)
-            
-        elif self.agent_type == 'llm':
-            from baseline_bots.claude_sonnet_bot import SimulationState as LLMSimState
-            
-            # Convert to LLM bot state format
-            llm_state = LLMSimState(
-                products=state.products,
-                current_tick=state.tick,
-                simulation_time=state.simulation_time,
-                recent_events=state.recent_events
-            )
-            
-            # Call the LLM bot's decide method
-            actions = await self.agent.decide(llm_state)
+    def _generate_reasoning(self, product: Dict[str, Any], market_data: Dict[str, Any], new_price: float) -> str:
+        """Generate reasoning for the pricing decision."""
+        asin = product.get('asin', 'unknown')
+        cost = product.get('cost', 0)
+        current_price = product.get('current_price', cost * 1.5)
+        sales_rank = product.get('sales_rank', 1000000)
+        inventory = product.get('inventory', 100)
         
-        else:
-            actions = []
+        reasoning = f"Calculated price ${new_price:.2f} for {asin}. "
         
-        # Convert actions to ToolCalls
-        tool_calls = []
-        for action in actions:
-            if isinstance(action, SetPriceCommand):
-                tool_calls.append(ToolCall(
-                    tool_name="set_price",
-                    parameters={
-                        "asin": action.asin,
-                        "price": action.new_price.to_float()
-                    },
-                    confidence=0.8,  # Default confidence for baseline/LLM bots
-                    reasoning=action.reason or f"{self.agent_type} agent decision"
-                ))
-            # Add other action types as needed
+        # Add cost-based reasoning
+        margin = (new_price - cost) / cost if cost > 0 else 0
+        reasoning += f"Cost: ${cost:.2f}, Margin: {margin:.1%}. "
         
-        return tool_calls
-    
-    async def cleanup(self) -> None:
-        """Cleanup the wrapped agent."""
-        try:
-            if self.agent and self.agent_type == 'advanced':
-                await self.agent.stop()
-            
-            logger.info(f"DIY runner cleaned up for agent {self.agent_id}")
-            
-        except Exception as e:
-            logger.warning(f"Error during DIY runner cleanup for {self.agent_id}: {e}")
-            # Don't raise during cleanup - just log the warning
-
-
-class DIYAgentAdapter:
-    """
-    Adapter class to wrap any existing agent into the AgentRunner interface.
-    
-    This provides a more flexible way to integrate custom agents that don't
-    fit the standard patterns.
-    """
-    
-    def __init__(self, agent_class, agent_config: Dict[str, Any]):
-        self.agent_class = agent_class
-        self.agent_config = agent_config
-        self.agent_instance = None
-    
-    async def create_runner(self, agent_id: str) -> DIYRunner:
-        """Create a DIY runner wrapping the custom agent."""
-        config = {
-            'agent_type': 'custom',
-            'agent_class': self.agent_class,
-            'agent_config': self.agent_config
-        }
+        # Add sales rank reasoning
+        if sales_rank < 10000:
+            reasoning += f"High demand product (rank {sales_rank}). "
+        elif sales_rank > 500000:
+            reasoning += f"Low demand product (rank {sales_rank}). "
         
-        runner = DIYRunner(agent_id, config)
-        await runner.initialize(config)
-        return runner
+        # Add inventory reasoning
+        if inventory < 10:
+            reasoning += f"Low inventory ({inventory} units). "
+        elif inventory > 100:
+            reasoning += f"High inventory ({inventory} units). "
+        
+        # Add market conditions reasoning
+        market_demand = market_data.get('market_demand', 1.0)
+        if market_demand > 1.2:
+            reasoning += f"High market demand. "
+        elif market_demand < 0.8:
+            reasoning += f"Low market demand. "
+        
+        # Add competitor pricing reasoning
+        competitor_prices = market_data.get('competitor_prices', [])
+        if competitor_prices:
+            avg_competitor_price = sum(competitor_prices) / len(competitor_prices)
+            if new_price > avg_competitor_price * 1.1:
+                reasoning += f"Priced above competitors (avg ${avg_competitor_price:.2f}). "
+            elif new_price < avg_competitor_price * 0.9:
+                reasoning += f"Priced below competitors (avg ${avg_competitor_price:.2f}). "
+        
+        return reasoning.strip()
+    
+    def _do_cleanup(self) -> None:
+        """Clean up DIY agent resources."""
+        self.pricing_strategy = None
+        self.decision_history = []
+        logger.info(f"DIY agent runner {self.agent_id} cleaned up")

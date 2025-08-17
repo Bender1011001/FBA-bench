@@ -1,6 +1,6 @@
 import React from 'react';
 import { useSimulationStore } from '../store/simulationStore';
-import { useWebSocket } from '../hooks/useWebSocket';
+import { webSocketService } from '../services/webSocketService';
 
 interface ConnectionStatusProps {
   className?: string;
@@ -76,7 +76,10 @@ export const ConnectionStatus: React.FC<ConnectionStatusProps> = React.memo(({
 }) => {
   const connectionStatus = useSimulationStore((state) => state.simulation.connectionStatus);
   const error = useSimulationStore((state) => state.simulation.error);
-  const { reconnect } = useWebSocket({ autoConnect: false });
+  
+  const handleReconnect = () => {
+    webSocketService.reconnect();
+  };
 
   const { connected, reconnectAttempts, lastHeartbeat } = connectionStatus;
   const statusColor = getConnectionStatusColor(connected, reconnectAttempts);
@@ -97,7 +100,7 @@ export const ConnectionStatus: React.FC<ConnectionStatusProps> = React.memo(({
           
           {!connected && reconnectAttempts === 0 && (
             <button
-              onClick={reconnect}
+              onClick={handleReconnect}
               className="px-3 py-1 text-sm font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 transition-colors"
             >
               Reconnect
@@ -166,7 +169,10 @@ export const ConnectionStatusCompact: React.FC<{ className?: string }> = React.m
   className = ''
 }) => {
   const connectionStatus = useSimulationStore((state) => state.simulation.connectionStatus);
-  const { reconnect } = useWebSocket({ autoConnect: false });
+  
+  const handleReconnect = () => {
+    webSocketService.reconnect();
+  };
 
   const { connected, reconnectAttempts } = connectionStatus;
   const statusColor = getConnectionStatusColor(connected, reconnectAttempts);
@@ -186,7 +192,7 @@ export const ConnectionStatusCompact: React.FC<{ className?: string }> = React.m
       
       {!connected && reconnectAttempts === 0 && (
         <button
-          onClick={reconnect}
+          onClick={handleReconnect}
           className="px-2 py-1 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded hover:bg-blue-100 transition-colors whitespace-nowrap"
           title="Reconnect to server"
         >

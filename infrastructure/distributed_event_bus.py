@@ -38,41 +38,237 @@ class AbstractDistributedBroker(ABC):
     async def delete_topic(self, topic: str):
         pass
 
-class MockRedisBroker(AbstractDistributedBroker):
+class RedisBroker(AbstractDistributedBroker):
     """
-    A mock Redis-like broker for demonstration purposes.
-    In a real system, this would use `aioredis` or similar.
+    Production-ready Redis broker implementation using aioredis.
+    Supports pub/sub messaging with proper connection management and error handling.
     """
-    def __init__(self):
-        self._channels: Dict[str, List[Callable]] = defaultdict(list)
-        logger.info("MockRedisBroker initialized.")
+    
+    def __init__(self, redis_url: str = "redis://localhost:6379",
+                 connection_pool_size: int = 10,
+                 retry_attempts: int = 3,
+                 retry_delay: float = 1.0):
+        """
+        Initialize Redis broker with connection configuration.
+        
+        Args:
+            redis_url: Redis connection URL
+            connection_pool_size: Size of the connection pool
+            retry_attempts: Number of connection retry attempts
+            retry_delay: Delay between retry attempts in seconds
+        """
+        self.redis_url = redis_url
+        self.connection_pool_size = connection_pool_size
+        self.retry_attempts = retry_attempts
+        self.retry_delay = retry_delay
+        
+        self._redis_client = None
+        self._pubsub = None
+        self._connection_lock = asyncio.Lock()
+        self._subscriber_tasks: Dict[str, asyncio.Task] = {}
+        self._is_connected = False
+        
+        logger.info(f"RedisBroker initialized with URL: {redis_url}")
 
     async def connect(self):
-        logger.info("MockRedisBroker connected.")
+        """Establish connection to Redis server."""
+        async with self._connection_lock:
+            if self._is_connected:
+                logger.warning("Redis connection already established")
+                return
+                
+            for attempt in range(self.retry_attempts):
+                try:
+                    import aioredis
+                    
+                    # Create Redis client with connection pooling
+                    self._redis_client = aioredis.from_url(
+                        self.redis_url,
+                        max_connections=self.connection_pool_size,
+                        retry_on_timeout=True,
+                        health_check_interval=30,
+                        encoding="utf-8",
+                        decode_responses=True
+                    )
+                    
+                    # Test connection
+                    await self._redis_client.ping()
+                    
+                    # Initialize pubsub
+                    self._pubsub = self._redis_client.pubsub()
+                    
+                    self._is_connected = True
+                    logger.info(f"Successfully connected to Redis at {self.redis_url}")
+                    return
+                    
+                except Exception as e:
+                    logger.error(f"Connection attempt {attempt + 1} failed: {e}")
+                    if attempt < self.retry_attempts - 1:
+                        await asyncio.sleep(self.retry_delay)
+                    else:
+                        raise ConnectionError(f"Failed to connect to Redis after {self.retry_attempts} attempts: {e}")
 
     async def disconnect(self):
-        logger.info("MockRedisBroker disconnected.")
+        """Close connection to Redis server."""
+        async with self._connection_lock:
+            if not self._is_connected:
+                logger.warning("Redis connection not established")
+                return
+                
+            try:
+                # Cancel all subscriber tasks
+                for task in self._subscriber_tasks.values():
+                    task.cancel()
+                
+                # Wait for tasks to complete
+                if self._subscriber_tasks:
+                    await asyncio.gather(*self._subscriber_tasks.values(), return_exceptions=True)
+                
+                # Close pubsub connection
+                if self._pubsub:
+                    await self._pubsub.close()
+                
+                # Close Redis client
+                if self._redis_client:
+                    await self._redis_client.close()
+                
+                self._is_connected = False
+                self._subscriber_tasks.clear()
+                logger.info("Successfully disconnected from Redis")
+                
+            except Exception as e:
+                logger.error(f"Error during Redis disconnect: {e}")
+                raise
 
     async def publish(self, topic: str, message: Dict):
-        logger.debug(f"MockRedisBroker: Publishing to {topic}: {message}")
-        # Simulate async message delivery
-        if topic in self._channels:
-            for handler in self._channels[topic]:
-                if asyncio.iscoroutinefunction(handler):
-                    await handler(message) # Await async handler
-                else:
-                    handler(message) # Call sync handler directly
+        """
+        Publish a message to a Redis channel.
+        
+        Args:
+            topic: Channel/topic to publish to
+            message: Message data to publish
+        """
+        if not self._is_connected:
+            raise ConnectionError("Redis connection not established")
+            
+        try:
+            # Serialize message to JSON
+            message_json = json.dumps(message)
+            
+            # Publish to Redis channel
+            subscribers = await self._redis_client.publish(topic, message_json)
+            
+            logger.debug(f"Published to {topic}: {message} (delivered to {subscribers} subscribers)")
+            
+        except Exception as e:
+            logger.error(f"Failed to publish message to {topic}: {e}")
+            raise
 
     async def subscribe(self, topic: str, handler: Callable):
-        self._channels[topic].append(handler)
-        logger.info(f"MockRedisBroker: Subscribed to {topic}")
+        """
+        Subscribe to a Redis channel with a handler function.
+        
+        Args:
+            topic: Channel/topic to subscribe to
+            handler: Async function to handle incoming messages
+        """
+        if not self._is_connected:
+            raise ConnectionError("Redis connection not established")
+            
+        try:
+            # Subscribe to the channel
+            await self._pubsub.subscribe(topic)
+            
+            # Create a task to listen for messages on this channel
+            task = asyncio.create_task(self._listen_for_messages(topic, handler))
+            self._subscriber_tasks[topic] = task
+            
+            logger.info(f"Subscribed to {topic}")
+            
+        except Exception as e:
+            logger.error(f"Failed to subscribe to {topic}: {e}")
+            raise
 
     async def create_topic(self, topic: str):
-        logger.info(f"MockRedisBroker: Topic {topic} created (mock implementation).")
+        """
+        Create a new topic (Redis channel).
+        In Redis, channels are created automatically on first use,
+        but we'll validate the topic name format.
+        
+        Args:
+            topic: Name of the topic to create
+        """
+        if not topic or not isinstance(topic, str):
+            raise ValueError("Topic name must be a non-empty string")
+            
+        # Redis channels are created automatically, so we just validate
+        logger.info(f"Topic {topic} is ready for use")
 
     async def delete_topic(self, topic: str):
-        self._channels.pop(topic, None)
-        logger.info(f"MockRedisBroker: Topic {topic} deleted (mock implementation).")
+        """
+        Delete a topic (Redis channel).
+        In Redis, we can't directly delete channels, but we can
+        unsubscribe all listeners and clear any related data.
+        
+        Args:
+            topic: Name of the topic to delete
+        """
+        try:
+            # Cancel subscriber task for this topic
+            if topic in self._subscriber_tasks:
+                self._subscriber_tasks[topic].cancel()
+                del self._subscriber_tasks[topic]
+            
+            # Unsubscribe from the channel
+            if self._pubsub:
+                await self._pubsub.unsubscribe(topic)
+            
+            logger.info(f"Cleaned up topic: {topic}")
+            
+        except Exception as e:
+            logger.error(f"Failed to clean up topic {topic}: {e}")
+            raise
+
+    async def _listen_for_messages(self, topic: str, handler: Callable):
+        """
+        Internal method to listen for messages on a specific channel.
+        
+        Args:
+            topic: Channel to listen on
+            handler: Message handler function
+        """
+        try:
+            async for message in self._pubsub.listen():
+                if message["type"] == "message":
+                    try:
+                        # Parse message data
+                        message_data = json.loads(message["data"])
+                        
+                        # Call the handler with the message data
+                        if asyncio.iscoroutinefunction(handler):
+                            await handler(message_data)
+                        else:
+                            # Wrap sync handlers in async
+                            await asyncio.get_event_loop().run_in_executor(
+                                None, handler, message_data
+                            )
+                            
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Failed to parse message from {topic}: {e}")
+                    except Exception as e:
+                        logger.error(f"Error in message handler for {topic}: {e}")
+                        
+        except asyncio.CancelledError:
+            logger.info(f"Listener for {topic} cancelled")
+        except Exception as e:
+            logger.error(f"Listener for {topic} failed: {e}")
+            # Attempt to reconnect
+            if self._is_connected:
+                logger.info(f"Attempting to restart listener for {topic}")
+                await asyncio.sleep(1)  # Brief delay before retry
+                self._subscriber_tasks[topic] = asyncio.create_task(
+                    self._listen_for_messages(topic, handler)
+                )
 
 
 class DistributedEventBus:
@@ -90,7 +286,7 @@ class DistributedEventBus:
     WORKER_REGISTRY_TOPIC = "worker_registry"
     
     def __init__(self, broker: Optional[AbstractDistributedBroker] = None):
-        self._broker = broker or MockRedisBroker()
+        self._broker = broker or RedisBroker()
         self._partitions: Dict[str, List[str]] = {} # partition_id -> list of agent_ids
         self._workers: Dict[str, Dict[str, Any]] = {} # worker_id -> capabilities, last_heartbeat, etc.
         self._event_handlers: Dict[str, List[Callable]] = defaultdict(list) # topic -> list of handlers
@@ -142,7 +338,7 @@ class DistributedEventBus:
         full_event = {
             "event_type": event_type,
             "event_data": event_data,
-            "timestamp": asyncio.Semaphore() # Prevent race conditions when updating the timestamp
+            "timestamp": datetime.now().isoformat() # Use ISO format timestamp
         }
 
         if target_partition:
@@ -293,3 +489,44 @@ class DistributedEventBus:
         for worker_id in failed_workers:
             logger.warning(f"Worker {worker_id} timed out. Last heartbeat: {datetime.fromtimestamp(self._workers[worker_id]['last_heartbeat'])}")
             await self.handle_worker_failure(worker_id)
+
+
+class MockRedisBroker(AbstractDistributedBroker):
+    """Mock Redis broker for testing purposes."""
+    
+    def __init__(self, *args, **kwargs):
+        self.connected = True
+        self.messages = {}
+        self.subscriptions = {}
+        
+    async def connect(self):
+        """Mock connect method."""
+        self.connected = True
+        
+    async def disconnect(self):
+        """Mock disconnect method."""
+        self.connected = False
+        
+    async def publish(self, topic: str, message: Dict):
+        """Mock publish method."""
+        if topic not in self.messages:
+            self.messages[topic] = []
+        self.messages[topic].append(message)
+        
+    async def subscribe(self, topic: str, handler: Callable):
+        """Mock subscribe method."""
+        if topic not in self.subscriptions:
+            self.subscriptions[topic] = []
+        self.subscriptions[topic].append(handler)
+        
+    async def create_topic(self, topic: str):
+        """Mock create_topic method."""
+        if topic not in self.messages:
+            self.messages[topic] = []
+        
+    async def delete_topic(self, topic: str):
+        """Mock delete_topic method."""
+        if topic in self.messages:
+            del self.messages[topic]
+        if topic in self.subscriptions:
+            del self.subscriptions[topic]

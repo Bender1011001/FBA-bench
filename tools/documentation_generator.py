@@ -29,7 +29,7 @@ class ToolDocGenerator:
         signature = inspect.signature(func)
         parameters = []
         for param_name, param in signature.parameters.items():
-            if param_name == 'self': # Skip 'self' for methods
+            if param_name == 'self':
                 continue
             param_type = str(param.annotation).replace("<class '", "").replace("'>", "")
             parameters.append({
@@ -47,11 +47,8 @@ class ToolDocGenerator:
 
     def extract_usage_examples(self, tool_functions: List[Dict[str, Any]]) -> Dict[str, List[str]]:
         """
-        Generates practical usage examples for each tool function.
-        
-        Creates realistic, contextually relevant examples based on tool signatures,
-        parameter types, and naming conventions. Includes basic usage, advanced scenarios,
-        and edge cases to provide comprehensive documentation.
+        Generates practical usage examples for each tool function, including basic, advanced,
+        and edge case scenarios to provide comprehensive documentation for LLM agents.
         """
         examples = {}
         for tool in tool_functions:
@@ -59,18 +56,15 @@ class ToolDocGenerator:
             parameters = tool.get("parameters", [])
             example_list = []
             
-            # Generate basic usage example
             basic_example = self._create_basic_usage_example(tool_name, parameters)
             example_list.append(f"Example 1: Basic usage - {basic_example['description']}")
             example_list.append(f"```json\n{json.dumps(basic_example['json'], indent=2)}\n```")
             
-            # Generate advanced usage example with optional parameters
-            if len(parameters) > 1:  # Only if there are multiple parameters
+            if len(parameters) > 1:
                 advanced_example = self._create_advanced_usage_example(tool_name, parameters)
                 example_list.append(f"Example 2: Advanced usage - {advanced_example['description']}")
                 example_list.append(f"```json\n{json.dumps(advanced_example['json'], indent=2)}\n```")
             
-            # Generate edge case example if applicable
             edge_case_example = self._create_edge_case_example(tool_name, parameters)
             if edge_case_example:
                 example_list.append(f"Example 3: Edge case - {edge_case_example['description']}")
@@ -78,19 +72,16 @@ class ToolDocGenerator:
             
             examples[tool_name] = example_list
         return examples
-    
+
     def _create_basic_usage_example(self, tool_name: str, parameters: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Create a basic usage example with required parameters."""
-        # Extract tool action and object from name
+        """Creates a basic usage example with only required parameters for a given tool."""
         action, obj = self._parse_tool_name(tool_name)
         
-        # Generate basic parameters
         basic_params = {}
         for param in parameters:
             param_name = param["name"]
             param_type = param["type"]
             
-            # Skip optional parameters for basic example
             if param["default"] != "N/A":
                 continue
                 
@@ -103,19 +94,16 @@ class ToolDocGenerator:
                 "parameters": basic_params
             }
         }
-    
+
     def _create_advanced_usage_example(self, tool_name: str, parameters: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Create an advanced usage example with optional parameters."""
-        # Extract tool action and object from name
+        """Creates an advanced usage example including all optional parameters for a given tool."""
         action, obj = self._parse_tool_name(tool_name)
         
-        # Generate advanced parameters including optional ones
         advanced_params = {}
         for param in parameters:
             param_name = param["name"]
             param_type = param["type"]
             
-            # Include all parameters with realistic values
             advanced_params[param_name] = self._generate_sample_value(param_name, param_type, obj, advanced=True)
         
         return {
@@ -125,34 +113,32 @@ class ToolDocGenerator:
                 "parameters": advanced_params
             }
         }
-    
+
     def _create_edge_case_example(self, tool_name: str, parameters: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Create an edge case example if applicable."""
+        """Creates an edge case example illustrating boundary conditions or special inputs for a tool."""
         action, obj = self._parse_tool_name(tool_name)
         
-        # Only create edge cases for certain tool types
         if action in ["create", "update"]:
             edge_params = {}
             for param in parameters:
                 param_name = param["name"]
                 param_type = param["type"]
                 
-                # Create edge case values
                 if "name" in param_name:
                     edge_params[param_name] = f"Special {obj.replace('_', ' ').title()} with Unicode: ñoño"
                 elif "price" in param_name or "amount" in param_name:
-                    edge_params[param_name] = 999999.99  # High value
+                    edge_params[param_name] = 999999.99
                 elif "quantity" in param_name or "count" in param_name:
-                    edge_params[param_name] = 0  # Edge case value
+                    edge_params[param_name] = 0
                 elif "date" in param_name or "time" in param_name:
-                    edge_params[param_name] = "2024-12-31T23:59:59Z"  # End of year
+                    edge_params[param_name] = "2024-12-31T23:59:59Z"
                 elif "id" in param_name:
                     edge_params[param_name] = "special-case-id-123"
                 else:
                     edge_params[param_name] = self._generate_sample_value(param_name, param_type, obj)
             
             return {
-                "description": f"Edge case handling with special values",
+                "description": "Edge case handling with special values",
                 "json": {
                     "tool_name": tool_name,
                     "parameters": edge_params
@@ -160,9 +146,9 @@ class ToolDocGenerator:
             }
         
         return None
-    
+
     def _parse_tool_name(self, tool_name: str) -> Tuple[str, str]:
-        """Parse tool name to extract action and object."""
+        """Parses a tool name to extract its primary action and the object it operates on."""
         parts = tool_name.split('_')
         if len(parts) >= 2:
             action = parts[0]
@@ -170,12 +156,11 @@ class ToolDocGenerator:
             return action, obj
         else:
             return "use", tool_name
-    
+
     def _generate_sample_value(self, param_name: str, param_type: str, obj: str = "", advanced: bool = False) -> Any:
-        """Generate a sample value for a parameter based on its name and type."""
+        """Generates a realistic sample value for a parameter based on its inferred type and name."""
         param_name_lower = param_name.lower()
         
-        # Handle different parameter types
         if "str" in param_type:
             return self._generate_string_value(param_name_lower, obj, advanced)
         elif "int" in param_type or "float" in param_type or "number" in param_type:
@@ -188,19 +173,17 @@ class ToolDocGenerator:
             return self._generate_object_value(param_name_lower, obj, advanced)
         else:
             return "sample_value"
-    
+
     def _generate_string_value(self, param_name: str, obj: str = "", advanced: bool = False) -> str:
-        """Generate a sample string value."""
+        """Generates a sample string value based on typical parameter naming conventions."""
         if "name" in param_name:
-            if obj:
-                return f"Sample {obj.replace('_', ' ').title()}"
-            return "Sample Name"
+            return f"Sample {obj.replace('_', ' ').title()}" if obj else "Sample Name"
         elif "id" in param_name:
             return f"{obj or 'item'}_123"
         elif "email" in param_name:
             return "user@example.com"
         elif "description" in param_name:
-            return "A detailed description of the item or operation"
+            return "A detailed description of the item or operation."
         elif "query" in param_name or "search" in param_name:
             return "search terms or query string"
         elif "type" in param_name:
@@ -216,14 +199,14 @@ class ToolDocGenerator:
         elif "date" in param_name or "time" in param_name:
             return "2024-01-01T00:00:00Z"
         elif "token" in param_name or "key" in param_name:
-            return "sample_token_or_key"
+            return "sample_token_or_key_sTRING"
         elif "message" in param_name or "note" in param_name:
-            return "Additional information or notes"
+            return "Additional important information or notes."
         else:
-            return "sample_value"
-    
+            return "sample_string_value"
+
     def _generate_numeric_value(self, param_name: str, obj: str = "", advanced: bool = False) -> Union[int, float]:
-        """Generate a sample numeric value."""
+        """Generates a sample numeric value (int or float) based on typical parameter naming conventions."""
         if "price" in param_name or "cost" in param_name or "amount" in param_name:
             return 99.99 if advanced else 19.99
         elif "quantity" in param_name or "count" in param_name or "number" in param_name:
@@ -250,9 +233,9 @@ class ToolDocGenerator:
             return 1
         else:
             return 42
-    
+
     def _generate_boolean_value(self, param_name: str, advanced: bool = False) -> bool:
-        """Generate a sample boolean value."""
+        """Generates a sample boolean value based on typical parameter naming conventions."""
         if "active" in param_name or "enabled" in param_name or "is_" in param_name:
             return True
         elif "required" in param_name or "mandatory" in param_name:
@@ -261,9 +244,9 @@ class ToolDocGenerator:
             return True if advanced else False
         else:
             return True
-    
+
     def _generate_array_value(self, param_name: str, obj: str = "", advanced: bool = False) -> List[Any]:
-        """Generate a sample array value."""
+        """Generates a sample array value containing relevant data types."""
         if "tag" in param_name:
             return ["important", "featured", "new"] if advanced else ["sample"]
         elif "item" in param_name or "element" in param_name:
@@ -280,9 +263,9 @@ class ToolDocGenerator:
             return [{"field": "status", "value": "active"}, {"field": "date", "operator": ">=", "value": "2024-01-01"}] if advanced else [{"field": "status", "value": "active"}]
         else:
             return ["value1", "value2"] if advanced else ["sample_value"]
-    
+
     def _generate_object_value(self, param_name: str, obj: str = "", advanced: bool = False) -> Dict[str, Any]:
-        """Generate a sample object value."""
+        """Generates a sample object value, recursively generating nested properties."""
         if "metadata" in param_name:
             return {
                 "created_by": "system",
@@ -329,8 +312,8 @@ class ToolDocGenerator:
 
     def document_error_scenarios(self, error_patterns: Dict[str, int]) -> Dict[str, str]:
         """
-        Documents common mistakes and how to avoid them based on observed error patterns.
-        (error_patterns would come from AgentErrorHandler.log_error_patterns)
+        Creates documentation for common error scenarios and provides actionable advice
+        on how to avoid them, based on observed error patterns from agent interactions.
         """
         scenarios = {}
         if "Invalid JSON format" in error_patterns:
@@ -345,13 +328,14 @@ class ToolDocGenerator:
             scenarios["Rate Limit Exceeded"] = "**Description**: The agent made too many requests to a tool within a short period. **How to Avoid**: Implement back-off strategies or re-evaluate the necessity of frequent calls."
         
         if not scenarios:
-            scenarios["No Common Errors"] = "No specific common error patterns detected yet. Ensure robust error logging is in place."
+            scenarios["No Common Errors"] = "No specific common error patterns detected yet. Ensure robust error logging is in place to capture future issues."
 
         return scenarios
 
     def create_integration_guide(self, tool_set: Dict[str, Any]) -> str:
         """
-        Generates a step-by-step guide for integrating and using a set of tools.
+        Generates a comprehensive, step-by-step guide for LLM agents on how to effectively
+        integrate with and use the available tools, covering structure, functions, errors, and best practices.
         """
         guide_parts = ["--- Tool Integration Guide ---"]
         guide_parts.append("\nThis guide provides instructions for integrating and effectively using the available tools.\n")
@@ -375,7 +359,6 @@ class ToolDocGenerator:
                 for param in tool["parameters"]:
                     guide_parts.append(f"- `{param['name']}`: Type: `{param['type']}`, Default: `{param['default']}`")
                 
-                # Add usage examples specific to this tool
                 examples = self.extract_usage_examples([tool]).get(tool['name'], [])
                 if examples:
                     guide_parts.append("Usage Examples:")
@@ -414,10 +397,9 @@ class ToolDocGenerator:
             return f"Documentation exported to {full_path}"
         elif format == "json":
             full_path = f"{output_path}.json"
-            # Assuming docs_content is already a dict or can be converted
             try:
                 if isinstance(docs_content, str):
-                    parsed_content = json.loads(docs_content) # Assuming JSON string
+                    parsed_content = json.loads(docs_content)
                 else:
                     parsed_content = docs_content
                 with open(full_path, "w", encoding="utf-8") as f:

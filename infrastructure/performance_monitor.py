@@ -1,11 +1,19 @@
 import asyncio
-import logging
 import time
 import os
-import psutil # For system resource monitoring
 from collections import deque, defaultdict
 from typing import Dict, List, Any, Tuple, Optional
 from datetime import datetime
+import logging # Ensure logging is imported directly
+
+# Attempt to import psutil, but make it optional
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    psutil = None
+    PSUTIL_AVAILABLE = False
+    logging.warning("psutil not available. System resource monitoring will be limited. Please install it with 'pip install psutil'.")
 
 logger = logging.getLogger(__name__)
 

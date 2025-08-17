@@ -161,8 +161,8 @@ class LLMFriendlyToolWrapper:
     def format_complex_data(self, data: dict, complexity_level: str = "medium") -> dict:
         """
         Structures complex data for easier LLM interpretation based on complexity level.
-        
-        Implements data summarization and formatting based on the specified complexity level.
+        Implements data summarization and formatting based on the specified complexity level to ensure
+        LLMs receive optimal information density without being overwhelmed.
         """
         if not isinstance(data, dict):
             return {"formatted_data": str(data)}
@@ -177,7 +177,7 @@ class LLMFriendlyToolWrapper:
             return data
     
     def _create_low_complexity_summary(self, data: dict) -> dict:
-        """Create a simplified overview focusing on key metrics."""
+        """Create a concise overview focusing on primary metrics and high-level status."""
         summary = {
             "overview": "Key metrics and summary",
             "data_type": self._identify_data_type(data),
@@ -185,7 +185,6 @@ class LLMFriendlyToolWrapper:
             "key_metrics": self._extract_key_metrics(data)
         }
         
-        # Add temporal summary if date fields are present
         date_range = self._extract_date_range(data)
         if date_range:
             summary["time_period"] = date_range
@@ -193,7 +192,7 @@ class LLMFriendlyToolWrapper:
         return summary
     
     def _create_medium_complexity_summary(self, data: dict) -> dict:
-        """Create a detailed summary with important fields highlighted."""
+        """Create a detailed summary highlighting important fields, structure, and basic statistics."""
         return {
             "summary": "Detailed summary with key fields",
             "structure": self._analyze_structure(data),
@@ -203,7 +202,7 @@ class LLMFriendlyToolWrapper:
         }
     
     def _create_high_complexity_summary(self, data: dict) -> dict:
-        """Create a comprehensive view with full data and metadata."""
+        """Create a comprehensive view including full data, detailed metadata, and advanced statistics."""
         return {
             "full_data": data,
             "metadata": {
@@ -215,7 +214,7 @@ class LLMFriendlyToolWrapper:
         }
     
     def _identify_data_type(self, data: dict) -> str:
-        """Identify the type of data structure."""
+        """Dynamically identifies the primary type of data structure based on common keys."""
         if "products" in data or "items" in data:
             return "product_catalog"
         elif "sales" in data or "revenue" in data:
@@ -228,7 +227,7 @@ class LLMFriendlyToolWrapper:
             return "general_data"
     
     def _count_items(self, data: dict) -> int:
-        """Count the total number of items in the data structure."""
+        """Recursively counts items within list or dict structures."""
         count = 0
         for key, value in data.items():
             if isinstance(value, list):
@@ -240,7 +239,7 @@ class LLMFriendlyToolWrapper:
         return count
     
     def _extract_key_metrics(self, data: dict) -> dict:
-        """Extract key numerical metrics from the data."""
+        """Extracts significant numerical metrics from the data for high-level summaries."""
         metrics = {}
         
         for key, value in data.items():
@@ -255,7 +254,7 @@ class LLMFriendlyToolWrapper:
         return metrics
     
     def _extract_date_range(self, data: dict) -> dict:
-        """Extract date range information if available."""
+        """Identifies and extracts date range information from string fields within the data."""
         import re
         dates = []
         
@@ -276,7 +275,7 @@ class LLMFriendlyToolWrapper:
         return None
     
     def _analyze_structure(self, data: dict) -> dict:
-        """Analyze the structure of the data."""
+        """Performs a structural analysis of the data, identifying key patterns and nesting levels."""
         structure = {
             "top_level_keys": list(data.keys()),
             "nested_levels": 0,
@@ -300,7 +299,7 @@ class LLMFriendlyToolWrapper:
         return structure
     
     def _extract_important_fields(self, data: dict) -> dict:
-        """Extract fields that are likely important based on naming conventions."""
+        """Extracts fields considered important based on a predefined list of naming conventions."""
         important_fields = {}
         important_patterns = [
             r'id', r'name', r'title', r'description', r'status', r'created_at',
@@ -315,7 +314,7 @@ class LLMFriendlyToolWrapper:
         return important_fields
     
     def _extract_sample_data(self, data: dict, max_samples: int = 3) -> dict:
-        """Extract sample data from arrays in the structure."""
+        """Extracts a limited number of sample items from lists within the data structure."""
         samples = {}
         
         for key, value in data.items():
@@ -329,7 +328,7 @@ class LLMFriendlyToolWrapper:
         return samples
     
     def _calculate_basic_statistics(self, data: dict) -> dict:
-        """Calculate basic statistics for numerical fields."""
+        """Calculates basic descriptive statistics (count, sum, average, min, max) for numerical fields."""
         stats = {}
         
         def collect_numbers(obj, path=""):
@@ -359,11 +358,11 @@ class LLMFriendlyToolWrapper:
         return result
     
     def _assess_data_quality(self, data: dict) -> dict:
-        """Assess the quality of the data."""
+        """Assesses basic data quality aspects like completeness, consistency, and validity."""
         quality = {
             "completeness": 1.0,
-            "consistency": 1.0,
-            "validity": 1.0,
+            "consistency": 1.0, # Placeholder for actual consistency checks
+            "validity": 1.0,    # Placeholder for actual validity checks
             "issues": []
         }
         
@@ -392,14 +391,14 @@ class LLMFriendlyToolWrapper:
         return quality
     
     def _identify_relationships(self, data: dict) -> dict:
-        """Identify relationships between different parts of the data."""
+        """Identifies potential relationships (references, hierarchies) within the data."""
         relationships = {
             "references": [],
             "hierarchies": [],
-            "dependencies": []
+            "dependencies": [] # Placeholder for actual dependency analysis
         }
         
-        # Look for ID references
+        # Look for ID references (simple heuristic)
         id_fields = []
         for key, value in data.items():
             if isinstance(value, dict):
@@ -413,10 +412,10 @@ class LLMFriendlyToolWrapper:
         return relationships
     
     def _calculate_comprehensive_statistics(self, data: dict) -> dict:
-        """Calculate comprehensive statistics for the data."""
+        """Calculates comprehensive statistics including distribution metrics like median and percentiles."""
         stats = self._calculate_basic_statistics(data)
         
-        # Add distribution information
+        # Add distribution information where applicable
         for path, stat_info in stats.items():
             numbers = []
             
@@ -430,10 +429,22 @@ class LLMFriendlyToolWrapper:
                 elif isinstance(obj, (int, float)):
                     numbers.append(obj)
             
-            extract_numbers(data)
+            # Re-collect numbers for this path only to ensure correct sorting/median calculation
+            collected_numbers_for_path = []
+            def re_collect_path_numbers(obj, current_path=""):
+                if isinstance(obj, dict):
+                    for key, value in obj.items():
+                        re_collect_path_numbers(value, f"{current_path}.{key}" if current_path else key)
+                elif isinstance(obj, list):
+                    for item in obj:
+                        re_collect_path_numbers(item, current_path)
+                elif isinstance(obj, (int, float)) and current_path == path:
+                    collected_numbers_for_path.append(obj)
+
+            re_collect_path_numbers(data)
             
-            if len(numbers) > 1:
-                sorted_numbers = sorted(numbers)
+            if len(collected_numbers_for_path) > 1:
+                sorted_numbers = sorted(collected_numbers_for_path)
                 n = len(sorted_numbers)
                 stat_info["median"] = sorted_numbers[n // 2]
                 stat_info["percentile_25"] = sorted_numbers[n // 4]
@@ -443,17 +454,17 @@ class LLMFriendlyToolWrapper:
 
     def inject_contextual_help(self, tool_description: str) -> str:
         """
-        Adds LLM-specific guidance to a tool description, e.g., on expected formats.
+        Enhances a tool description with LLM-specific guidance on expected data formats and best practices.
         """
         return (f"{tool_description}\n\n"
                 "IMPORTANT: When using this tool, please ensure your parameters are valid JSON "
                 "and adhere to the specific types and formats required. "
-                "Consider the numerical precision for financial values and string lengths for names.")
+                "Consider the numerical precision for financial values and string lengths for names. Ensure all API keys are correctly configured in the environment.")
 
     def _generate_human_readable_summary(self, json_data: dict, tool_name: str) -> str:
         """
-        Generates a human-readable summary of the tool's JSON response.
-        (Simplified, can be expanded with more sophisticated NLP or rule-based logic)
+        Generates a concise human-readable summary of a tool's JSON response,
+        aiding LLM interpretation without processing the full data payload.
         """
         if tool_name == "create_product":
             if json_data.get("success"):
@@ -462,7 +473,7 @@ class LLMFriendlyToolWrapper:
                 return f"Successfully created product '{product_name}' with ID '{product_id}'."
             else:
                 error = json_data.get("error", "unknown error")
-                return f"Failed to create product: {error}."
+                return f"Failed to create product: {error}. Check required parameters and data types."
         elif tool_name == "get_market_data":
             data_count = len(json_data.get("data", []))
             return f"Retrieved market data containing {data_count} entries. Key metrics include average price and demand."
@@ -473,14 +484,15 @@ class LLMFriendlyToolWrapper:
                 return f"Successfully updated stock for product '{product_id}' to {new_stock}."
             else:
                 error = json_data.get("error", "unknown error")
-                return f"Failed to update stock: {error}."
+                return f"Failed to update stock: {error}. Verify product ID and stock quantity."
         elif "success" in json_data:
             status = "succeeded" if json_data["success"] else "failed"
-            return f"The operation for tool '{tool_name}' {status}."
+            message = json_data.get("message", "operation completed.")
+            return f"The operation for tool '{tool_name}' {status}. Message: {message}"
         return f"Response for '{tool_name}': {json.dumps(json_data)}"
 
     def _get_python_type(self, schema_type: str):
-        """Maps JSON schema types to Python types."""
+        """Maps JSON schema types to Python types for runtime validation."""
         if schema_type == "string":
             return str
         elif schema_type == "integer":
@@ -494,4 +506,4 @@ class LLMFriendlyToolWrapper:
         elif schema_type == "object":
             return dict
         else:
-            return None # Unknown type
+            return type(None) # Unknown type, matches None

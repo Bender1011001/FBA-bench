@@ -3,7 +3,19 @@ Configuration schema validation for benchmarking.
 
 This module provides schema validation for benchmarking configurations,
 ensuring that all configuration files are properly structured and validated.
+
+DEPRECATED: This module is deprecated and will be removed in a future version.
+Please use the Pydantic-based configuration models in `benchmarking/config/pydantic_config.py` instead.
 """
+import warnings
+
+# Issue a deprecation warning when this module is imported
+warnings.warn(
+    "The 'benchmarking.config.schema' module is deprecated and will be removed in a future version. "
+    "Please use 'benchmarking.config.pydantic_config' for all configuration needs.",
+    DeprecationWarning,
+    stacklevel=2
+)
 
 import logging
 import yaml
@@ -12,6 +24,7 @@ from typing import Dict, Any, List, Optional, Union, Type
 from dataclasses import dataclass, field
 from pathlib import Path
 import jsonschema
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -655,6 +668,176 @@ class SchemaRegistry:
             List of schema names
         """
         return list(self._schemas.keys())
+
+
+# Data classes for configuration
+@dataclass
+class EnvironmentData:
+    """Data class for environment configuration."""
+    deterministic: bool = True
+    random_seed: int = 42
+    parallel_execution: bool = False
+    max_workers: int = 1
+
+@dataclass
+class ExecutionData:
+    """Data class for execution configuration."""
+    runs_per_scenario: int = 1
+    max_duration: int = 0
+    timeout: int = 300
+    retry_on_failure: bool = True
+    max_retries: int = 3
+    random_seed: Optional[int] = None
+    num_runs: int = 1 # Alias for runs_per_scenario for compatibility
+    timeout_seconds: int = 300 # Alias for timeout
+    parallel_execution: bool = False # Should be part of EnvironmentData, kept for compatibility
+    output_dir: str = "./results"
+
+@dataclass
+class MetricsData:
+    """Data class for metrics configuration."""
+    categories: List[str] = field(default_factory=lambda: ["cognitive", "business", "technical"])
+    custom_metrics: List[Dict[str, Any]] = field(default_factory=list)
+    collection_interval: int = 10 # Not in schema, but used by engine
+
+@dataclass
+class OutputData:
+    """Data class for output configuration."""
+    format: str = "json"
+    path: str = "./results"
+    include_detailed_logs: bool = False
+    include_audit_trail: bool = True
+
+@dataclass
+class ValidationData:
+    """Data class for validation configuration."""
+    enabled: bool = True
+    statistical_significance: bool = True
+    confidence_level: float = 0.95
+    reproducibility_check: bool = True
+
+@dataclass
+class AgentData:
+    """Data class for agent configuration."""
+    id: str
+    type: str
+    config: Dict[str, Any]
+    name: Optional[str] = None
+    enabled: bool = True
+    framework: Optional[str] = None # Used by engine
+
+@dataclass
+class ScenarioData:
+    """Data class for scenario configuration."""
+    id: str
+    type: str
+    config: Dict[str, Any] # Scenario-specific parameters
+    name: Optional[str] = None
+    enabled: bool = True
+    priority: int = 0
+    duration_ticks: int = 50 # Not in schema, but used by engine
+    parameters: Dict[str, Any] = field(default_factory=dict) # Alias for config
+
+@dataclass
+class BenchmarkData:
+    """Data class for benchmark configuration."""
+    benchmark_id: str
+    scenarios: List[ScenarioData]
+    agents: List[AgentData]
+    metrics: MetricsData
+    name: Optional[str] = None
+    description: Optional[str] = None
+    version: Optional[str] = None
+    environment: EnvironmentData = field(default_factory=EnvironmentData)
+    execution: ExecutionData = field(default_factory=ExecutionData)
+    output: OutputData = field(default_factory=OutputData)
+    validation: ValidationData = field(default_factory=ValidationData)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert BenchmarkData to dictionary, suitable for JSON serialization."""
+        def serialize_dataclass(obj):
+            if isinstance(obj, (EnvironmentData, ExecutionData, MetricsData, OutputData, ValidationData, AgentData, ScenarioData)):
+                return obj.__dict__
+            if isinstance(obj, list):
+                return [serialize_dataclass(item) for item in obj]
+            return obj
+
+        result = {
+            "benchmark_id": self.benchmark_id,
+            "name": self.name,
+            "description": self.description,
+            "version": self.version,
+            "environment": serialize_dataclass(self.environment),
+            "scenarios": serialize_dataclass(self.scenarios),
+            "agents": serialize_dataclass(self.agents),
+            "metrics": serialize_dataclass(self.metrics),
+            "execution": serialize_dataclass(self.execution),
+            "output": serialize_dataclass(self.output),
+            "validation": serialize_dataclass(self.validation),
+            "metadata": self.metadata,
+        }
+        # Filter out None values for cleaner output, similar to how dataclasses.asdict might work with defaults
+        return {k: v for k, v in result.items() if v is not None}
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'BenchmarkData':
+        """Create BenchmarkData from dictionary."""
+        # Helper to instantiate dataclasses from dicts, handling missing keys with defaults
+        def get_dataclass_instance(dclass, d_data):
+            if d_data is None:
+                return dclass()
+            # Get field types of the dataclass
+            field_types = {f.name: f.type for f in dclass.__dataclass_fields__.values()}
+            kwargs = {}
+            for field_name in field_types:
+                value_to_use = None
+                if field_name in d_data:
+                    value_to_use = d_data[field_name]
+                # Special handling for AgentData.framework: map from 'type' in config
+                elif dclass is AgentData and field_name == 'framework' and 'type' in d_data:
+                    value_to_use = d_data['type']
+                
+                if value_to_use is not None:
+                    # Recursively handle nested dataclasses or lists of dataclasses
+                    field_type = field_types[field_name]
+                    if hasattr(field_type, '__origin__'): # Check if it's a generic type like List[SomeData]
+                        origin_type = field_type.__origin__
+                        args_type = field_type.__args__
+                        if origin_type is list and len(args_type) == 1 and hasattr(args_type[0], '__dataclass_fields__'):
+                             kwargs[field_name] = [get_dataclass_instance(args_type[0], item) for item in value_to_use]
+                        else:
+                            kwargs[field_name] = value_to_use # Fallback for other generics
+                    elif hasattr(field_type, '__dataclass_fields__'): # Check if it's another dataclass
+                        kwargs[field_name] = get_dataclass_instance(field_type, value_to_use)
+                    else:
+                        kwargs[field_name] = value_to_use
+                # else: # Field not in d_data and no special mapping, will use default from dataclass definition
+            return dclass(**kwargs)
+
+        return cls(
+            benchmark_id=data.get("benchmark_id"),
+            name=data.get("name"),
+            description=data.get("description"),
+            version=data.get("version"),
+            environment=get_dataclass_instance(EnvironmentData, data.get("environment")),
+            scenarios=[get_dataclass_instance(ScenarioData, s_data) for s_data in data.get("scenarios", [])],
+            agents=[get_dataclass_instance(AgentData, a_data) for a_data in data.get("agents", [])],
+            metrics=get_dataclass_instance(MetricsData, data.get("metrics")),
+            execution=get_dataclass_instance(ExecutionData, data.get("execution")),
+            output=get_dataclass_instance(OutputData, data.get("output")),
+            validation=get_dataclass_instance(ValidationData, data.get("validation")),
+            metadata=data.get("metadata", {})
+        )
+
+    @classmethod
+    def from_file(cls, config_path: Union[str, Path]) -> 'BenchmarkData':
+        """Create BenchmarkData from a configuration file (YAML or JSON)."""
+        # Import ConfigurationManager locally to avoid circular dependencies if manager imports schema
+        from .manager import ConfigurationManager
+        mgr = ConfigurationManager()
+        config_dict = mgr.load_config(str(config_path), "benchmark")
+        return cls.from_dict(config_dict)
 
 
 # Global schema registry instance

@@ -4,6 +4,7 @@ from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from enum import Enum
 from datetime import datetime
+from decimal import Decimal, ROUND_HALF_UP, ROUND_UP
 
 from money import Money
 from models.product import Product
@@ -20,6 +21,7 @@ class FeeType(Enum):
     LABELING = "labeling"
     ADVERTISING = "advertising"
     PENALTY = "penalty"
+    SURCHARGE = "surcharge"
     SUBSCRIPTION = "subscription"
 
 
@@ -84,6 +86,17 @@ class FeeCalculationService:
             'oversize_jan_sep': Money.from_dollars(0.56),
             'oversize_oct_dec': Money.from_dollars(1.40)
         })
+
+        # Dimensional weight divisor (default 139)
+        self.dim_divisor = self._to_decimal(self.config.get('dimensional_weight_divisor', 139))
+
+        # Surcharges configuration
+        self.surcharges = self.config.get('surcharges', {})
+        self._load_default_surcharges()
+
+        # Penalties configuration
+        self.penalties = self.config.get('penalties', {})
+        self._load_default_penalties()
         
     def _load_default_fee_rates(self) -> None:
         """Load default fee rates if not provided in config."""
@@ -125,6 +138,81 @@ class FeeCalculationService:
         for category, rate in defaults.items():
             if category not in self.category_referral_rates:
                 self.category_referral_rates[category] = rate
+
+    # Helper conversions and geometry
+    def _to_decimal(self, value) -> Decimal:
+        """Convert int/float/str/Decimal to Decimal safely (no float math leakage)."""
+        if isinstance(value, Decimal):
+            return value
+        if isinstance(value, int):
+            return Decimal(value)
+        if isinstance(value, float):
+            return Decimal(str(value))
+        return Decimal(str(value))
+
+    def _compute_cubic_feet(self, dimensions_inches) -> Decimal:
+        """Compute cubic feet from dimensions in inches using Decimal math."""
+        dims = dimensions_inches
+        # Allow string format like "LxWxH"
+        if isinstance(dims, str) and 'x' in dims.lower():
+            parts = [p.strip() for p in dims.lower().split('x')]
+            if len(parts) == 3:
+                dims = parts
+        if not dims or len(dims) != 3:
+            dims = [12, 8, 1]
+        L, W, H = [self._to_decimal(d) for d in dims]
+        cubic_inches = L * W * H
+        return (cubic_inches / Decimal(1728)).quantize(Decimal('0.0001'), rounding=ROUND_HALF_UP)
+
+    def _compute_billable_weight_lb(self, product: Product) -> Decimal:
+        """
+        Compute billable weight per carrier practice (2025 fidelity):
+        - actual_weight_lb = weight_oz / 16 (Decimal)
+        - dim_weight_lb = (L * W * H) / dim_divisor
+        - billable = max(actual, dim), rounded up to nearest 0.1 lb
+        """
+        # Actual weight
+        weight_oz = getattr(product, 'weight_oz', 16)
+        actual_lb = self._to_decimal(weight_oz) / Decimal(16)
+
+        # Dimensions
+        dimensions = getattr(product, 'dimensions_inches', None)
+        if dimensions is None:
+            dim_str = getattr(product, 'dimensions', None)
+            if isinstance(dim_str, str) and 'x' in dim_str.lower():
+                parts = [p.strip() for p in dim_str.lower().split('x')]
+                if len(parts) == 3:
+                    dimensions = parts
+        if not dimensions:
+            dimensions = [12, 8, 1]
+        L, W, H = [self._to_decimal(d) for d in dimensions]
+        dim_weight_lb = (L * W * H) / self.dim_divisor
+
+        billable = dim_weight_lb if dim_weight_lb > actual_lb else actual_lb
+        return billable.quantize(Decimal('0.1'), rounding=ROUND_UP)
+
+    def _load_default_surcharges(self) -> None:
+        """Load default surcharges config."""
+        defaults = {
+            'peak_season_pct_on_fba': 0.0,  # Decimal fraction, e.g., 0.08 for 8%
+            'fuel_pct_on_fba': 0.0,
+            'remote_area_flat': Money.zero(),
+            'hazardous_flat': Money.zero(),
+        }
+        for k, v in defaults.items():
+            if k not in self.surcharges:
+                self.surcharges[k] = v
+
+    def _load_default_penalties(self) -> None:
+        """Load default penalties config."""
+        defaults = {
+            'ltsf_monthly_per_cu_ft': Money.zero(),
+            'low_price_threshold': Money.zero(),
+            'low_price_fee_flat': Money.zero(),
+        }
+        for k, v in defaults.items():
+            if k not in self.penalties:
+                self.penalties[k] = v
                 
     def calculate_comprehensive_fees(
         self, 
@@ -146,15 +234,76 @@ class FeeCalculationService:
         if additional_context is None:
             additional_context = {}
             
-        individual_fees = []
+        individual_fees: List[FeeCalculation] = []
         
         # Calculate referral fee
         referral_fee = self._calculate_referral_fee(product, sale_price)
         individual_fees.append(referral_fee)
-        
+
         # Calculate FBA fulfillment fee
         fba_fee = self._calculate_fba_fee(product)
         individual_fees.append(fba_fee)
+
+        # Surcharges applied off FBA fee
+        # Determine peak season: Oct-Dec, unless overridden by additional_context
+        peak_override = additional_context.get('peak_season', None)
+        current_month = datetime.now().month
+        is_peak_season = (current_month in [10, 11, 12]) if peak_override is None else bool(peak_override)
+
+        # Percent surcharges on FBA
+        peak_pct = self._to_decimal(self.surcharges.get('peak_season_pct_on_fba', 0.0)) if is_peak_season else Decimal('0')
+        fuel_pct = self._to_decimal(self.surcharges.get('fuel_pct_on_fba', 0.0))
+
+        if peak_pct > 0:
+            peak_amount = fba_fee.calculated_amount * peak_pct
+            individual_fees.append(FeeCalculation(
+                fee_type=FeeType.SURCHARGE,
+                base_amount=fba_fee.calculated_amount,
+                rate=float(peak_pct),
+                calculated_amount=peak_amount,
+                description="Peak season surcharge on FBA fee",
+                calculation_details={'basis': 'fba', 'percent': float(peak_pct), 'is_peak_season': is_peak_season},
+                timestamp=datetime.now()
+            ))
+
+        if fuel_pct > 0:
+            fuel_amount = fba_fee.calculated_amount * fuel_pct
+            individual_fees.append(FeeCalculation(
+                fee_type=FeeType.SURCHARGE,
+                base_amount=fba_fee.calculated_amount,
+                rate=float(fuel_pct),
+                calculated_amount=fuel_amount,
+                description="Fuel surcharge on FBA fee",
+                calculation_details={'basis': 'fba', 'percent': float(fuel_pct)},
+                timestamp=datetime.now()
+            ))
+
+        # Flat surcharges
+        if additional_context.get('is_remote_area', False):
+            remote_flat = self.surcharges.get('remote_area_flat', Money.zero())
+            if isinstance(remote_flat, Money) and remote_flat.cents != 0:
+                individual_fees.append(FeeCalculation(
+                    fee_type=FeeType.SURCHARGE,
+                    base_amount=remote_flat,
+                    rate=1.0,
+                    calculated_amount=remote_flat,
+                    description="Remote area flat surcharge",
+                    calculation_details={'type': 'remote_area_flat'},
+                    timestamp=datetime.now()
+                ))
+
+        if additional_context.get('is_hazmat', False):
+            haz_flat = self.surcharges.get('hazardous_flat', Money.zero())
+            if isinstance(haz_flat, Money) and haz_flat.cents != 0:
+                individual_fees.append(FeeCalculation(
+                    fee_type=FeeType.SURCHARGE,
+                    base_amount=haz_flat,
+                    rate=1.0,
+                    calculated_amount=haz_flat,
+                    description="Hazardous materials flat surcharge",
+                    calculation_details={'type': 'hazardous_flat'},
+                    timestamp=datetime.now()
+                ))
         
         # Calculate storage fee if applicable
         storage_duration_days = additional_context.get('storage_duration_days', 0)
@@ -183,11 +332,44 @@ class FeeCalculationService:
             ad_fee = self._calculate_advertising_fee(ad_spend)
             individual_fees.append(ad_fee)
             
-        # Calculate penalty fees if applicable
+        # Calculate penalty fees if applicable (direct input)
         penalty_amount = additional_context.get('penalty_amount', Money.zero())
         if penalty_amount.cents != 0:
             penalty_fee = self._calculate_penalty_fee(penalty_amount, additional_context.get('penalty_reason', 'unknown'))
             individual_fees.append(penalty_fee)
+
+        # Configurable penalties:
+        # Long-term storage penalty (LTSF) - months_in_storage >= 12
+        months_in_storage = int(additional_context.get('months_in_storage', 0) or 0)
+        ltsf_rate: Money = self.penalties.get('ltsf_monthly_per_cu_ft', Money.zero())
+        if months_in_storage >= 12 and isinstance(ltsf_rate, Money) and ltsf_rate.cents > 0:
+            cf = self._compute_cubic_feet(getattr(product, 'dimensions_inches', [12, 8, 1]))
+            # Money * int -> Money; Money * Decimal -> Money
+            ltsf_amount = (ltsf_rate * months_in_storage) * cf
+            individual_fees.append(FeeCalculation(
+                fee_type=FeeType.PENALTY,
+                base_amount=ltsf_rate,
+                rate=float(cf),
+                calculated_amount=ltsf_amount,
+                description=f"Long-term storage penalty ({months_in_storage} months)",
+                calculation_details={'months_in_storage': months_in_storage, 'cubic_feet': float(cf), 'monthly_rate': ltsf_rate},
+                timestamp=datetime.now()
+            ))
+
+        # Low-price penalty
+        low_price_threshold: Money = self.penalties.get('low_price_threshold', Money.zero())
+        low_price_fee_flat: Money = self.penalties.get('low_price_fee_flat', Money.zero())
+        if isinstance(low_price_threshold, Money) and low_price_threshold.cents > 0 and sale_price < low_price_threshold:
+            if isinstance(low_price_fee_flat, Money) and low_price_fee_flat.cents > 0:
+                individual_fees.append(FeeCalculation(
+                    fee_type=FeeType.PENALTY,
+                    base_amount=low_price_threshold,
+                    rate=1.0,
+                    calculated_amount=low_price_fee_flat,
+                    description=f"Low-price penalty (threshold {low_price_threshold})",
+                    calculation_details={'threshold': low_price_threshold, 'trigger_price': sale_price},
+                    timestamp=datetime.now()
+                ))
             
         # Calculate totals
         total_fees = sum((fee.calculated_amount for fee in individual_fees), Money.zero())
@@ -197,12 +379,13 @@ class FeeCalculationService:
         cost_basis = getattr(product, 'cost_basis', Money.zero())
         if cost_basis.cents != 0:
             profit = net_proceeds - cost_basis
-            profit_margin_percent = float(profit / cost_basis) * 100
+            # Compute percentage off cents, avoid Money/Money operations
+            profit_margin_percent = (profit.cents / cost_basis.cents) * 100.0
         else:
             profit_margin_percent = 0.0
             
         return ComprehensiveFeeBreakdown(
-            product_id=product.product_id,
+            product_id=getattr(product, 'product_id', getattr(product, 'asin', 'unknown')),
             sale_price=sale_price,
             individual_fees=individual_fees,
             total_fees=total_fees,
@@ -214,10 +397,11 @@ class FeeCalculationService:
     def _calculate_referral_fee(self, product: Product, sale_price: Money) -> FeeCalculation:
         """Calculate referral fee based on product category and sale price."""
         category = getattr(product, 'category', 'default')
-        rate = self.category_referral_rates.get(category, self.fee_rates['referral_base_rate'])
+        rate_val = self.category_referral_rates.get(category, self.fee_rates['referral_base_rate'])
+        rate_dec = self._to_decimal(rate_val)
         
-        # Apply minimum and maximum referral fee rules
-        calculated_amount = sale_price * rate
+        # Apply minimum and maximum referral fee rules (Decimal-safe)
+        calculated_amount = sale_price * rate_dec
         
         # Some categories have minimum fees
         min_fee = Money.from_dollars(0.30)  # $0.30 minimum for most categories
@@ -234,12 +418,12 @@ class FeeCalculationService:
         return FeeCalculation(
             fee_type=FeeType.REFERRAL,
             base_amount=sale_price,
-            rate=rate,
+            rate=float(rate_dec),
             calculated_amount=calculated_amount,
             description=f"Referral fee for {category} category",
             calculation_details={
                 'category': category,
-                'rate_applied': rate,
+                'rate_applied': float(rate_dec),
                 'minimum_fee': min_fee,
                 'sale_price': sale_price
             },
@@ -247,18 +431,20 @@ class FeeCalculationService:
         )
         
     def _calculate_fba_fee(self, product: Product) -> FeeCalculation:
-        """Calculate FBA fulfillment fee based on product size and weight."""
+        """Calculate FBA fulfillment fee based on product size and billable weight (2025 fidelity)."""
         size_tier = self._determine_size_tier(product)
-        weight_lb = getattr(product, 'weight_oz', 16) / 16.0  # Convert oz to lb
+        billable_weight_lb = self._compute_billable_weight_lb(product)
         
         if size_tier == 'small_standard':
             calculated_amount = self.fee_rates['fba_small_standard']
             
         elif size_tier == 'large_standard':
             base_fee = self.fee_rates['fba_large_standard_1lb']
-            if weight_lb > 1.0:
-                additional_weight = weight_lb - 1.0
-                additional_fee = Money(int(additional_weight * self.fee_rates['fba_large_standard_additional_lb'].cents))
+            if billable_weight_lb > Decimal('1.0'):
+                additional_weight = billable_weight_lb - Decimal('1.0')
+                rate_cents = Decimal(self.fee_rates['fba_large_standard_additional_lb'].cents)
+                additional_fee_cents = (additional_weight * rate_cents).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
+                additional_fee = Money(int(additional_fee_cents))
                 calculated_amount = base_fee + additional_fee
             else:
                 calculated_amount = base_fee
@@ -283,14 +469,14 @@ class FeeCalculationService:
             description=f"FBA fulfillment fee for {size_tier} item",
             calculation_details={
                 'size_tier': size_tier,
-                'weight_lb': weight_lb,
+                'billable_weight_lb': float(billable_weight_lb),
                 'dimensions': getattr(product, 'dimensions_inches', [0, 0, 0])
             },
             timestamp=datetime.now()
         )
         
     def _calculate_storage_fee(self, product: Product, duration_days: int) -> FeeCalculation:
-        """Calculate monthly storage fee prorated for duration."""
+        """Calculate monthly storage fee prorated for duration (Decimal math)."""
         size_tier = self._determine_size_tier(product)
         is_oversize = 'oversize' in size_tier
         
@@ -306,23 +492,23 @@ class FeeCalculationService:
             
         monthly_rate = self.storage_rates[rate_key]
         
-        # Calculate cubic feet
+        # Calculate cubic feet using Decimal math
         dimensions = getattr(product, 'dimensions_inches', [12, 8, 1])
-        cubic_feet = (dimensions[0] * dimensions[1] * dimensions[2]) / 1728  # Convert cubic inches to cubic feet
+        cubic_feet = self._compute_cubic_feet(dimensions)
         
-        # Prorate for actual duration
-        daily_rate = monthly_rate / 30.0
-        calculated_amount = Money(int(daily_rate.cents * cubic_feet * duration_days))
+        # Prorate for actual duration using Decimal(30)
+        daily_rate = monthly_rate / Decimal(30)
+        calculated_amount = (daily_rate * cubic_feet) * int(duration_days)
         
         return FeeCalculation(
             fee_type=FeeType.STORAGE,
             base_amount=monthly_rate,
-            rate=cubic_feet,
+            rate=float(cubic_feet),
             calculated_amount=calculated_amount,
             description=f"Storage fee for {duration_days} days",
             calculation_details={
                 'duration_days': duration_days,
-                'cubic_feet': cubic_feet,
+                'cubic_feet': float(cubic_feet),
                 'monthly_rate': monthly_rate,
                 'is_peak_season': is_peak_season,
                 'size_tier': size_tier
@@ -359,14 +545,15 @@ class FeeCalculationService:
         )
         
     def _calculate_return_processing_fee(self, sale_price: Money) -> FeeCalculation:
-        """Calculate return processing fee."""
-        rate = self.fee_rates['return_processing_rate']
-        calculated_amount = sale_price * rate
+        """Calculate return processing fee with Decimal-safe math."""
+        rate_val = self.fee_rates['return_processing_rate']
+        rate_dec = self._to_decimal(rate_val)
+        calculated_amount = sale_price * rate_dec
         
         return FeeCalculation(
             fee_type=FeeType.RETURN_PROCESSING,
             base_amount=sale_price,
-            rate=rate,
+            rate=float(rate_dec),
             calculated_amount=calculated_amount,
             description="Return processing fee",
             calculation_details={'original_sale_price': sale_price},
@@ -425,7 +612,7 @@ class FeeCalculationService:
             'sale_price': target_price,
             'total_fees': breakdown.total_fees,
             'net_proceeds': breakdown.net_proceeds,
-            'fee_percentage': float(breakdown.total_fees / target_price) * 100,
+            'fee_percentage': (breakdown.total_fees.cents / target_price.cents) * 100.0,
             'profit_margin_percent': breakdown.profit_margin_percent,
             'break_even_price': self._calculate_break_even_price(product, context)
         }
@@ -452,7 +639,7 @@ class FeeCalculationService:
         
     def get_fee_summary_by_type(self, breakdowns: List[ComprehensiveFeeBreakdown]) -> Dict:
         """Get summary of fees by type across multiple transactions."""
-        fee_totals = {}
+        fee_totals: Dict[str, Dict[str, Money | int]] = {}
         
         for breakdown in breakdowns:
             for fee in breakdown.individual_fees:
@@ -464,8 +651,8 @@ class FeeCalculationService:
                         'average_amount': Money.zero()
                     }
                 
-                fee_totals[fee_type]['total_amount'] += fee.calculated_amount
-                fee_totals[fee_type]['count'] += 1
+                fee_totals[fee_type]['total_amount'] = fee_totals[fee_type]['total_amount'] + fee.calculated_amount
+                fee_totals[fee_type]['count'] = int(fee_totals[fee_type]['count']) + 1
                 
         # Calculate averages
         for fee_type, totals in fee_totals.items():

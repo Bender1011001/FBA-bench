@@ -144,9 +144,37 @@ export const handleError = (error: unknown): AppError => {
   // Do not attempt recovery immediately here since it's already handled within `handleRecovery`
   // And avoid calling `handleRecovery` twice if it was already called by the original error source
 
-  // Here you would integrate with a notification system (e.g., Toast, Modal)
-  // For now, we'll just log and return the error
-  console.log(`Displaying user message: ${appError.userMessage}`);
+  // Display user-friendly notification
+  if (typeof window !== 'undefined') {
+    import('./notificationService').then(({ notificationService }) => {
+      // Ensure userMessage is a string
+      const message = appError.userMessage || 'An unknown error occurred.';
+      
+      // Show notification based on error type
+      switch (appError.category) {
+        case ErrorCategory.Network:
+          notificationService.warning(message, 8000);
+          break;
+        case ErrorCategory.Validation:
+          notificationService.info(message, 6000);
+          break;
+        case ErrorCategory.System:
+          notificationService.error(message, 10000);
+          break;
+        case ErrorCategory.User:
+          notificationService.info(message, 6000);
+          break;
+        default:
+          notificationService.error(message, 8000);
+      }
+    }).catch(err => {
+      console.error('Failed to load notification service:', err);
+      // Fallback to console notification
+      console.log(`Displaying user message: ${appError.userMessage}`);
+    });
+  } else {
+    console.log(`Displaying user message: ${appError.userMessage}`);
+  }
 
   return appError;
 };

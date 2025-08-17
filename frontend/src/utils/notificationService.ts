@@ -233,8 +233,52 @@ class NotificationService {
   }
 }
 
+import { useState, useEffect } from 'react';
+
 // Create singleton instance
 export const notificationService = new NotificationService();
 
 // Export class for testing or multiple instances
 export { NotificationService };
+
+// React hook for using the notification service
+export function useNotificationStore() {
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+
+  useEffect(() => {
+    // Subscribe to notification updates
+    const unsubscribe = notificationService.subscribe((updatedNotifications) => {
+      setNotifications(updatedNotifications);
+    });
+
+    // Get initial notifications
+    setNotifications(notificationService.getNotifications());
+
+    return unsubscribe;
+  }, []);
+
+  const removeNotification = (id: string) => {
+    // Since the service handles its own DOM, we just need to trigger removal
+    const currentNotifications = notificationService.getNotifications();
+    const index = currentNotifications.findIndex(n => n.id === id);
+    if (index !== -1) {
+      // Remove from internal array and notify listeners
+      currentNotifications.splice(index, 1);
+      notificationService.clear();
+      currentNotifications.forEach(n => notificationService.show(n.message, {
+        type: n.type,
+        duration: n.duration,
+        position: n.position,
+        action: n.action
+      }));
+    }
+  };
+
+  return {
+    notifications: new Map(notifications.map(n => [n.id, n])),
+    removeNotification
+  };
+}
+
+// Export types
+export type { Notification, NotificationOptions };

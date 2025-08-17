@@ -35,60 +35,226 @@ class SimulationSnapshot(BaseModel):
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Mock dashboard service
-class MockDashboardService:
+# Real dashboard service implementation
+class DashboardService:
+    """
+    Production-ready dashboard service that provides real simulation data.
+    
+    This service connects to the event bus and simulation orchestrator
+    to provide real-time data about the simulation state.
+    """
+    
     def __init__(self):
+        """Initialize the dashboard service."""
         self.is_running = True
+        self.start_time = datetime.now()
+        self.simulation_orchestrator = None
+        self.event_bus = None
+        self.last_events = []
+        self.max_events_stored = 100
+        
+        # Initialize with default values
+        self.current_tick = 0
+        self.products = {}
+        self.competitors = {}
+        self.market_summary = {'total_competitors': 0}
+        self.financial_summary = {
+            'total_revenue': 0,
+            'total_profit': 0,
+            'total_units_sold': 0,
+            'total_transactions': 0
+        }
+        self.agents = {}
+        self.command_stats = {
+            'total_commands': 0,
+            'accepted_commands': 0,
+            'rejected_commands': 0
+        }
+        self.event_stats = {
+            'events_processed': 0,
+            'events_per_second': 0.0
+        }
+        
+        logger.info("DashboardService initialized")
+    
+    def connect_to_simulation(self, simulation_orchestrator, event_bus):
+        """
+        Connect to the simulation orchestrator and event bus.
+        
+        Args:
+            simulation_orchestrator: The simulation orchestrator instance
+            event_bus: The event bus instance
+        """
+        self.simulation_orchestrator = simulation_orchestrator
+        self.event_bus = event_bus
+        
+        # Subscribe to events
+        if self.event_bus:
+            self.event_bus.subscribe(self._handle_event)
+            
+        logger.info("Connected to simulation orchestrator and event bus")
+    
+    def _handle_event(self, event):
+        """
+        Handle incoming events from the event bus.
+        
+        Args:
+            event: The event object
+        """
+        # Store the event
+        self.last_events.append({
+            'event_id': getattr(event, 'event_id', str(uuid.uuid4())),
+            'timestamp': getattr(event, 'timestamp', datetime.now().isoformat()),
+            'tick_number': getattr(event, 'tick_number', self.current_tick),
+            'type': getattr(event, 'type', 'unknown'),
+            'data': getattr(event, 'data', {})
+        })
+        
+        # Limit the number of stored events
+        if len(self.last_events) > self.max_events_stored:
+            self.last_events = self.last_events[-self.max_events_stored:]
+        
+        # Update statistics
+        self.event_stats['events_processed'] += 1
+        
+        # Process specific event types
+        if hasattr(event, 'type'):
+            if event.type == 'tick':
+                self.current_tick = getattr(event, 'tick_number', self.current_tick)
+            elif event.type == 'sale':
+                self._process_sale_event(event)
+            elif event.type == 'price_update':
+                self._process_price_update_event(event)
+            elif event.type == 'competitor_update':
+                self._process_competitor_update_event(event)
+    
+    def _process_sale_event(self, event):
+        """Process a sale event and update financial summary."""
+        data = getattr(event, 'data', {})
+        asin = data.get('asin', '')
+        units_sold = data.get('units_sold', 0)
+        price = data.get('price', 0.0)
+        
+        # Update financial summary
+        self.financial_summary['total_units_sold'] += units_sold
+        self.financial_summary['total_transactions'] += 1
+        self.financial_summary['total_revenue'] += price * units_sold
+        
+        # Update product information
+        if asin and asin not in self.products:
+            self.products[asin] = {
+                'price': price,
+                'last_updated': datetime.now().isoformat(),
+                'update_count': 1
+            }
+        else:
+            self.products[asin]['update_count'] += 1
+            self.products[asin]['last_updated'] = datetime.now().isoformat()
+    
+    def _process_price_update_event(self, event):
+        """Process a price update event."""
+        data = getattr(event, 'data', {})
+        asin = data.get('asin', '')
+        price = data.get('price', 0.0)
+        
+        # Update product information
+        if asin:
+            if asin not in self.products:
+                self.products[asin] = {
+                    'price': price,
+                    'last_updated': datetime.now().isoformat(),
+                    'update_count': 1
+                }
+            else:
+                self.products[asin]['price'] = price
+                self.products[asin]['last_updated'] = datetime.now().isoformat()
+                self.products[asin]['update_count'] += 1
+    
+    def _process_competitor_update_event(self, event):
+        """Process a competitor update event."""
+        data = getattr(event, 'data', {})
+        competitor_id = data.get('competitor_id', '')
+        
+        if competitor_id:
+            self.competitors[competitor_id] = data
+            self.market_summary['total_competitors'] = len(self.competitors)
     
     def get_simulation_snapshot(self) -> Dict[str, Any]:
+        """
+        Get a snapshot of the current simulation state.
+        
+        Returns:
+            Dictionary containing simulation state information
+        """
+        # Calculate uptime
+        uptime_seconds = (datetime.now() - self.start_time).total_seconds()
+        
+        # Calculate events per second
+        if uptime_seconds > 0:
+            self.event_stats['events_per_second'] = self.event_stats['events_processed'] / uptime_seconds
+        
+        # Get simulation status if connected to orchestrator
+        if self.simulation_orchestrator:
+            try:
+                orchestrator_status = self.simulation_orchestrator.get_status()
+                self.current_tick = orchestrator_status.get('current_tick', self.current_tick)
+            except Exception as e:
+                logger.error(f"Error getting orchestrator status: {e}")
+        
         return {
-            'current_tick': 42,
+            'current_tick': self.current_tick,
             'simulation_time': datetime.now().isoformat(),
             'last_update': datetime.now().isoformat(),
-            'uptime_seconds': 120,
-            'products': {
-                'B08N5WRWNW': {
-                    'price': '$19.99',
-                    'last_updated': datetime.now().isoformat(),
-                    'update_count': 5
-                }
-            },
-            'competitors': {},
-            'market_summary': {'total_competitors': 3},
-            'financial_summary': {
-                'total_revenue': 199900,
-                'total_profit': 59970,
-                'total_units_sold': 10,
-                'total_transactions': 10
-            },
-            'agents': {},
-            'command_stats': {
-                'total_commands': 15,
-                'accepted_commands': 12,
-                'rejected_commands': 3
-            },
-            'event_stats': {
-                'events_processed': 100,
-                'events_per_second': 2.5
-            },
+            'uptime_seconds': uptime_seconds,
+            'products': self.products,
+            'competitors': self.competitors,
+            'market_summary': self.market_summary,
+            'financial_summary': self.financial_summary,
+            'agents': self.agents,
+            'command_stats': self.command_stats,
+            'event_stats': self.event_stats,
             'metadata': {
-                'service_version': '1.0.0-minimal',
-                'snapshot_generation': 1
+                'service_version': '1.0.0',
+                'snapshot_generation': int(uptime_seconds / 10) + 1
             }
         }
     
     def get_recent_events(self, event_type=None, limit=20, since_tick=None):
-        return [
-            {
-                'event_id': 'mock_event_1',
-                'timestamp': datetime.now().isoformat(),
-                'tick_number': 42,
-                'type': 'sale',
-                'data': {'asin': 'B08N5WRWNW', 'units_sold': 1}
-            }
-        ]
+        """
+        Get recent events from the event bus.
+        
+        Args:
+            event_type: Filter by event type
+            limit: Maximum number of events to return
+            since_tick: Only return events since this tick number
+            
+        Returns:
+            List of event dictionaries
+        """
+        # Filter events based on criteria
+        filtered_events = self.last_events
+        
+        if event_type:
+            filtered_events = [e for e in filtered_events if e.get('type') == event_type]
+        
+        if since_tick is not None:
+            filtered_events = [e for e in filtered_events if e.get('tick_number', 0) >= since_tick]
+        
+        # Return the most recent events up to the limit
+        return filtered_events[-limit:] if limit else filtered_events
+    
+    def start(self):
+        """Start the dashboard service."""
+        self.is_running = True
+        self.start_time = datetime.now()
+        logger.info("DashboardService started")
+    
+    def stop(self):
+        """Stop the dashboard service."""
+        self.is_running = False
+        logger.info("DashboardService stopped")
 
-dashboard_service = MockDashboardService()
+dashboard_service = DashboardService()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

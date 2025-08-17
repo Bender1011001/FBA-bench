@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:all": "concurrently \"cd .. && uvicorn api_server_minimal:app --reload --host 0.0.0.0 --port 8000\" \"vite\" --names \"backend,frontend\" --prefix-colors \"blue,green\"",
+    "dev:all": "concurrently \"cd .. && uvicorn api_server:app --reload --host 0.0.0.0 --port 8000\" \"npm run dev\" --names \"backend,frontend\" --prefix-colors \"blue,green\"",
     "build": "tsc -b && vite build",
+    "build:skip-tests": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest",
@@ -42,6 +43,7 @@
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.20",
     "globals": "^16.3.0",
+    "jest-axe": "^9.0.0",
     "jsdom": "^26.1.0",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.17",

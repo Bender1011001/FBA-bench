@@ -74,17 +74,16 @@ class SmartCommandProcessor:
 
     def recognize_intent(self, command_text: str) -> Optional[str]:
         """
-        Extracts the intended action from natural language or malformed commands.
-        Uses simple regex patterns for demonstration; can be enhanced with an LLM.
+        Extracts the intended action from natural language or malformed commands using a combination
+        of structured parsing and keyword-based heuristics. This fallback mechanism ensures that
+        agent intent can still be understood even with imperfect outputs.
         """
         command_text_lower = command_text.lower()
 
-        # Check for tool_name from JSON-like structure
         tool_name_match = re.search(r'"tool_name"\s*:\s*["\']?([a-zA-Z_]+)["\']?', command_text_lower)
         if tool_name_match:
             return tool_name_match.group(1)
 
-        # Keyword-based intent recognition
         if "create product" in command_text_lower or "add new product" in command_text_lower:
             return "create_product"
         if "update stock" in command_text_lower or "adjust inventory" in command_text_lower:
@@ -99,53 +98,36 @@ class SmartCommandProcessor:
 
     def auto_correct_command(self, malformed_command: str) -> str:
         """
-        Fixes common typos and formatting errors automatically.
-        (Simplified: focuses on basic JSON structural fixes)
+        Attempts to automatically fix common JSON formatting errors in agent commands.
+        This provides a layer of resilience, allowing the system to process slightly malformed
+        inputs that might otherwise cause failures.
         """
         corrected_command = malformed_command
 
-        # Common JSON corrections
-        # 1. Replace single quotes with double quotes for keys and string values
-        corrected_command = re.sub(r"'([^']+)'\s*:", r'"\1":', corrected_command) # keys
-        corrected_command = re.sub(r":\s*'([^']+)'", r': "\1"', corrected_command) # string values
+        corrected_command = re.sub(r"'([^']+)'\s*:", r'"\1":', corrected_command)
+        corrected_command = re.sub(r":\s*'([^']+)'", r': "\1"', corrected_command)
 
-        # 2. Add missing commas between key-value pairs or list items (basic)
-        # This is very rudimentary and might apply incorrectly in complex cases
-        corrected_command = re.sub(r'}\s*"(?=\w+":)', r'},"', corrected_command) # between objects
-        corrected_command = re.sub(r']\s*"', r'],"', corrected_command) # after arrays, before key
-        corrected_command = re.sub(r'(?<=\w|[\]}])\s*{\s*"', r',{"', corrected_command) # before new object if missing comma
+        # This part remains rudimentary but covers basic cases
+        corrected_command = re.sub(r'}\s*"(?=\w+":)', r'},"', corrected_command)
+        corrected_command = re.sub(r']\s*"', r'],"', corrected_command)
+        corrected_command = re.sub(r'(?<=\w|[\]}])\s*{\s*"', r',{"', corrected_command)
 
-        # 3. Handle unclosed quotes (simple case: add a quote at the end if string looks incomplete)
-        # This is a risky correction and might require more advanced parsing for robustness
         if corrected_command.count('"') % 2 != 0:
-            if corrected_command.strip().endswith('{') or corrected_command.strip().endswith('['):
-                # Don't add if it's an unclosed bracket/brace for object/array parsing
-                pass
-            else:
-                # Attempt to close an open string at the end
-                corrected_command += '"}' if corrected_command.endswith('{') else '}' # Assuming it might be trailing JSON
+            if not corrected_command.strip().endswith('{') and not corrected_command.strip().endswith('['):
+                corrected_command += '"}' if corrected_command.endswith('{') else '}'
                 corrected_command += '"' if not corrected_command.endswith('"') else ''
-
-
-        # 4. Try to wrap the whole thing in {} if it looks like a list of KV pairs
+        
         if not corrected_command.strip().startswith('{') and not corrected_command.strip().endswith('}'):
-            # This is a very rough heuristic
             if 'tool_name' in corrected_command and 'parameters' in corrected_command:
                 corrected_command = "{" + corrected_command + "}"
 
-        # 5. Remove trailing commas before closing braces/brackets directly
         corrected_command = re.sub(r',(\s*[\]}])', r'\1', corrected_command)
-
-
-        # Basic JSON-like structure reconstruction if completely broken but contains key words
+        
         if not corrected_command.strip().startswith("{") and "tool_name" in corrected_command and "parameters" in corrected_command:
             logging.debug(f"Attempting aggressive reconstruction for: {malformed_command}")
-            # This part would typically be much more complex, potentially involving a grammar parser
-            # For now, it's a very simple wrap-around
             try:
-                # A very aggressive attempt to make it valid JSON by wrapping
                 temp_wrapped_command = "{" + corrected_command + "}"
-                json.loads(temp_wrapped_command) # Test if this makes it valid
+                json.loads(temp_wrapped_command)
                 corrected_command = temp_wrapped_command
             except json.JSONDecodeError:
                 pass
@@ -156,34 +138,33 @@ class SmartCommandProcessor:
 
     def calculate_confidence_score(self, processed_command: Dict[str, Any]) -> float:
         """
-        Rates how well the processor understood the command based on parsing success,
-        presence of key fields, and whether auto-correction was needed.
+        Calculates a confidence score for the processed command, indicating the parser's
+        certainty in correctly interpreting the agent's intent. This score can be used
+        for adaptive error handling or feedback mechanisms.
         """
         if not processed_command:
             return 0.0
 
         score = 0.0
-        # Base score for successful parsing (direct or corrected)
         if processed_command.get("parsed_command"):
-            score += 0.6 # Base for being parsable JSON
+            score += 0.6
             if processed_command.get("corrected_command") and processed_command["corrected_command"] != processed_command["parsed_command"]:
-                score -= 0.2 # Penalty if auto-correction was needed
+                score -= 0.2
 
-            # Increase score if essential fields are present
             if "tool_name" in processed_command["parsed_command"]:
                 score += 0.2
             if "parameters" in processed_command["parsed_command"]:
                 score += 0.2
         
-        # Add a small score if intent was recognized even if JSON failed
         if processed_command.get("intent") and not processed_command.get("parsed_command"):
-            score += 0.3 # Partial understanding
+            score += 0.3
 
-        return max(0.0, min(1.0, score)) # Ensure score is between 0 and 1
+        return max(0.0, min(1.0, score))
 
     def suggest_fallback_actions(self, failed_command_info: Dict[str, Any]) -> List[str]:
         """
-        Provides alternative approaches or simplified suggestions when a primary command fails.
+        Generates actionable suggestions and alternative approaches when a primary command fails.
+        This enables the LLM agent to recover from errors and make progress.
         """
         suggestions = []
         original_command = failed_command_info.get("original_command", "")
@@ -204,7 +185,6 @@ class SmartCommandProcessor:
             suggestions.append("- Ensure your command includes a `\"parameters\": {{...}}` object, even if empty.")
         
         if intent:
-            # General fallback related to the detected intent
             suggestions.append(f"- If targeting the '{intent}' tool, review its specific required parameters.")
             suggestions.append(f"- Try a direct command for '{intent}' without nested logic, e.g., `{{\"tool_name\": \"{intent}\", \"parameters\": {{...}} }}`.")
         

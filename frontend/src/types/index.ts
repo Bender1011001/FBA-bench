@@ -46,7 +46,7 @@ export interface RecentSale {
 
 export interface SimulationMetadata {
     simulation_id?: string;
-    status?: 'running' | 'paused' | 'stopped' | 'error' | 'starting' | 'idle';
+    status?: string; // Made status more flexible to accept any string from backend
     total_ticks?: number;
     [key: string]: unknown; // For flexibility
 }
@@ -373,7 +373,7 @@ export type SimulationEvent =
 
 export interface SimulationStatus {
   id: string;
-  status: 'running' | 'paused' | 'stopped' | 'error' | 'starting' | 'idle';
+  status: string; // Made status more flexible to accept any string from backend
   currentTick: number;
   totalTicks: number;
   simulationTime: string;
@@ -578,6 +578,7 @@ export interface OutputConfig {
   path?: string;
   include_detailed_logs?: boolean;
   include_audit_trail?: boolean;
+  snapshot_interval_hours?: number; // Added for consistency
 }
 
 export interface ValidationConfig {
@@ -589,7 +590,7 @@ export interface ValidationConfig {
 
 // Benchmark Results Types
 export interface BenchmarkResult {
-  benchmark_name: string;
+  benchmark_id: string;
   config_hash: string;
   start_time: string;
   end_time: string;

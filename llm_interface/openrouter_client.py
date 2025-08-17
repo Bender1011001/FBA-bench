@@ -56,9 +56,15 @@ class OpenRouterClient(BaseLLMClient):
         Raises:
             LLMClientError: If there is an issue communicating with the LLM API or receiving a valid response.
         """
+        # OpenRouter recommends providing site URL and title for better routing/analytics.
+        # Allow overriding via environment variables.
+        referer = os.getenv("OPENROUTER_SITE_URL", "https://fba-bench.com")
+        app_title = os.getenv("OPENROUTER_APP_TITLE", "FBA-Bench")
+
         headers = {
             "Authorization": f"Bearer {self.api_key}",
-            "HTTP-Referer": "https://fba-bench.com", # Replace with your app's base URL
+            "HTTP-Referer": referer,
+            "X-Title": app_title,
             "X-Request-Id": kwargs.pop("request_id", "") # Optional: for tracing requests
         }
 

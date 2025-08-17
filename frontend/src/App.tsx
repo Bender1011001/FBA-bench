@@ -13,6 +13,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import NotificationSystem from './components/NotificationSystem';
 import { notificationService } from './utils/notificationService';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
+import { API_CONFIG } from './services/apiService';
 import {
   DashboardErrorBoundary,
   SimulationErrorBoundary,
@@ -433,11 +434,11 @@ function App() {
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-500">API Endpoint:</span>
-                    <span className="font-medium">http://localhost:8000</span>
+                    <span className="font-medium">{API_CONFIG.baseURL}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-500">WebSocket Endpoint:</span>
-                    <span className="font-medium">ws://localhost:8000/ws/events</span>
+                    <span className="font-medium">{API_CONFIG.wsURL}/ws/events</span>
                   </div>
                 </div>
               </div>

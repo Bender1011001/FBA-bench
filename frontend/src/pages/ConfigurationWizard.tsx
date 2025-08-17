@@ -10,6 +10,7 @@ import TierSelector from '../components/TierSelector';
 import type { Configuration, SimulationSettings, TemplateAgentConfig, Template, ConstraintConfig } from '../types';
 import { defaultConstraintConfig, constraintTiers } from '../data/constraintTiers'; // Import constraintTiers
 import { sanitizeUserInput, sanitizeExternalData } from '../utils/sanitization';
+import { apiService, type BenchmarkConfigRequest, type BenchmarkConfigResponse } from '../services/apiService';
 
 const WizardStep = {
   SimulationType: 0,
@@ -38,6 +39,7 @@ export function ConfigurationWizard() {
     [WizardStep.Experiment]: [],
     [WizardStep.Review]: [],
   });
+  const [notification, setNotification] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
 
   const [currentConfiguration, setCurrentConfiguration] = useState<Configuration>({
     simulationSettings: {
@@ -302,27 +304,129 @@ export function ConfigurationWizard() {
     }
   };
 
-  const handleSubmit = () => {
-    // Logic to send configurations to backend
-    console.log("Submitting Configuration:", currentConfiguration);
-    // Call API service here
-    alert("Simulation/Experiment configuration submitted!");
+  const handleSubmit = async () => {
+    try {
+      // Show loading state
+      setNotification({ type: 'info', message: 'Submitting configuration...' });
+      
+      // Validate all steps before submission
+      const isSimulationValid = validateSimulationStep() && validateLLMSettings();
+      const areAgentsValid = validateAgentsStep();
+      const isExperimentValid = isExperiment ? validateExperimentStep() : true;
+      
+      if (!isSimulationValid || !areAgentsValid || !isExperimentValid) {
+        setNotification({ type: 'error', message: 'Please fix validation errors before submitting' });
+        return;
+      }
+      
+      // Send configuration to backend using the new submitBenchmarkConfig method
+      const response: BenchmarkConfigResponse = await apiService.submitBenchmarkConfig({
+        simulationSettings: currentConfiguration.simulationSettings,
+        agentConfigs: currentConfiguration.agentConfigs,
+        llmSettings: currentConfiguration.llmSettings,
+        constraints: currentConfiguration.constraints,
+        experimentSettings: currentConfiguration.experimentSettings
+      });
+      
+      if (response.success) {
+        setNotification({
+          type: 'success',
+          message: 'Benchmark configuration submitted successfully! You can now run your benchmark.'
+        });
+        
+        // Optionally redirect to benchmark runner or dashboard
+        setTimeout(() => {
+          // Could redirect to benchmark runner page
+          // window.location.href = '/benchmark-runner';
+        }, 2000);
+      } else {
+        setNotification({
+          type: 'error',
+          message: `Failed to submit configuration: ${response.message || 'Unknown error'}`
+        });
+      }
+    } catch (error) {
+      console.error('Error submitting configuration:', error);
+      setNotification({
+        type: 'error',
+        message: `Error submitting configuration: ${error instanceof Error ? error.message : 'Unknown error'}`
+      });
+    }
   };
 
   return (
-    <div className="max-w-4xl mx-auto p-6 bg-white shadow-lg rounded-lg">
+    <div className="max-w-4xl mx-auto p-6 bg-white shadow-lg rounded-lg overflow-hidden">
       <h1 className="text-3xl font-bold text-gray-900 mb-6">
         Simulation Configuration Wizard
       </h1>
+      
+      {notification && (
+        <div className={`fixed top-4 right-4 z-50 mb-6 p-4 rounded-md shadow-lg max-w-md ${
+          notification.type === 'success' ? 'bg-green-50 text-green-800' :
+          notification.type === 'error' ? 'bg-red-50 text-red-800' :
+          'bg-blue-50 text-blue-800'
+        }`}>
+          <div className="flex">
+            <div className="flex-shrink-0">
+              {notification.type === 'success' && (
+                <svg className="h-5 w-5 text-green-400" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                </svg>
+              )}
+              {notification.type === 'error' && (
+                <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                </svg>
+              )}
+              {notification.type === 'info' && (
+                <svg className="h-5 w-5 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                </svg>
+              )}
+            </div>
+            <div className="ml-3">
+              <p className="text-sm font-medium">{notification.message}</p>
+            </div>
+            <div className="ml-auto pl-3">
+              <div className="-mx-1.5 -my-1.5">
+                <button
+                  type="button"
+                  className={`inline-flex rounded-md p-1.5 ${
+                    notification.type === 'success' ? 'bg-green-50 text-green-500 hover:bg-green-100' :
+                    notification.type === 'error' ? 'bg-red-50 text-red-500 hover:bg-red-100' :
+                    'bg-blue-50 text-blue-500 hover:bg-blue-100'
+                  }`}
+                  onClick={() => setNotification(null)}
+                >
+                  <span className="sr-only">Dismiss</span>
+                  <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
-      <div className="mb-8">
-        <nav aria-label="Progress" className="mb-8">
+      <div className="mb-8 overflow-x-auto">
+        <nav aria-label="Progress" className="mb-8 min-w-max">
             <ol role="list" className="flex items-center">
                 {Object.entries(WizardStep).filter(([, value]) => typeof value === 'number').map(([label, value], index) => (
                     <li key={label} className="relative pr-8 sm:pr-20">
                     {index !== 0 && <div className="absolute inset-0 flex items-center" aria-hidden="true"><div className={`h-0.5 w-full ${currentStep >= value ? 'bg-blue-600' : 'bg-gray-200'}`} /></div>}
-                    <a href="#" className="relative flex flex-col items-center" aria-current={currentStep === value ? 'step' : undefined}>
-                        <div className={`w-8 h-8 flex items-center justify-center rounded-full border-2 ${currentStep === value ? 'bg-blue-600 border-blue-600' : currentStep > value ? 'bg-blue-600 border-blue-600' : 'border-gray-300 bg-white'}`}>
+                    <button
+                      onClick={() => {
+                        // Only allow navigating to completed steps or the next step
+                        if (currentStep >= value || value === currentStep + 1) {
+                          setCurrentStep(value as WizardStep);
+                        }
+                      }}
+                      className="relative flex flex-col items-center focus:outline-none"
+                      aria-current={currentStep === value ? 'step' : undefined}
+                      disabled={currentStep < value && value !== currentStep + 1}
+                    >
+                        <div className={`w-8 h-8 flex items-center justify-center rounded-full border-2 ${currentStep === value ? 'bg-blue-600 border-blue-600' : currentStep > value ? 'bg-blue-600 border-blue-600' : 'border-gray-300 bg-white'} ${currentStep < value && value !== currentStep + 1 ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>
                         {currentStep === value ? (
                             <span className="h-2.5 w-2.5 rounded-full bg-white" aria-hidden="true" />
                         ) : currentStep > value ? (
@@ -334,7 +438,7 @@ export function ConfigurationWizard() {
                         )}
                         </div>
                         <span className={`mt-2 text-sm font-medium ${currentStep === value ? 'text-blue-600' : 'text-gray-900'}`}>{label.replace(/([A-Z])/g, ' $1').trim()}</span>
-                    </a>
+                    </button>
                     </li>
                 ))}
             </ol>
