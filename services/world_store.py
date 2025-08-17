@@ -387,8 +387,12 @@ class WorldStore:
         """Handle InventoryUpdate events to update canonical inventory state."""
         try:
             asin = event.asin
-            new_quantity = event.new_quantity
-            cost_basis = event.cost_basis 
+            # Enforce non-negative inventory at the canonical store level
+            new_quantity = max(0, int(event.new_quantity))
+            cost_basis = event.cost_basis
+
+            if new_quantity != event.new_quantity:
+                logger.warning(f"InventoryUpdate clamped negative quantity to zero for {asin} (requested={event.new_quantity}).")
 
             current_state = self._product_state.get(asin)
             if current_state:
@@ -399,7 +403,7 @@ class WorldStore:
             else:
                 self._product_state[asin] = ProductState(
                     asin=asin,
-                    price=Money.zero(), 
+                    price=Money.zero(),
                     inventory_quantity=new_quantity,
                     cost_basis=cost_basis if cost_basis else Money.zero(),
                     last_updated=datetime.now(),
