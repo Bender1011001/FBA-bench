@@ -449,7 +449,11 @@ class UnifiedAgentRunnerWrapper(AgentRunner):
         # Create the agent context
         return AgentContext(
             agent_id=self.agent_id,
-            scenario_id="default",  # This would come from the scenario
+            scenario_id=(
+                (state.agent_state.get("scenario_id") if isinstance(state.agent_state, dict) else None)
+                or (state.agent_state.get("scenario") if isinstance(state.agent_state, dict) else None)
+                or "default"
+            ),
             tick=state.tick,
             world_state={
                 "products": state.products,

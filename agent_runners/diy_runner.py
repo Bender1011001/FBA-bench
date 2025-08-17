@@ -122,30 +122,33 @@ class DynamicPricingStrategy(PricingStrategy):
         if inventory > 0:
             inventory_adjustment = 1.0 - 0.05 * math.log(inventory / 10)
         
-        # Price history adjustment (avoid frequent price changes)
+        # First compute a preliminary price without history dampening
+        preliminary_price = base_price * demand_factor * seasonality_factor * rank_adjustment * inventory_adjustment
+
+        # Apply history-based dampening to avoid large swings
         history_adjustment = 1.0
-        if asin in self.price_history:
+        last_price = None
+        if asin in self.price_history and self.price_history[asin]:
             last_price = self.price_history[asin][-1]
-            price_change_ratio = abs(final_price - last_price) / last_price if last_price > 0 else 0
-            if price_change_ratio > 0.1:  # More than 10% change
-                history_adjustment = 0.9  # Dampen large changes
-        
-        # Calculate final price
-        final_price = base_price * demand_factor * seasonality_factor * rank_adjustment * inventory_adjustment * history_adjustment
-        
+            change_ratio = abs(preliminary_price - last_price) / last_price if last_price and last_price > 0 else 0.0
+            if change_ratio > 0.10:
+                history_adjustment = 0.9  # Dampen large changes by 10%
+
+        final_price = preliminary_price * history_adjustment
+
         # Ensure minimum profit margin
         minimum_price = cost * 1.1  # At least 10% margin
         final_price = max(final_price, minimum_price)
-        
+
         # Update price history
         if asin not in self.price_history:
             self.price_history[asin] = []
         self.price_history[asin].append(final_price)
-        
+
         # Keep only last 10 prices
         if len(self.price_history[asin]) > 10:
             self.price_history[asin] = self.price_history[asin][-10:]
-        
+
         return round(final_price, 2)
 
 
