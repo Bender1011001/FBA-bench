@@ -1,18 +1,15 @@
 """
-Configuration system for agent runner frameworks.
+Configuration helpers for agent runner frameworks.
 
-This module provides standardized configuration schemas and defaults
-for different agent frameworks, enabling consistent setup and validation.
+Legacy schema-based configuration has been removed in favor of Pydantic models
+under benchmarking.config.pydantic_config. This package only exposes the
+pre-built Pydantic-based framework helpers.
 """
 
-from .config_schema import AgentRunnerConfig, validate_config, load_config_from_file
 from .framework_configs import DIYConfig, CrewAIConfig, LangChainConfig
 
 __all__ = [
-    'AgentRunnerConfig',
-    'DIYConfig', 
+    'DIYConfig',
     'CrewAIConfig',
     'LangChainConfig',
-    'validate_config',
-    'load_config_from_file'
 ]

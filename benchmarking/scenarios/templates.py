@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 
 from .base import ScenarioTemplate, ScenarioConfig
-from agent_runners.base_runner import SimulationState
+from fba_bench.core.types import SimulationState
 
 
 class ECommerceScenario(ScenarioTemplate):

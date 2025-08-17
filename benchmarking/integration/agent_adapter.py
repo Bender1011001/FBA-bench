@@ -17,7 +17,8 @@ from ..integration.manager import IntegrationManager
 
 # Try to import existing agent systems
 try:
-    from agent_runners.base_runner import AgentRunner, SimulationState, ToolCall
+    from agent_runners.base_runner import AgentRunner
+    from fba_bench.core.types import SimulationState, ToolCall
     from agent_runners.runner_factory import RunnerFactory
     AGENT_RUNNERS_AVAILABLE = True
 except ImportError:

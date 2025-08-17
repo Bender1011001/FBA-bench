@@ -40,7 +40,7 @@ from reproducibility.event_snapshots import EventSnapshot
 
 # Agent framework imports
 from agent_runners.runner_factory import RunnerFactory
-from agent_runners.configs.config_schema import AgentRunnerConfig
+from benchmarking.config.pydantic_config import UnifiedAgentRunnerConfig as AgentRunnerConfig
 from baseline_bots.bot_factory import BotFactory
 
 # Services imports

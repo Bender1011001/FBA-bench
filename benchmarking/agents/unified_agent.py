@@ -659,7 +659,7 @@ class DIYAdapter(BaseUnifiedAgent):
         # Convert context to the format expected by the DIY agent
         if hasattr(self.diy_agent, 'decide'):
             # Create a simulation state object for the DIY agent
-            from agent_runners.base_runner import SimulationState
+            from fba_bench.core.types import SimulationState
             
             sim_state = SimulationState(
                 tick=context.tick,

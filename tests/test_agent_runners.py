@@ -10,11 +10,11 @@ import asyncio
 from datetime import datetime
 from unittest.mock import Mock, AsyncMock
 
+from fba_bench.core.types import SimulationState, ToolCall
 from agent_runners import (
-    AgentRunner, SimulationState, ToolCall, AgentRunnerError,
+    AgentRunner, AgentRunnerError,
     RunnerFactory, AgentManager, create_agent_builder,
     DIYConfig, check_framework_availability,
-    AgentRunnerConfig, validate_config
 )
 from event_bus import EventBus
 from models.product import Product

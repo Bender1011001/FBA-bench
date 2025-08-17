@@ -20,7 +20,8 @@ from ..scenarios.registry import scenario_registry
 # Import existing systems
 try:
     from agent_runners.runner_factory import RunnerFactory
-    from agent_runners.base_runner import AgentRunner, SimulationState, ToolCall
+    from agent_runners.base_runner import AgentRunner
+    from fba_bench.core.types import SimulationState, ToolCall
     AGENT_RUNNERS_AVAILABLE = True
 except ImportError:
     AGENT_RUNNERS_AVAILABLE = False

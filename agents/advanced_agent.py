@@ -31,7 +31,7 @@ import math
 import logging
 
 # Core runner protocol types (canonical for DIY agents)
-from agent_runners.base_runner import SimulationState, ToolCall
+from fba_bench.core.types import SimulationState, ToolCall
 
 logger = logging.getLogger(__name__)
 

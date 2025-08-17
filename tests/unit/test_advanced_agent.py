@@ -2,7 +2,7 @@ import math
 import pytest
 
 from agents.advanced_agent import AdvancedAgent  # noqa: F401
-from agent_runners.base_runner import SimulationState, ToolCall
+from fba_bench.core.types import SimulationState, ToolCall
 
 
 @pytest.mark.asyncio

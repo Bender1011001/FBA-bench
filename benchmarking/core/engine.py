@@ -29,7 +29,7 @@ from ..metrics.registry import metrics_registry
 
 # Import existing FBA-Bench components
 from agent_runners.agent_manager import AgentManager
-from agent_runners.agent_manager import SimulationState
+from fba_bench.core.types import SimulationState
 from benchmarking.scenarios.base import BaseScenario
 from metrics.metric_suite import MetricSuite
 from event_bus import EventBus

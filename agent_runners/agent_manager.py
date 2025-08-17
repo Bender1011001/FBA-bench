@@ -11,8 +11,8 @@ from datetime import datetime
 from .base_runner import (
     AgentRunner, AgentRunnerStatus, AgentRunnerError,
     AgentRunnerInitializationError, AgentRunnerDecisionError, AgentRunnerCleanupError, AgentRunnerTimeoutError,
-    SimulationState, ToolCall
 )
+from fba_bench.core.types import SimulationState, ToolCall, TickEvent, SetPriceCommand, AgentObservation
 
 
 class AgentRegistration:
@@ -38,13 +38,6 @@ if TYPE_CHECKING:
     from metrics.trust_metrics import TrustMetrics
     from constraints.agent_gateway import AgentGateway
     from services.world_store import WorldStore
-
-# For type hinting cycles
-if TYPE_CHECKING:
-    from event_bus import EventBus
-    from constraints.budget_enforcer import BudgetEnforcer
-    from metrics.trust_metrics import TrustMetrics
-    from constraints.agent_gateway import AgentGateway
 
 
 logger = logging.getLogger(__name__)
@@ -205,8 +198,8 @@ class AgentManager:
         try:
             if self.use_unified_agents and self.unified_agent_factory:
                 # Use the unified agent system
-                # Convert the config to a PydanticAgentConfig
-                pydantic_config = self._convert_to_pydantic_config(agent_id, framework, config)
+                # Convert the config dict to a PydanticAgentConfig
+                pydantic_config = self._create_pydantic_config_from_dict(agent_id, framework, config)
                 
                 # Create the unified agent
                 unified_agent = self.unified_agent_factory.create_agent(agent_id, pydantic_config)
@@ -332,30 +325,30 @@ class AgentManager:
             logger.error(f"Unexpected error during agent '{runner.agent_id}' decision: {e}")
             return []
     
-    def _convert_to_pydantic_config(self, agent_id: str, framework: str, config: Dict[str, Any]) -> PydanticAgentConfig:
-        """Convert a legacy config dict to a PydanticAgentConfig."""
-        # Extract LLM configuration
-        llm_config_dict = config.get('llm_config', {})
+    def _create_pydantic_config_from_dict(self, agent_id: str, framework: str, config: Dict[str, Any]) -> PydanticAgentConfig:
+        """Create a PydanticAgentConfig instance from a raw dictionary."""
+        # Extract LLM configuration with safe defaults
+        llm_config_dict = config.get('llm_config', {}) or {}
         llm_config = {
             'model': llm_config_dict.get('model', 'gpt-3.5-turbo'),
             'temperature': llm_config_dict.get('temperature', 0.1),
             'max_tokens': llm_config_dict.get('max_tokens', 1000),
             'api_key': llm_config_dict.get('api_key', self.openrouter_api_key),
             'base_url': llm_config_dict.get('base_url'),
-            'timeout': llm_config_dict.get('timeout', 60)
+            'timeout': llm_config_dict.get('timeout', 60),
         }
-        
-        # Extract agent parameters
-        agent_params = config.get('parameters', {})
-        custom_config = config.get('custom_config', {})
-        
-        # Create the PydanticAgentConfig
+
+        # Extract general parameters
+        agent_params = config.get('parameters', {}) or {}
+        custom_config = config.get('custom_config', {}) or {}
+
+        # Construct the Pydantic model
         return PydanticAgentConfig(
             agent_id=agent_id,
             framework=framework,
             llm_config=llm_config,
             parameters=agent_params,
-            custom_config=custom_config
+            custom_config=custom_config,
         )
 
     async def _process_tool_call(self, agent_id: str, tool_call: ToolCall) -> None:
