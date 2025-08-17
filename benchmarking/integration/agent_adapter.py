@@ -19,7 +19,7 @@ from ..integration.manager import IntegrationManager
 try:
     from agent_runners.base_runner import AgentRunner
     from fba_bench.core.types import SimulationState, ToolCall
-    from agent_runners.runner_factory import RunnerFactory
+    # Do not import RunnerFactory here; IntegrationManager abstracts runner creation and handles deprecations.
     AGENT_RUNNERS_AVAILABLE = True
 except ImportError:
     AGENT_RUNNERS_AVAILABLE = False
