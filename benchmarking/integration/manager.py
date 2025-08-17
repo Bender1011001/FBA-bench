@@ -391,10 +391,16 @@ class IntegrationManager:
             return None
         
         try:
+            # Prefer legacy factory if a concrete implementation is available at runtime.
+            # Note: The current RunnerFactory methods may be deprecated and raise ImportError.
             runner = await RunnerFactory.create_and_initialize_runner(framework, agent_id, config)
             logger.info(f"Created agent runner {agent_id} with framework {framework}")
             return runner
-            
+        except ImportError as e:
+            # Graceful degradation: RunnerFactory path is deprecated.
+            # Future: integrate AgentManager + UnifiedAgentRunner directly here.
+            logger.warning(f"RunnerFactory unavailable/deprecated for {framework}: {e}")
+            return None
         except Exception as e:
             logger.error(f"Failed to create agent runner {agent_id}: {e}")
             return None

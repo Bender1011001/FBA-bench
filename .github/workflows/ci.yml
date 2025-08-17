@@ -53,6 +53,14 @@ jobs:
       - name: Run invariants suite
         run: pytest -q tests/test_invariants.py
 
+      - name: Run integration smoke (Experiment CLI production)
+        shell: bash
+        run: |
+          if [ -f "tests/test_experiment_cli_production.py" ]; then
+            pytest -q tests/test_experiment_cli_production.py
+          else
+            echo "Skipping integration smoke: tests/test_experiment_cli_production.py not found."
+          fi
       - name: Upload test results (if any)
         if: always()
         uses: actions/upload-artifact@v4
