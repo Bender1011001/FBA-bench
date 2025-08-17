@@ -225,6 +225,25 @@ class BenchmarkConfig(BaseConfig):
     @model_validator(mode='before')
     def validate_benchmark_config(cls, values):
         """Validate benchmark configuration."""
+        # Allow env overrides for tier and budget_overrides to improve UX without CLI wiring
+        # FBA_TIER: one of T0/T1/T2/T3
+        try:
+            env_tier = os.getenv("FBA_TIER", "").strip().upper()
+            if env_tier in {"T0", "T1", "T2", "T3"}:
+                values["tier"] = env_tier
+        except Exception:
+            pass
+
+        # FBA_BUDGET_OVERRIDES: JSON string pointing to BudgetEnforcer dict schema
+        try:
+            env_bo = os.getenv("FBA_BUDGET_OVERRIDES", "").strip()
+            if env_bo:
+                parsed = json.loads(env_bo)
+                if isinstance(parsed, dict):
+                    values["budget_overrides"] = parsed
+        except Exception:
+            pass
+
         agents = values.get('agents', [])
         scenarios = values.get('scenarios', [])
 

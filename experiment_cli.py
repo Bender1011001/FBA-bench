@@ -255,6 +255,13 @@ def main() -> int:
     run_parser.add_argument("config_file", help="Path to sweep.yaml configuration")
     run_parser.add_argument("--max-runs", type=int, default=None, help="Limit total number of runs (for testing)")
     run_parser.add_argument("--parallel", type=int, default=1, help="Number of parallel worker processes")
+    # Constraint/Tier controls (wired via env for engine consumption)
+    run_parser.add_argument("--tier", type=str, choices=["T0", "T1", "T2", "T3"], help="Constraint tier (T0-T3)")
+    run_parser.add_argument(
+        "--budget-overrides",
+        type=str,
+        help="Path to JSON file or raw JSON string for BudgetEnforcer overrides (limits/tool_limits/etc.)"
+    )
 
     # Analyze command
     analyze_parser = subparsers.add_parser("analyze", help="Analyze results from a previous run")
@@ -274,6 +281,27 @@ def main() -> int:
         if not os.path.exists(config_path):
             logger.error(f"Sweep config not found: {config_path}")
             return 2
+
+        # Apply tier/budget overrides via env so BenchmarkConfig validator picks them up
+        if args.tier:
+            os.environ["FBA_TIER"] = args.tier
+        if args.budget_overrides:
+            bo_arg = args.budget_overrides
+            try:
+                # If a file path, load file
+                bo_path = Path(bo_arg)
+                if bo_path.exists():
+                    with open(bo_path, "r", encoding="utf-8") as f:
+                        bo_json = f.read()
+                else:
+                    # Assume raw JSON
+                    bo_json = bo_arg
+                # Validate JSON parses
+                _ = json.loads(bo_json)
+                os.environ["FBA_BUDGET_OVERRIDES"] = bo_json
+            except Exception as e:
+                logger.error(f"Invalid --budget-overrides value: {e}")
+                return 2
 
         exp_config, run_items = _load_config_and_expand_run_params(config_path)
 
