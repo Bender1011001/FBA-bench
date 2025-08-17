@@ -323,3 +323,72 @@ class RespondToCustomerMessageCommand(BaseEvent):
             'response_content': self.response_content,
             'reason': self.reason
         }
+
+@dataclass
+class CustomerReviewEvent(BaseEvent):
+    """
+    Event representing a customer review posted for a product.
+
+    Attributes:
+        event_id (str): Unique identifier for the review event.
+        timestamp (datetime): When the review was created.
+        asin (str): The product ASIN being reviewed.
+        rating (int): Star rating 1-5.
+        comment (str): Free-text review comment.
+    """
+    asin: str
+    rating: int
+    comment: str
+
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.asin or not isinstance(self.asin, str):
+            raise ValueError("CustomerReviewEvent.asin must be a non-empty string")
+        if not isinstance(self.rating, int) or not (1 <= self.rating <= 5):
+            raise ValueError("CustomerReviewEvent.rating must be an integer in [1,5]")
+        if self.comment is None:
+            self.comment = ""
+
+    def to_summary_dict(self) -> Dict[str, Any]:
+        return {
+            'event_id': self.event_id,
+            'timestamp': self.timestamp.isoformat(),
+            'asin': self.asin,
+            'rating': self.rating,
+            'comment_len': len(self.comment),
+        }
+
+@dataclass
+class RespondToReviewCommand(BaseEvent):
+    """
+    Command issued by an agent to respond to a specific customer review.
+
+    Attributes:
+        event_id (str): Unique identifier for the command.
+        timestamp (datetime): When the command was issued.
+        review_id (str): Identifier of the review to respond to.
+        asin (str): The ASIN of the product the review refers to.
+        response_content (str): The response content authored by the agent.
+    """
+    review_id: str
+    asin: str
+    response_content: str
+
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.review_id:
+            raise ValueError("RespondToReviewCommand.review_id cannot be empty")
+        if not self.asin:
+            raise ValueError("RespondToReviewCommand.asin cannot be empty")
+        if not self.response_content:
+            raise ValueError("RespondToReviewCommand.response_content cannot be empty")
+
+    def to_summary_dict(self) -> Dict[str, Any]:
+        return {
+            'event_id': self.event_id,
+            'timestamp': self.timestamp.isoformat(),
+            'agent_id': getattr(self, 'agent_id', 'N/A'),
+            'review_id': self.review_id,
+            'asin': self.asin,
+            'response_content': self.response_content,
+        }

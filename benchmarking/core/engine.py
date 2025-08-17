@@ -44,6 +44,10 @@ from services.trust_score_service import TrustScoreService
 from services.sales_service import SalesService
 from services.double_entry_ledger_service import DoubleEntryLedgerService
 from services.bsr_engine_v3 import BsrEngineV3Service
+from services.customer_reputation_service import CustomerReputationService
+from services.market_simulator import MarketSimulationService
+from services.marketing_service import MarketingService
+from services.supply_chain_service import SupplyChainService
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +116,9 @@ class BenchmarkEngine:
         # Initialize BSR v3 engine (EMA-based velocity and conversion tracking)
         bsr_config = self.config.services.get("bsr", {})
         self.bsr_engine_v3 = BsrEngineV3Service(config=bsr_config)
+
+        # Customer reputation service (reviews -> reputation -> BSR impact)
+        self.customer_reputation_service = CustomerReputationService()
         
         # Initialize TrustMetrics with the TrustScoreService
         self.trust_metrics = TrustMetrics(trust_score_service=self.trust_score_service)
@@ -171,6 +178,10 @@ class BenchmarkEngine:
         # Subscribe MetricSuite to events after all services are started
         # Start BSR engine v3 after EventBus is started and before MetricSuite subscribes
         await self.bsr_engine_v3.start(self.event_bus)
+        # Wire BSR engine to read reputation from WorldStore
+        self.bsr_engine_v3.set_reputation_provider(self.world_store.get_reputation_score)
+        # Start customer reputation service
+        await self.customer_reputation_service.start(self.event_bus, self.world_store)
         await self.metric_suite.subscribe_to_events(self.event_bus)
 
         # Initialize constraints and gateway
@@ -241,7 +252,23 @@ class BenchmarkEngine:
             raise ValueError(f"Scenario type '{scenario_config.scenario_type}' not found in registry.")
         
         scenario_instance: BaseScenario = scenario_class(scenario_config)
-        await scenario_instance.setup() # Setup scenario-specific resources
+
+        # Start per-scenario world-model services
+        market_simulator = MarketSimulationService(world_store=self.world_store, event_bus=self.event_bus)
+        marketing_service = MarketingService(world_store=self.world_store, event_bus=self.event_bus)
+        supply_chain_service = SupplyChainService(world_store=self.world_store, event_bus=self.event_bus)
+        await marketing_service.start()
+        await supply_chain_service.start()
+        await market_simulator.start()
+
+        # Setup scenario with core services
+        await scenario_instance.setup(
+            event_bus=self.event_bus,
+            world_store=self.world_store,
+            market_simulator=market_simulator,
+            supply_chain_service=supply_chain_service,
+            marketing_service=marketing_service,
+        )
 
         self.current_scenario_result = ScenarioResult(
             scenario_name=scenario_config.name,
@@ -254,16 +281,17 @@ class BenchmarkEngine:
         try:
             # Run each agent defined for this scenario
             for agent_conf in scenario_config.agents:
-                # Ensure agent is registered with AgentManager
-                # The AgentManager itself handles agent instantiation via RunnerFactory
-                # We just need to ensure the agent_config is passed correctly for runs.
-                # The `if not self.agent_manager.bot_factory:` check from original code was a logical error.
-                # AgentManager uses RunnerFactory internally.
-
-                # Run the agent for the specified number of iterations
+                # Run the agent for the specified number of iterations (ticks)
                 for run_num in range(1, scenario_config.runs_per_agent + 1):
                     agent_run_result = await self.run_agent_iteration(
-                        agent_conf, scenario_instance, run_num
+                        agent_conf,
+                        scenario_instance,
+                        run_num,
+                        event_bus=self.event_bus,
+                        world_store=self.world_store,
+                        market_simulator=market_simulator,
+                        supply_chain_service=supply_chain_service,
+                        marketing_service=marketing_service,
                     )
                     self.current_scenario_result.agent_run_results.append(agent_run_result)
             
@@ -274,6 +302,16 @@ class BenchmarkEngine:
             logger.error(f"Error during scenario execution for '{scenario_config.name}': {e}", exc_info=True)
             self.current_scenario_result.errors.append(str(e))
         finally:
+            # Stop per-scenario services
+            try:
+                await marketing_service.stop()
+            except Exception:
+                pass
+            try:
+                await supply_chain_service.stop()
+            except Exception:
+                pass
+
             await scenario_instance.teardown() # Clean up scenario-specific resources
             self.current_scenario_result.end_time = datetime.now()
             duration = (self.current_scenario_result.end_time - self.current_scenario_result.start_time).total_seconds()
@@ -283,7 +321,11 @@ class BenchmarkEngine:
         return self.current_scenario_result
 
     async def run_agent_iteration(
-        self, agent_config: AgentConfig, scenario: BaseScenario, run_number: int
+        self,
+        agent_config: AgentConfig,
+        scenario: BaseScenario,
+        run_number: int,
+        **kwargs: Any,
     ) -> AgentRunResult:
         """
         Run a single agent for one iteration within a scenario.

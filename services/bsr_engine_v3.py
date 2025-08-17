@@ -73,6 +73,9 @@ class BsrEngineV3Service:
         self._event_bus: Optional[EventBus] = None
         self._is_running: bool = False
 
+        # Optional reputation provider: Callable[[asin], float in 0..1]
+        self._reputation_provider: Optional[Callable[[str], float]] = None
+
     async def start(self, event_bus: EventBus) -> None:
         """Subscribe to EventBus and begin processing events."""
         if self._is_running:
@@ -87,6 +90,14 @@ class BsrEngineV3Service:
         """Stop service; EventBus does not provide unsubscribe; safe to flip running flag and clear refs."""
         self._is_running = False
         self._event_bus = None
+
+    # Reputation provider integration
+    def set_reputation_provider(self, provider: Optional[Callable[[str], float]]) -> None:
+        """
+        Set a function that returns a reputation score in [0,1] for a given ASIN.
+        If None is provided, reputation will default to neutral 0.7.
+        """
+        self._reputation_provider = provider
 
     # ========== Event Handlers ==========
 
@@ -185,12 +196,24 @@ class BsrEngineV3Service:
         conversion_index = _clamp((p_c + self.smoothing_eps) / denom_c, self.index_floor, self.index_ceiling)
         composite_index = _clamp((velocity_index * conversion_index) ** Decimal("0.5"), self.index_floor, self.index_ceiling)
 
+        # Apply reputation adjustment: low reputation dampens index
+        rep_score = Decimal("0.7")
+        try:
+            if self._reputation_provider is not None:
+                rep_val = self._reputation_provider(asin)
+                rep_score = _to_decimal(rep_val)
+        except Exception:
+            rep_score = Decimal("0.7")
+        # Map rep in [0,1] to factor in [0.5, 1.0]
+        rep_factor = _clamp(Decimal("0.5") + (rep_score * Decimal("0.5")), Decimal("0.5"), Decimal("1.0"))
+        composite_index = _clamp(composite_index * rep_factor, self.index_floor, self.index_ceiling)
+        
         # Quantize for determinism
         q = Decimal("0.000001")
         velocity_index_q = velocity_index.quantize(q, rounding=ROUND_HALF_UP)
         conversion_index_q = conversion_index.quantize(q, rounding=ROUND_HALF_UP)
         composite_index_q = composite_index.quantize(q, rounding=ROUND_HALF_UP)
-
+        
         return {
             "velocity_index": velocity_index_q,
             "conversion_index": conversion_index_q,

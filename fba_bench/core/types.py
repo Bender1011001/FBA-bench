@@ -129,6 +129,24 @@ class AdSpendEvent(Protocol):
     clicks: int
     impressions: int
 
+@runtime_checkable
+class CustomerReviewEvent(Protocol):
+    """Structural protocol for a customer product review event."""
+    event_id: str
+    timestamp: datetime
+    asin: str
+    rating: int
+    comment: str
+
+@runtime_checkable
+class RespondToReviewCommand(Protocol):
+    """Structural protocol for a respond-to-review command."""
+    event_id: str
+    timestamp: datetime
+    review_id: str
+    asin: str
+    response_content: str
+
 
 __all__ = [
     "SimulationState",
@@ -139,4 +157,6 @@ __all__ = [
     "PlaceOrderCommand",
     "RunMarketingCampaignCommand",
     "AdSpendEvent",
+    "CustomerReviewEvent",
+    "RespondToReviewCommand",
 ]

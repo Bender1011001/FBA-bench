@@ -21,7 +21,7 @@ from .budget import BudgetWarning, BudgetExceeded, ConstraintViolation
 from .adversarial import AdversarialEvent, PhishingEvent, MarketManipulationEvent, ComplianceTrapEvent, AdversarialResponse
 from .skills import SkillActivated, SkillActionGenerated, SkillConflictDetected, MultiDomainDecisionMade
 from .agent import AgentDecisionEvent
-from .customer import CustomerMessageReceived, NegativeReviewEvent, ComplaintEvent, RespondToCustomerMessageCommand
+from .customer import CustomerMessageReceived, NegativeReviewEvent, ComplaintEvent, RespondToCustomerMessageCommand, CustomerReviewEvent, RespondToReviewCommand
 from .supplier import SupplierResponseEvent, PlaceOrderCommand
 from .marketing import MarketTrendEvent, RunMarketingCampaignCommand, AdSpendEvent
 from .reporting import ProfitReport, LossEvent
@@ -55,6 +55,8 @@ __all__ = [
     "NegativeReviewEvent",
     "ComplaintEvent",
     "RespondToCustomerMessageCommand",
+    "CustomerReviewEvent",
+    "RespondToReviewCommand",
     "SupplierResponseEvent",
     "PlaceOrderCommand",
     "MarketTrendEvent",
@@ -94,6 +96,8 @@ EVENT_TYPES = {
     # Agent Commands
     'PlaceOrderCommand': PlaceOrderCommand,
     'RespondToCustomerMessageCommand': RespondToCustomerMessageCommand,
+    'CustomerReviewEvent': CustomerReviewEvent,
+    'RespondToReviewCommand': RespondToReviewCommand,
     'RunMarketingCampaignCommand': RunMarketingCampaignCommand,
     'AdSpendEvent': AdSpendEvent,
     # Specific Domain Events

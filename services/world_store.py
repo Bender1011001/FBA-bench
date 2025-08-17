@@ -601,6 +601,46 @@ class WorldStore:
             return
         state.metadata["marketing_visibility"] = v
         state.last_updated = datetime.now()
+
+    # --- Reputation (Customer Service) helpers ---
+
+    def get_reputation_score(self, asin: str) -> float:
+        """
+        Return current customer reputation score for an ASIN in [0.0, 1.0].
+        Defaults to 0.7 when unknown.
+        """
+        state = self._product_state.get(asin)
+        if not state:
+            return 0.7
+        try:
+            rep = float(state.metadata.get("reputation_score", 0.7))
+        except Exception:
+            rep = 0.7
+        return max(0.0, min(1.0, rep))
+
+    def set_reputation_score(self, asin: str, score: float) -> None:
+        """
+        Set reputation score for an ASIN, clamped to [0.0, 1.0].
+        Creates product stub if needed.
+        """
+        s = max(0.0, min(1.0, float(score)))
+        state = self._product_state.get(asin)
+        if not state:
+            self._product_state[asin] = ProductState(
+                asin=asin,
+                price=Money.zero(),
+                inventory_quantity=0,
+                cost_basis=Money.zero(),
+                last_updated=datetime.now(),
+                last_agent_id="system_reputation",
+                last_command_id="reputation_init",
+                version=1,
+                metadata={"reputation_score": s},
+            )
+            return
+        state.metadata["reputation_score"] = s
+        state.last_updated = datetime.now()
+
     def get_statistics(self) -> Dict[str, Any]:
         """Get WorldStore operational statistics."""
         return {

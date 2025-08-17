@@ -2,6 +2,192 @@ import asyncio
 from datetime import datetime, timezone
 
 import pytest
+from unittest.mock import AsyncMock, patch
+
+from event_bus import EventBus, set_event_bus
+from services.world_store import WorldStore
+from services.market_simulator import MarketSimulationService
+from services.supply_chain_service import SupplyChainService
+from services.marketing_service import MarketingService
+from agents.multi_domain_controller import MultiDomainController
+from agents.skill_coordinator import SkillCoordinator
+from agents.skill_modules.base_skill import SkillAction
+from money import Money
+
+
+class DummyRunnerToolCall:
+    """Lightweight ToolCall-like object to reuse AgentManager path if needed."""
+    def __init__(self, tool_name: str, parameters: dict, confidence: float = 0.9, priority: int = 80, reasoning: str = ""):
+        self.tool_name = tool_name
+        self.parameters = parameters
+        self.confidence = confidence
+        self.priority = priority
+        self.reasoning = reasoning
+
+
+@pytest.mark.asyncio
+async def test_multi_skill_arbitration_single_action_approved_under_tight_budget():
+    """
+    Multi-skill arbitration integration test (CEO-level):
+      - Create competing actions: 'place_order' (supply) and 'run_marketing_campaign' (marketing).
+      - Impose a very tight budget in the MultiDomainController resource plan.
+      - Spy on MultiDomainController.arbitrate_actions to ensure it is invoked with both actions.
+      - Assert only one action is approved due to budget constraint.
+      - Execute the approved action through services and validate resulting world state effect.
+    """
+    # Setup EventBus
+    bus = EventBus()
+    await bus.start()
+    bus.start_recording()
+    set_event_bus(bus)
+
+    # Setup WorldStore
+    world_store = WorldStore(event_bus=bus)
+    await world_store.start()
+
+    # Core services
+    market = MarketSimulationService(world_store=world_store, event_bus=bus, base_demand=80, demand_elasticity=1.1)
+    await market.start()
+    supply_chain = SupplyChainService(world_store=world_store, event_bus=bus, base_lead_time=1)
+    await supply_chain.start()
+    marketing = MarketingService(world_store=world_store, event_bus=bus, alpha_per_dollar=0.005, retention=0.6)
+    await marketing.start()
+
+    # Initialize a product in world store
+    asin = "ARBITRATE-ASIN-001"
+    initial_price = Money.from_dollars("20.00")
+    world_store.initialize_product(asin, initial_price, initial_inventory=10)  # low inventory to make supply action valuable
+
+    # Build a MultiDomainController with very tight budget
+    coordinator = SkillCoordinator(agent_id="agent-1", event_bus=bus, config={})
+    controller = MultiDomainController(agent_id="agent-1", skill_coordinator=coordinator, config={
+        "total_budget_cents": 5000  # $50 total
+    })
+    # Overwrite domain allocations to be even tighter and explicit
+    controller.resource_plan.total_budget = Money(5000)  # $50
+    controller.resource_plan.allocations.update({
+        "inventory_management": Money(2000),  # $20
+        "marketing": Money(2000),             # $20
+        "strategic_reserve": Money(1000),     # $10
+    })
+    # Keep multipliers neutral to simplify
+    controller._update_priority_multipliers()
+
+    # Compose two competing actions exceeding per-domain thresholds when combined
+    place_order_action = SkillAction(
+        action_type="place_order",
+        parameters={
+            "supplier_id": "SUP-1",
+            "asin": asin,
+            "quantity": 25,
+            "max_price": str(Money.from_dollars("1.00"))  # $1/unit => $25 intent cost
+        },
+        confidence=0.9,
+        reasoning="Replenish low inventory to avoid stockouts",
+        priority=0.8,
+        resource_requirements={"budget_cents": 2500},
+        expected_outcome={"inventory_increase": 25},
+        skill_source="SupplyManager"
+    )
+
+    run_campaign_action = SkillAction(
+        action_type="run_marketing_campaign",
+        parameters={
+            "asin": asin,
+            "campaign_type": "display_ads",
+            "budget": str(Money.from_dollars("25.00")),
+            "duration_days": 3
+        },
+        confidence=0.85,
+        reasoning="Increase visibility to grow demand",
+        priority=0.7,
+        resource_requirements={"budget_cents": 2500},
+        expected_outcome={"visibility_boost": 0.2},
+        skill_source="MarketingManager"
+    )
+
+    competing = [place_order_action, run_campaign_action]
+
+    # Spy on arbitrate_actions
+    with patch.object(MultiDomainController, "arbitrate_actions", wraps=controller.arbitrate_actions) as spy_arbitrate:
+        approved = await controller.arbitrate_actions(competing)
+
+        # Ensure arbitration was called with both actions
+        spy_arbitrate.assert_called_once()
+        called_args, called_kwargs = spy_arbitrate.call_args
+        assert len(called_args[0]) == 2, "Expected both competing actions passed to arbitrate_actions"
+
+    # Under the tight budget, only one should be approved
+    assert len(approved) == 1, f"Expected a single approved action due to budget constraint, got {len(approved)}"
+    approved_action = approved[0]
+
+    # Execute the approved action by publishing the corresponding command through services
+    if approved_action.action_type == "place_order":
+        # Publish PlaceOrderCommand via event bus for SupplyChainService
+        from fba_events.supplier import PlaceOrderCommand as PO
+        po = PO(
+            event_id="test-po-1",
+            timestamp=datetime.now(),
+            supplier_id=approved_action.parameters["supplier_id"],
+            asin=approved_action.parameters["asin"],
+            quantity=int(approved_action.parameters["quantity"]),
+            max_price=Money(approved_action.parameters["max_price"]),
+            reason=approved_action.reasoning,
+        )
+        # attach agent id for traceability (optional)
+        setattr(po, "agent_id", "agent-1")
+        await bus.publish(po)
+
+        # Tick once for arrival (base_lead_time=1)
+        await bus.publish(type("TickEvent", (), {"event_type": "TickEvent", "tick_number": 1})())
+        await asyncio.sleep(0.05)
+        await supply_chain.process_tick()
+        await asyncio.sleep(0.05)
+
+        inv_qty = world_store.get_product_inventory_quantity(asin)
+        assert inv_qty >= 10 + 1, "Inventory should have increased after approved place_order is executed"
+
+        vis = world_store.get_marketing_visibility(asin)
+        assert vis == 1.0 or vis is None, "Marketing visibility should remain unchanged when supply action is approved"
+
+    elif approved_action.action_type == "run_marketing_campaign":
+        # Publish RunMarketingCampaignCommand via event bus for MarketingService
+        from fba_events.marketing import RunMarketingCampaignCommand as MK
+        mk = MK(
+            event_id="test-mk-1",
+            timestamp=datetime.now(),
+            campaign_type=approved_action.parameters["campaign_type"],
+            budget=Money(approved_action.parameters["budget"]),
+            duration_days=int(approved_action.parameters["duration_days"]),
+            reason=approved_action.reasoning,
+        )
+        # dynamic asin attribute used by MarketingService
+        setattr(mk, "asin", approved_action.parameters["asin"])
+        setattr(mk, "agent_id", "agent-1")
+        await bus.publish(mk)
+
+        # Advance ticks to allow spend to apply
+        for t in range(1, 3):
+            await bus.publish(type("TickEvent", (), {"event_type": "TickEvent", "tick_number": t})())
+            await asyncio.sleep(0.05)
+            await marketing.process_tick()
+            await asyncio.sleep(0.05)
+
+        vis = world_store.get_marketing_visibility(asin)
+        assert vis and vis > 1.0, "Marketing visibility should increase after approved marketing campaign"
+
+        inv_qty = world_store.get_product_inventory_quantity(asin)
+        assert inv_qty == 10, "Inventory should be unchanged when marketing action is approved"
+
+    else:
+        raise AssertionError(f"Unexpected approved action type: {approved_action.action_type}")
+
+    # Light sanity: market still processes without errors
+    await market.process_for_asin(asin)
+import asyncio
+from datetime import datetime, timezone
+
+import pytest
 
 from event_bus import EventBus, set_event_bus
 from services.world_store import WorldStore
