@@ -8,7 +8,7 @@ from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
 from dataclasses import dataclass
 
-from events import TickEvent
+from fba_events import TickEvent
 from event_bus import get_event_bus # Only import the getter
 from reproducibility.sim_seed import SimSeed
 from typing import TYPE_CHECKING

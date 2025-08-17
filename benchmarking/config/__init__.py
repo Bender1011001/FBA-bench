@@ -18,29 +18,7 @@ warnings.warn(
     stacklevel=2
 )
 
-from .schema import (
-    SchemaValidationError,
-    ValidationResult,
-    ConfigurationSchema,
-    BenchmarkConfigurationSchema,
-    ScenarioConfigurationSchema,
-    AgentConfigurationSchema,
-    SchemaRegistry,
-    schema_registry,
-    BenchmarkData,
-    AgentData,
-    ScenarioData,
-    EnvironmentData,
-    ExecutionData,
-    MetricsData,
-    OutputData,
-    ValidationData
-)
 
-# Aliases for simpler import names (deprecated)
-BenchmarkConfig = BenchmarkData
-AgentConfig = AgentData
-ScenarioConfig = ScenarioData
 
 from .manager import (
     ConfigurationProfile,
@@ -81,7 +59,7 @@ from .pydantic_config import (
 )
 
 __all__ = [
-    # Primary Pydantic configuration (recommended)
+    # Primary Pydantic configuration (canonical)
     "EnvironmentType",
     "LogLevel",
     "FrameworkType",
@@ -105,20 +83,9 @@ __all__ = [
     "ConfigBuilder",
     "PydanticConfigurationManager",
     "pydantic_config_manager",
-    
-    # Legacy schema validation (deprecated)
-    "SchemaValidationError",
-    "ValidationResult",
-    "ConfigurationSchema",
-    "BenchmarkConfigurationSchema",
-    "ScenarioConfigurationSchema",
-    "AgentConfigurationSchema",
-    "SchemaRegistry",
-    "schema_registry",
+
+    # Manager interfaces
     "ConfigurationProfile",
     "ConfigurationManager",
     "config_manager",
-    "BenchmarkConfig",
-    "AgentConfig",
-    "ScenarioConfig"
 ]

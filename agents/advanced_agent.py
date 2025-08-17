@@ -348,7 +348,8 @@ class AdvancedAgent:
         Positive when demand_now > demand_avg (increase price), negative otherwise.
         Scales modestly to avoid overreaction.
         """
-        if demand_avg <= 0:
+        if abs(demand_avg) < 1e-9:
+            # Guarded to avoid division-by-zero on empty/noisy windows.
             return 0.0
         delta = (demand_now - demand_avg) / max(demand_avg, 1e-6)
         # Clamp to avoid runaway

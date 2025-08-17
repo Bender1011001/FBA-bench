@@ -133,6 +133,8 @@ class MultiDomainController:
         self.agent_id = agent_id
         self.skill_coordinator = skill_coordinator
         self.config = config or {}
+        # Cooldown is configurable; default 60s; sourced from config if provided.
+        self.crisis_cooldown_seconds: int = int(self.config.get('crisis_cooldown_seconds', 60))
         
         # Strategic configuration
         self.business_objectives = [
@@ -1017,8 +1019,8 @@ class MultiDomainController:
     
     async def _restore_priority_after_crisis(self, original_priority: BusinessPriority):
         """Restore original business priority after crisis period."""
-        # Wait for crisis stabilization period (simplified to 1 minute for testing)
-        await asyncio.sleep(60)
+        # Cooldown is configurable; default 60s; sourced from config if provided.
+        await asyncio.sleep(self.crisis_cooldown_seconds)
         
         logger.info(f"Restoring business priority from {self.current_priority.value} to {original_priority.value}")
         self.current_priority = original_priority

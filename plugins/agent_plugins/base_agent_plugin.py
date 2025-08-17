@@ -101,3 +101,36 @@ class AgentPlugin(Protocol):
             "licensing": "MIT",
             "contribution_guidelines": "See FBA-Bench docs on agent contribution."
         }
+
+# -----------------------------------------------------------------------------
+# Plugin Agent Registration Interface (Documentation)
+# -----------------------------------------------------------------------------
+# Plugins can optionally provide a `register_agents(registry)` method that the
+# PluginManager will invoke after plugin initialization. Use this to register
+# your agents with the core AgentRegistry.
+#
+# Example:
+#
+# from benchmarking.agents.registry import AgentDescriptor
+#
+# class MyAgentPlugin(AgentPlugin):
+#     __is_fba_plugin__ = True
+#     plugin_id = "my_agent_plugin"
+#     version = "1.0.0"
+#     name = "My Agent Plugin"
+#
+#     def register_agents(self, registry):
+#         class MyAgentClass:
+#             def __init__(self, config=None):
+#                 self.config = config
+#
+#         registry.register_agent(AgentDescriptor(
+#             slug="my_agent",
+#             display_name="My Agent",
+#             constructor=MyAgentClass,
+#             version="1.0.0",
+#             provenance="plugin",
+#             supported_capabilities=["decision_making"],
+#             tags=["example", "plugin"],
+#             help="Example plugin-registered agent",
+#         ))

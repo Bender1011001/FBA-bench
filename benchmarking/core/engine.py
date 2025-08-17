@@ -51,6 +51,10 @@ from services.supply_chain_service import SupplyChainService
 
 logger = logging.getLogger(__name__)
 
+class BenchmarkError(Exception):
+    """Engine-level benchmark error."""
+    pass
+
 class BenchmarkEngine:
     """
     The main orchestrator for running benchmarks.
@@ -60,7 +64,7 @@ class BenchmarkEngine:
     integrates with various services like event bus, world store, and metrics.
     """
 
-    def __init__(self, config: BenchmarkConfig):
+    def __init__(self, config: BenchmarkConfig, agent_registry_override: 'AgentRegistry' | None = None):
         """
         Initialize the BenchmarkEngine with a configuration.
 
@@ -82,7 +86,10 @@ class BenchmarkEngine:
             openrouter_api_key=config.llm_config.get('api_key') if config.llm_config else None,
             use_unified_agents=True  # Enable unified agent system
         )
-        
+        # Agent registry (module-level import preserved for test patching)
+        self._agent_registry = agent_registry_override or agent_registry
+        self._agent_registry_override_used = agent_registry_override is not None
+
         # Initialize real services
         # Config for FinancialAuditService
         fa_config = self.config.services.get("financial_audit", {
@@ -208,13 +215,13 @@ class BenchmarkEngine:
     async def run_benchmark(self) -> BenchmarkResult:
         """
         Run the full benchmark based on the loaded configuration.
-
+    
         Returns:
             BenchmarkResult: An object containing the results of the entire benchmark.
         """
         if not self.is_initialized:
             await self.initialize()
-
+    
         logger.info(f"Starting benchmark run: {self.config.name}")
         self.current_benchmark_result = BenchmarkResult(
             execution_id=self.execution_id,
@@ -223,7 +230,8 @@ class BenchmarkEngine:
             config=self.config.model_dump(),
             scenario_results=[]
         )
-
+    
+        caught_exc: Optional[BaseException] = None
         try:
             # Run each scenario defined in the configuration
             for scenario_conf in self.config.scenarios:
@@ -232,22 +240,29 @@ class BenchmarkEngine:
                     continue
                 scenario_result = await self.run_scenario(scenario_conf)
                 self.current_benchmark_result.scenario_results.append(scenario_result)
-
-            # Calculate overall KPIs for the benchmark
-            self.current_benchmark_result.overall_kpis = self._calculate_overall_kpis()
-
+    
         except Exception as e:
             logger.error(f"Error during benchmark execution: {e}", exc_info=True)
             self.current_benchmark_result.errors.append(str(e))
-            # Ensure partial results are saved if possible
+            caught_exc = e
         finally:
+            # Calculate overall KPIs in finally to guarantee availability on failure.
+            try:
+                self.current_benchmark_result.overall_kpis = self._calculate_overall_kpis()
+            except Exception as kpi_err:
+                logger.warning(f"Failed to calculate overall KPIs: {kpi_err}", exc_info=True)
+    
             await self.cleanup()
             self.current_benchmark_result.end_time = datetime.now()
             duration = (self.current_benchmark_result.end_time - self.current_benchmark_result.start_time).total_seconds()
             self.current_benchmark_result.duration_seconds = duration
             self.results.append(self.current_benchmark_result)
             logger.info(f"Benchmark run completed: {self.config.name} in {duration:.2f} seconds")
-
+    
+        if caught_exc is not None:
+            # Preserve original exception semantics after KPI calculation
+            raise caught_exc
+    
         return self.current_benchmark_result
 
     async def run_scenario(self, scenario_config: ScenarioConfig) -> ScenarioResult:
@@ -491,6 +506,29 @@ class BenchmarkEngine:
             logger.warning(f"Outcome analysis failed for agent {agent_config.agent_id}: {e}")
 
         return agent_run_result
+
+    def _load_agent(self, slug: str, version: Optional[str] = None, config: Any = None) -> Any:
+        """
+        Resolve and create or retrieve an agent instance using the agent registry.
+
+        Errors:
+          - When agent not found -> raises BenchmarkError("Agent {slug} not found")
+          - When creation fails -> raises BenchmarkError("Agent {slug} creation failed: {e}")
+        """
+        # Important: if no override was supplied at construction time, use the module-level
+        # agent_registry to respect tests that patch benchmarking.core.engine.agent_registry.
+        reg = self._agent_registry if getattr(self, "_agent_registry_override_used", False) else agent_registry
+        try:
+            descriptor = reg.get_agent(slug, version)
+            ctor = descriptor.constructor
+            if callable(ctor):
+                return reg.create_agent(slug, version=version, config=config)
+            # pre-instantiated
+            return ctor
+        except KeyError as e:
+            raise BenchmarkError(f"Agent {slug} not found") from e
+        except ValueError as e:
+            raise BenchmarkError(f"Agent {slug} creation failed: {e}") from e
 
     async def cleanup(self) -> None:
         """

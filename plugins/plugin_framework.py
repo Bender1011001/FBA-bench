@@ -3,6 +3,7 @@ import inspect
 import os
 import logging
 from typing import Dict, Any, List, Type, Callable, Protocol, Set
+from benchmarking.agents.registry import agent_registry
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -94,6 +95,14 @@ class PluginManager:
                         logging.info(f"Successfully loaded plugin: {plugin_id} (version: {version})")
                         if hasattr(plugin_instance, 'initialize'):
                             await plugin_instance.initialize({}) # Initialize plugin with empty config
+
+                        # New hook: allow plugins to register agents into the AgentRegistry
+                        if hasattr(plugin_instance, 'register_agents'):
+                            try:
+                                plugin_instance.register_agents(agent_registry)
+                                logging.info(f"Plugin {plugin_id} registered agents successfully.")
+                            except Exception as re:
+                                logging.error(f"Plugin {plugin_id} failed to register agents: {re}")
             except PluginError as e:
                 logging.error(f"Failed to load plugin {module_name}: {e}")
             except Exception as e:

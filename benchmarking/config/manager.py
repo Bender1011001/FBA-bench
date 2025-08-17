@@ -14,12 +14,7 @@ from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass, field
 
-from .schema import (
-    ConfigurationSchema, 
-    ValidationResult, 
-    SchemaRegistry,
-    schema_registry
-)
+from .schema_manager import SchemaManager, SchemaValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -82,8 +77,8 @@ class ConfigurationManager:
         (self.config_dir / "templates").mkdir(exist_ok=True)
         (self.config_dir / "environments").mkdir(exist_ok=True)
         
-        # Schema registry
-        self.schema_registry = schema_registry
+        # Pydantic-based schema manager (canonical)
+        self.schema_manager = SchemaManager()
         
         # Active configurations
         self._active_configs: Dict[str, Dict[str, Any]] = {}
@@ -125,14 +120,25 @@ class ConfigurationManager:
             else:
                 raise ValueError(f"Unsupported configuration file format: {config_file.suffix}")
             
-            # Validate configuration
-            validation_result = self.schema_registry.validate(config_type, config)
-            if not validation_result.is_valid:
-                error_messages = [f"{error.field}: {error.message}" for error in validation_result.errors]
-                raise ValueError(f"Configuration validation failed:\n" + "\n".join(error_messages))
+            # Validate configuration using Pydantic schemas
+            mapped_type = {
+                "benchmark": "benchmark_config",
+                "scenario": "scenario_config",
+                "metrics": "metrics_config",
+                "execution": "execution_config",
+                "agent": "agent_config",
+                "llm": "llm_config",
+                "memory": "memory_config",
+                "crew": "crew_config",
+            }.get(config_type, config_type)
+
+            try:
+                validated_config = self.schema_manager.validate_config(mapped_type, config)
+            except SchemaValidationError as e:
+                raise ValueError(f"Configuration validation failed: {e}") from e
             
             # Apply environment overrides
-            config = self._apply_environment_overrides(config)
+            config = self._apply_environment_overrides(validated_config)
             
             # Store as active configuration
             config_id = config.get("benchmark_id", config_file.stem)
@@ -154,11 +160,22 @@ class ConfigurationManager:
             config_path: Path to save configuration file
             config_type: Type of configuration (for validation)
         """
-        # Validate configuration before saving
-        validation_result = self.schema_registry.validate(config_type, config)
-        if not validation_result.is_valid:
-            error_messages = [f"{error.field}: {error.message}" for error in validation_result.errors]
-            raise ValueError(f"Configuration validation failed:\n" + "\n".join(error_messages))
+        # Validate configuration before saving using Pydantic schemas
+        mapped_type = {
+            "benchmark": "benchmark_config",
+            "scenario": "scenario_config",
+            "metrics": "metrics_config",
+            "execution": "execution_config",
+            "agent": "agent_config",
+            "llm": "llm_config",
+            "memory": "memory_config",
+            "crew": "crew_config",
+        }.get(config_type, config_type)
+
+        try:
+            config = self.schema_manager.validate_config(mapped_type, config)
+        except SchemaValidationError as e:
+            raise ValueError(f"Configuration validation failed: {e}") from e
         
         config_file = Path(config_path)
         config_file.parent.mkdir(parents=True, exist_ok=True)
@@ -337,11 +354,22 @@ class ConfigurationManager:
             template_name: Name of the template
             template_config: Template configuration
         """
-        # Validate template configuration
-        validation_result = self.schema_registry.validate(config_type, template_config)
-        if not validation_result.is_valid:
-            error_messages = [f"{error.field}: {error.message}" for error in validation_result.errors]
-            raise ValueError(f"Template validation failed:\n" + "\n".join(error_messages))
+        # Validate template configuration using Pydantic schemas
+        mapped_type = {
+            "benchmark": "benchmark_config",
+            "scenario": "scenario_config",
+            "metrics": "metrics_config",
+            "execution": "execution_config",
+            "agent": "agent_config",
+            "llm": "llm_config",
+            "memory": "memory_config",
+            "crew": "crew_config",
+        }.get(config_type, config_type)
+
+        try:
+            template_config = self.schema_manager.validate_config(mapped_type, template_config)
+        except SchemaValidationError as e:
+            raise ValueError(f"Template validation failed: {e}") from e
         
         template_file = self.config_dir / "templates" / f"{config_type}_{template_name}.yaml"
         template_file.parent.mkdir(parents=True, exist_ok=True)
@@ -407,18 +435,45 @@ class ConfigurationManager:
         
         return None
     
-    def validate_config(self, config: Dict[str, Any], config_type: str = "benchmark") -> ValidationResult:
+    def validate_config(self, config: Dict[str, Any], config_type: str = "benchmark"):
         """
         Validate a configuration.
-        
+
         Args:
             config: Configuration to validate
             config_type: Type of configuration
-            
+
         Returns:
-            ValidationResult with validation results
+            An object with 'is_valid' and 'errors' attributes for compatibility.
         """
-        return self.schema_registry.validate(config_type, config)
+        from dataclasses import dataclass, field
+
+        @dataclass
+        class _ErrorItem:
+            field: str
+            message: str
+
+        @dataclass
+        class _ValidationResult:
+            is_valid: bool
+            errors: list = field(default_factory=list)
+
+        mapped_type = {
+            "benchmark": "benchmark_config",
+            "scenario": "scenario_config",
+            "metrics": "metrics_config",
+            "execution": "execution_config",
+            "agent": "agent_config",
+            "llm": "llm_config",
+            "memory": "memory_config",
+            "crew": "crew_config",
+        }.get(config_type, config_type)
+
+        try:
+            self.schema_manager.validate_config(mapped_type, config)
+            return _ValidationResult(is_valid=True, errors=[])
+        except SchemaValidationError as e:
+            return _ValidationResult(is_valid=False, errors=[_ErrorItem(field=mapped_type, message=str(e))])
     
     def get_active_config(self, config_id: str) -> Optional[Dict[str, Any]]:
         """

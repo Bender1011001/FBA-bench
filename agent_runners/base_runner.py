@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Base Agent Runner - Abstract base class for all agent runners.
 
@@ -6,12 +7,14 @@ regardless of the underlying framework (DIY, CrewAI, LangChain, etc.).
 """
 
 import abc
+from abc import ABC, abstractmethod
 import logging
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
-from typing import Dict, Any, Optional, List, Callable, Union
+from typing import Dict, Any, Optional, List, Callable, Union, Protocol
+import dataclasses
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -60,10 +63,20 @@ class AgentRunnerTimeoutError(AgentRunnerError):
 # Shared data structures used across integration layers
 @dataclass
 class SimulationState:
-    """Canonical simulation state passed to agent runners."""
+    """Canonical simulation state passed to agent runners.
+
+    Fields:
+      - tick: simulation tick counter (monotonic integer)
+      - simulation_time: timezone-aware timestamp for the current tick
+      - products: list of product snapshots
+      - recent_events: list of recent events
+      - financial_position: financial state snapshot
+      - market_conditions: market snapshot
+      - agent_state: agent-specific state
+    """
     tick: int = 0
     simulation_time: Optional[datetime] = None
-    products: List[Any] = field(default_factory=list)
+    products: List[Dict[str, Any]] = field(default_factory=list)
     recent_events: List[Dict[str, Any]] = field(default_factory=list)
     financial_position: Dict[str, Any] = field(default_factory=dict)
     market_conditions: Dict[str, Any] = field(default_factory=dict)
@@ -80,6 +93,91 @@ class ToolCall:
 
 
 from agents.skill_modules.base_skill import SkillOutcome
+
+
+@dataclass
+class AgentConfig:
+    """Configuration for constructing an agent runner.
+
+    Attributes:
+      - agent_id: unique identifier for the agent
+      - agent_type: optional human-readable type/name
+      - agent_class: optional fully qualified class path for dynamic loading
+      - parameters: arbitrary configuration mapping
+    """
+    agent_id: str
+    agent_type: Optional[str] = None
+    agent_class: Optional[str] = None
+    parameters: Dict[str, Any] = dataclasses.field(default_factory=dict)
+
+
+class BaseAgentRunner(ABC):
+    """Abstract base class for agent runners used by tests and integrations.
+
+    This base defines a minimal, stable async interface. Subclasses should implement
+    lifecycle and action methods. State-mutating methods must update last_updated_at.
+    """
+
+    config: AgentConfig
+    is_initialized: bool
+    created_at: datetime
+    last_updated_at: datetime
+
+    def __init__(self, config: AgentConfig):
+        """Initialize base fields and timestamps."""
+        self.config = config
+        self.is_initialized = False
+        now = datetime.now(timezone.utc)
+        self.created_at = now
+        self.last_updated_at = now
+
+    @abstractmethod
+    async def initialize(self) -> None:
+        """Perform any async setup required by the agent runner."""
+        self.is_initialized = True
+        self.last_updated_at = datetime.now(timezone.utc)
+
+    @abstractmethod
+    async def process_input(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Process input data and return a normalized representation suitable for decision-making."""
+        self.last_updated_at = datetime.now(timezone.utc)
+        raise NotImplementedError
+
+    @abstractmethod
+    async def execute_action(self, action: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute a proposed action and return execution metadata/results."""
+        self.last_updated_at = datetime.now(timezone.utc)
+        raise NotImplementedError
+
+    @abstractmethod
+    async def collect_metrics(self) -> Dict[str, Any]:
+        """Collect and return current runner metrics."""
+        # Does not necessarily mutate state, but update freshness timestamp for observability.
+        self.last_updated_at = datetime.now(timezone.utc)
+        raise NotImplementedError
+
+    @abstractmethod
+    async def shutdown(self) -> None:
+        """Cleanly shutdown and release resources."""
+        self.is_initialized = False
+        self.last_updated_at = datetime.now(timezone.utc)
+
+    async def decide(self, state: SimulationState) -> List[ToolCall]:
+        """Produce a list of ToolCall actions given a simulation state.
+
+        Default adapter returns a single noop ToolCall. Subclasses should override.
+
+        Example:
+            # Return a no-op action
+            return [ToolCall(tool_name="noop", parameters={}, confidence=1.0)]
+        """
+        self.last_updated_at = datetime.now(timezone.utc)
+        return [ToolCall(tool_name="noop", parameters={}, confidence=1.0)]
+
+    async def learn(self, outcome: Any) -> None:
+        """Optional learning hook after action execution. Default is no-op."""
+        self.last_updated_at = datetime.now(timezone.utc)
+        return None
 
 class AgentRunner:
     """
@@ -441,3 +539,5 @@ class AgentRunner:
         """Detailed string representation of the agent runner."""
         return (f"{self.__class__.__name__}(agent_id={self.agent_id!r}, "
                 f"status={self.status.value!r}, framework={self.__class__.__name__!r})")
+
+__all__ = ["AgentConfig", "BaseAgentRunner", "ToolCall", "SimulationState"]
