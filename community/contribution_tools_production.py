@@ -36,9 +36,18 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-# Lightweight typing hints for optional external plugin manager
+# Use real PluginManager security validation when available; otherwise fall back
+try:
+    from plugins.plugin_framework import PluginManager as _RealPluginManager  # Production security validator
+except Exception:
+    _RealPluginManager = None  # Fallback to lightweight stub below
+
+# Lightweight typing hints / fallback for optional external plugin manager
 class _PluginManagerLike:
     async def validate_plugin_security(self, plugin_module: Any) -> bool:
+        # Minimal safe default; real validation enforced when plugin_framework is available.
+        # This keeps production tooling operational even if plugin framework is not importable.
+        logging.warning("PluginManager not available; using no-op security validator (allow-all).")
         return True
 
 
@@ -48,8 +57,15 @@ class ProductionContributionManager:
     Provides deterministic, auditable paths for validation, docs, benchmarking and packaging.
     """
     def __init__(self, plugin_manager: Optional[Any] = None):
-        self.plugin_manager = plugin_manager or _PluginManagerLike()
-        logging.info("ProductionContributionManager initialized.")
+            if plugin_manager is not None:
+                self.plugin_manager = plugin_manager
+                logging.info("ProductionContributionManager initialized with provided PluginManager.")
+            elif _RealPluginManager is not None:
+                self.plugin_manager = _RealPluginManager()
+                logging.info("ProductionContributionManager initialized with real PluginManager security validation.")
+            else:
+                self.plugin_manager = _PluginManagerLike()
+                logging.warning("ProductionContributionManager initialized with fallback no-op security validator.")
 
     async def _load_plugin_module(self, plugin_path: str) -> Optional[Any]:
         """
