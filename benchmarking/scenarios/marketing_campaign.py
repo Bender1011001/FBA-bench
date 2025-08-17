@@ -12,6 +12,9 @@ from datetime import datetime
 from benchmarking.scenarios.base import BaseScenario, ScenarioConfig
 from benchmarking.core.results import AgentRunResult
 from benchmarking.agents.base import BaseAgent
+from fba_events.marketing import RunMarketingCampaignCommand
+from fba_events.time_events import TickEvent
+from money import Money
 
 logger = logging.getLogger(__name__)
 
@@ -47,49 +50,145 @@ class MarketingCampaignScenario(BaseScenario):
 
     async def run(self, agent: BaseAgent, run_number: int, *args, **kwargs) -> AgentRunResult:
         """
-        Execute a single iteration (tick) of the marketing campaign.
-        An agent will make decisions about the campaign and its effectiveness will be simulated.
+        Execute a single iteration (tick) of the marketing campaign with world-model integration:
+          1) Agent proposes a campaign (RunMarketingCampaignCommand)
+          2) Scenario publishes the command
+          3) Publish TickEvent to trigger MarketingService
+          4) Trigger MarketSimulationService to process demand for the ASIN
+          5) Compute ACoS/ROAS based on recorded events or deterministic fallback
         """
         start_time = datetime.now()
         logger.info(f"Running Marketing Campaign for agent {agent.agent_id}, run {run_number}, tick {self.current_tick}")
 
+        event_bus = kwargs.get("event_bus")
+        world_store = kwargs.get("world_store")
+        market_simulator = kwargs.get("market_simulator")
+        marketing_service = kwargs.get("marketing_service")
+
+        # Ensure marketing service is running to process TickEvents
+        if marketing_service:
+            try:
+                await marketing_service.start()
+            except Exception:
+                # start() is idempotent; ignore if already started
+                pass
+
+        # Determine target ASIN and ensure product exists
+        product_asin = self.config.parameters.get("product_asin", "ASIN-MKT-001")
+        initial_price = Money.from_dollars(str(self.config.parameters.get("initial_product_price", "19.99")))
+        if world_store and not world_store.get_product_state(product_asin):
+            world_store.initialize_product(product_asin, initial_price, initial_inventory=1000)
+
+        sale_revenue_cents_before = 0
+        spend_cents_before = 0
+
+        if event_bus and hasattr(event_bus, "get_recorded_events") and callable(event_bus.get_recorded_events):
+            recorded = event_bus.get_recorded_events()
+            for e in recorded:
+                if e.get("event_type") == "SaleOccurred" and e.get("data", {}).get("asin") == product_asin:
+                    # Best-effort parse of revenue string (e.g., "$19.99")
+                    rev_str = e.get("data", {}).get("total_revenue", "0")
+                    try:
+                        sale_revenue_cents_before += int(Money.from_dollars(rev_str.strip("$")).cents)
+                    except Exception:
+                        pass
+                if e.get("event_type") == "AdSpendEvent" and e.get("data", {}).get("asin") == product_asin:
+                    spend_str = e.get("data", {}).get("spend", "0")
+                    try:
+                        spend_cents_before += int(Money.from_dollars(spend_str.strip("$")).cents)
+                    except Exception:
+                        pass
+
+        errors: List[str] = []
+        success = True
+
         try:
-            # Simulate agent's marketing actions
-            # This is where the agent would interact with mock marketing APIs
-            # For now, we'll simulate some basic outcomes
-            agent_decision_output = await agent.decide({"current_campaign_state": self.get_progress()})
+            # Agent decision
+            decision_ctx = {"current_campaign_state": await self.get_progress()}
+            agent_decision_output = await agent.decide(decision_ctx) or {}
 
-            # Placeholder for processing agent decisions related to marketing
-            if "start_campaign" in agent_decision_output:
+            # Extract campaign parameters
+            campaign_type = agent_decision_output.get("campaign_type", "ppc")
+            budget = Money.from_dollars(str(agent_decision_output.get("budget", self.campaign_budget)))
+            duration_days = int(agent_decision_output.get("duration_days", max(1, self.campaign_duration_ticks)))
+
+            # Publish campaign command
+            if event_bus:
+                cmd = RunMarketingCampaignCommand(
+                    event_id=f"mkcmd_{agent.agent_id}_{product_asin}_{run_number}_{self.current_tick}",
+                    timestamp=start_time,
+                    campaign_type=campaign_type,
+                    budget=budget,
+                    duration_days=duration_days,
+                )
+                # Attach optional agent_id/asin in summary if present
+                setattr(cmd, "agent_id", agent.agent_id)
+                setattr(cmd, "asin", product_asin)
+                await event_bus.publish(cmd)
                 self.campaign_active = True
-                logger.info(f"Agent {agent.agent_id} started marketing campaign.")
-            if self.campaign_active:
-                # Simulate impressions, clicks, conversions based on some factors
-                # In a real scenario, this would involve more sophisticated models
-                self.impressions += 100 + agent.intelligence_score * 5
-                self.clicks += 5 + agent.creativity_score * 0.5
-                self.conversions += 1 + agent.communication_score * 0.1
+                logger.info(f"Published RunMarketingCampaignCommand for {product_asin}: type={campaign_type} budget={budget} duration={duration_days}")
 
+            # Publish a TickEvent to trigger MarketingService
+            if event_bus:
+                tick_evt = TickEvent(
+                    event_id=f"tick_mkt_{self.current_tick}",
+                    timestamp=datetime.now(),
+                    tick_number=self.current_tick
+                )
+                await event_bus.publish(tick_evt)
+
+            # Process market demand for ASIN using updated visibility
+            if market_simulator:
+                await market_simulator.process_for_asin(product_asin)
+
+            # Advance scenario tick
             self.current_tick += 1
 
-            success = True
-            errors: List[str] = []
-
         except Exception as e:
-            logger.error(f"Error in Marketing Campaign scenario run for agent {agent.agent_id}: {e}")
+            logger.error(f"Error in Marketing Campaign scenario run for agent {agent.agent_id}: {e}", exc_info=True)
             success = False
             errors = [str(e)]
+
+        # Compute metrics (ACoS/ROAS) from recorded deltas or deterministic fallback
+        sale_revenue_cents_after = sale_revenue_cents_before
+        spend_cents_after = spend_cents_before
+        if event_bus and hasattr(event_bus, "get_recorded_events") and callable(event_bus.get_recorded_events):
+            recorded = event_bus.get_recorded_events()
+            for e in recorded:
+                if e.get("event_type") == "SaleOccurred" and e.get("data", {}).get("asin") == product_asin:
+                    rev_str = e.get("data", {}).get("total_revenue", "0")
+                    try:
+                        sale_revenue_cents_after += int(Money.from_dollars(rev_str.strip("$")).cents)
+                    except Exception:
+                        pass
+                if e.get("event_type") == "AdSpendEvent" and e.get("data", {}).get("asin") == product_asin:
+                    spend_str = e.get("data", {}).get("spend", "0")
+                    try:
+                        spend_cents_after += int(Money.from_dollars(spend_str.strip("$")).cents)
+                    except Exception:
+                        pass
+
+        revenue_cents_delta = max(0, sale_revenue_cents_after - sale_revenue_cents_before)
+        spend_cents_delta = max(0, spend_cents_after - spend_cents_before)
+
+        # Fallback deterministic spend if none recorded
+        if spend_cents_delta == 0:
+            daily_budget_cents = int((self.campaign_budget * 1000) // max(1, self.campaign_duration_ticks))  # rough fallback
+            spend_cents_delta = max(0, daily_budget_cents)
+
+        acos = (spend_cents_delta / revenue_cents_delta) if revenue_cents_delta > 0 else float('inf')
+        roas = (revenue_cents_delta / spend_cents_delta) if spend_cents_delta > 0 else 0.0
 
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds()
 
         metrics = {
-            "impressions": self.impressions,
-            "clicks": self.clicks,
-            "conversions": self.conversions,
-            "cpm": (self.campaign_budget / self.impressions) * 1000 if self.impressions > 0 else 0,
-            "ctr": (self.clicks / self.impressions) * 100 if self.impressions > 0 else 0,
-            "conversion_rate": (self.conversions / self.clicks) * 100 if self.clicks > 0 else 0,
+            "acos": round(acos, 4) if acos != float('inf') else float('inf'),
+            "roas": round(roas, 4),
+            "ad_spend_cents": spend_cents_delta,
+            "revenue_cents": revenue_cents_delta,
+            "campaign_active": self.campaign_active,
+            "tick": self.current_tick
         }
 
         return AgentRunResult(

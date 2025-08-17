@@ -560,7 +560,47 @@ class WorldStore:
         """Get current cost basis for a product."""
         state = self._product_state.get(asin)
         return state.cost_basis if state else Money.zero()
-    
+
+    # --- Marketing visibility (effect) helpers ---
+
+    def get_marketing_visibility(self, asin: str) -> float:
+        """
+        Return current marketing visibility multiplier for an ASIN.
+        1.0 = neutral baseline, >1.0 increases demand proportionally.
+        """
+        state = self._product_state.get(asin)
+        if not state:
+            return 1.0
+        try:
+            vis = float(state.metadata.get("marketing_visibility", 1.0))
+        except Exception:
+            vis = 1.0
+        # Bound visibility to a reasonable range [0.1, 5.0] to avoid instabilities
+        return max(0.1, min(5.0, vis))
+
+    def set_marketing_visibility(self, asin: str, visibility: float) -> None:
+        """
+        Set marketing visibility multiplier for an ASIN in canonical state.
+        Bounds value to [0.1, 5.0] and updates metadata.
+        """
+        v = max(0.1, min(5.0, float(visibility)))
+        state = self._product_state.get(asin)
+        if not state:
+            # Initialize a stub product with zero price/inventory if it doesn't exist yet
+            self._product_state[asin] = ProductState(
+                asin=asin,
+                price=Money.zero(),
+                inventory_quantity=0,
+                cost_basis=Money.zero(),
+                last_updated=datetime.now(),
+                last_agent_id="system_marketing",
+                last_command_id="marketing_visibility_init",
+                version=1,
+                metadata={"marketing_visibility": v},
+            )
+            return
+        state.metadata["marketing_visibility"] = v
+        state.last_updated = datetime.now()
     def get_statistics(self) -> Dict[str, Any]:
         """Get WorldStore operational statistics."""
         return {

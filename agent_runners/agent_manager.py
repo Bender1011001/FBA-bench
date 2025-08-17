@@ -13,6 +13,9 @@ from .base_runner import (
     AgentRunnerInitializationError, AgentRunnerDecisionError, AgentRunnerCleanupError, AgentRunnerTimeoutError,
 )
 from fba_bench.core.types import SimulationState, ToolCall, TickEvent, SetPriceCommand, AgentObservation
+from agents.multi_domain_controller import MultiDomainController
+from agents.skill_coordinator import SkillCoordinator
+from agents.skill_modules.base_skill import SkillAction
 
 
 class AgentRegistration:
@@ -120,6 +123,8 @@ class AgentManager:
  
         self.agent_registry: AgentRegistry = AgentRegistry()  # agent_id -> AgentRegistration
         self.last_global_state: Optional[SimulationState] = None  # Last state provided to agents
+        # CEO-level controller per agent for action arbitration across skills/tools
+        self.multi_domain_controllers: Dict[str, MultiDomainController] = {}
  
         # Unified agent system components (lazy import to avoid circulars)
         self.unified_agent_factory = None
@@ -261,17 +266,16 @@ class AgentManager:
 
         agent_decisions = await asyncio.gather(*decision_tasks, return_exceptions=True)
         
-        # Process decisions (tool calls)
+        # Process decisions (tool calls) via CEO-level arbitration
         for i, result in enumerate(agent_decisions):
-            agent_id = list(self.agent_registry.active_agents().keys())[i] # Get corresponding agent_id
+            agent_id = list(self.agent_registry.active_agents().keys())[i]  # Get corresponding agent_id
             if isinstance(result, Exception):
                 logger.error(f"Error getting decision from agent {agent_id}: {result}")
                 self.agent_registry.mark_agent_as_failed(agent_id, str(result))
                 self.total_errors += 1
             else:
-                for tool_call in result: # Each agent returns a list of ToolCall objects
-                    await self._process_tool_call(agent_id, tool_call)
-                    self.total_tool_calls += 1
+                processed = await self._arbitrate_and_dispatch(agent_id, result)  # result: List[ToolCall]
+                self.total_tool_calls += processed
         
         self.decision_cycles_completed += 1
         logger.debug(f"Decision cycle completed for tick {current_state.tick}.")
@@ -287,6 +291,81 @@ class AgentManager:
             logger.error(f"Unexpected error during agent '{runner.agent_id}' decision: {e}")
             return []
     
+    def _get_multi_domain_controller(self, agent_id: str) -> MultiDomainController:
+        """
+        Lazily create or fetch the MultiDomainController for an agent.
+        """
+        controller = self.multi_domain_controllers.get(agent_id)
+        if controller is None:
+            coordinator = SkillCoordinator(agent_id, self.event_bus, config={})
+            controller = MultiDomainController(agent_id=agent_id, skill_coordinator=coordinator, config={})
+            self.multi_domain_controllers[agent_id] = controller
+        return controller
+
+    def _toolcall_to_skillaction(self, tool_call: ToolCall) -> SkillAction:
+        """
+        Adapt a ToolCall (from an agent runner) into a SkillAction for arbitration.
+        """
+        try:
+            pr = getattr(tool_call, "priority", 0)
+            priority = max(0.0, min(1.0, float(pr) / 100.0))
+        except Exception:
+            priority = 0.5
+        reasoning = getattr(tool_call, "reasoning", "") or ""
+        confidence = getattr(tool_call, "confidence", 0.5)
+        return SkillAction(
+            action_type=tool_call.tool_name,
+            parameters=tool_call.parameters or {},
+            confidence=float(confidence),
+            reasoning=reasoning,
+            priority=priority,
+            resource_requirements={},
+            expected_outcome={},
+            skill_source="agent_runner"
+        )
+
+    def _skillaction_to_toolcall(self, action: SkillAction) -> ToolCall:
+        """
+        Convert an approved SkillAction back into a ToolCall for execution.
+        """
+        try:
+            pr_int = int(round(max(0.0, min(1.0, float(action.priority))) * 100))
+        except Exception:
+            pr_int = 50
+        return ToolCall(
+            tool_name=action.action_type,
+            parameters=action.parameters,
+            confidence=float(action.confidence),
+            reasoning=action.reasoning,
+            priority=pr_int
+        )
+
+    async def _arbitrate_and_dispatch(self, agent_id: str, tool_calls: List[ToolCall]) -> int:
+        """
+        Convert tool calls to skill actions, run CEO-level arbitration, and dispatch approved actions.
+        Returns the number of tool calls processed.
+        """
+        if not tool_calls:
+            return 0
+        try:
+            controller = self._get_multi_domain_controller(agent_id)
+            skill_actions = [self._toolcall_to_skillaction(tc) for tc in tool_calls]
+            approved_actions = await controller.arbitrate_actions(skill_actions)
+            count = 0
+            for action in approved_actions:
+                tc = self._skillaction_to_toolcall(action)
+                await self._process_tool_call(agent_id, tc)
+                count += 1
+            return count
+        except Exception as e:
+            logger.error(f"Arbitration/dispatch failed for agent {agent_id}: {e}", exc_info=True)
+            # Fallback: process original tool calls without arbitration
+            count = 0
+            for tc in tool_calls:
+                await self._process_tool_call(agent_id, tc)
+                count += 1
+            return count
+
     def _create_pydantic_config_from_dict(self, agent_id: str, framework: str, config: Dict[str, Any]) -> PydanticAgentConfig:
         """Create a PydanticAgentConfig instance from a raw dictionary and inject core services for DIY/LLM bots."""
         llm_config_dict = config.get('llm_config', {}) or {}

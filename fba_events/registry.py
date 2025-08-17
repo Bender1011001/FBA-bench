@@ -23,7 +23,7 @@ from .skills import SkillActivated, SkillActionGenerated, SkillConflictDetected,
 from .agent import AgentDecisionEvent
 from .customer import CustomerMessageReceived, NegativeReviewEvent, ComplaintEvent, RespondToCustomerMessageCommand
 from .supplier import SupplierResponseEvent, PlaceOrderCommand
-from .marketing import MarketTrendEvent, RunMarketingCampaignCommand
+from .marketing import MarketTrendEvent, RunMarketingCampaignCommand, AdSpendEvent
 from .reporting import ProfitReport, LossEvent
 
 # Define __all__ to control what's exposed when doing 'from fba_events import *'
@@ -59,6 +59,7 @@ __all__ = [
     "PlaceOrderCommand",
     "MarketTrendEvent",
     "RunMarketingCampaignCommand",
+    "AdSpendEvent",
     "ProfitReport",
     "LossEvent",
     'EVENT_TYPES',      # Explicitly export the registry itself
@@ -94,6 +95,7 @@ EVENT_TYPES = {
     'PlaceOrderCommand': PlaceOrderCommand,
     'RespondToCustomerMessageCommand': RespondToCustomerMessageCommand,
     'RunMarketingCampaignCommand': RunMarketingCampaignCommand,
+    'AdSpendEvent': AdSpendEvent,
     # Specific Domain Events
     'WorldStateSnapshotEvent': WorldStateSnapshotEvent,
     'LowInventoryEvent': LowInventoryEvent,

@@ -108,6 +108,28 @@ class PlaceOrderCommand(Protocol):
     quantity: int
 
 
+@runtime_checkable
+class RunMarketingCampaignCommand(Protocol):
+    """Structural protocol for marketing campaign command."""
+    event_id: str
+    timestamp: datetime
+    campaign_type: str
+    budget: Any  # Money
+    duration_days: int
+
+
+@runtime_checkable
+class AdSpendEvent(Protocol):
+    """Structural protocol for ad spend event."""
+    event_id: str
+    timestamp: datetime
+    asin: str
+    campaign_id: str
+    spend: Any  # Money
+    clicks: int
+    impressions: int
+
+
 __all__ = [
     "SimulationState",
     "ToolCall",
@@ -115,4 +137,6 @@ __all__ = [
     "TickEvent",
     "SetPriceCommand",
     "PlaceOrderCommand",
+    "RunMarketingCampaignCommand",
+    "AdSpendEvent",
 ]

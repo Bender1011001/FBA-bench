@@ -178,7 +178,16 @@ class MarketSimulationService:
             current_price = product.price
             ref_price = self._compute_price_reference(asin, current_price)
 
-            units_demanded = self._demand(current_price, ref_price)
+            # Marketing visibility multiplier from WorldStore (default 1.0)
+            marketing_multiplier = 1.0
+            if hasattr(self.world_store, "get_marketing_visibility"):
+                try:
+                    marketing_multiplier = float(self.world_store.get_marketing_visibility(asin))
+                except Exception:
+                    marketing_multiplier = 1.0
+
+            units_demanded_raw = self._demand(current_price, ref_price)
+            units_demanded = max(0, int(round(units_demanded_raw * max(0.0, marketing_multiplier))))
             inventory_qty = self.world_store.get_product_inventory_quantity(asin)
             units_sold = min(units_demanded, max(0, inventory_qty))
 

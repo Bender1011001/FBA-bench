@@ -150,3 +150,50 @@ class RunMarketingCampaignCommand(BaseEvent):
             'duration_days': self.duration_days,
             'reason': self.reason
         }
+
+
+@dataclass
+class AdSpendEvent(BaseEvent):
+    """
+    Signals simulated advertising spend and exposure for a campaign on a specific ASIN.
+
+    Published by MarketingService each tick for active campaigns.
+
+    Attributes:
+        event_id (str): Unique identifier for this ad spend event.
+        timestamp (datetime): When the spend was realized in the simulation.
+        asin (str): Target product ASIN.
+        campaign_id (str): Identifier of the campaign (may reuse the RunMarketingCampaignCommand.event_id).
+        spend (Money): Money spent during the tick.
+        clicks (int): Estimated clicks generated.
+        impressions (int): Estimated impressions generated.
+    """
+    asin: str
+    campaign_id: str
+    spend: Money
+    clicks: int
+    impressions: int
+
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.asin or not isinstance(self.asin, str):
+            raise ValueError("AdSpendEvent.asin must be a non-empty string")
+        if not self.campaign_id or not isinstance(self.campaign_id, str):
+            raise ValueError("AdSpendEvent.campaign_id must be a non-empty string")
+        if not isinstance(self.spend, Money):
+            raise TypeError("AdSpendEvent.spend must be a Money instance")
+        if self.spend.cents < 0:
+            raise ValueError("AdSpendEvent.spend cannot be negative")
+        if self.clicks < 0 or self.impressions < 0:
+            raise ValueError("AdSpendEvent.clicks/impressions must be >= 0")
+
+    def to_summary_dict(self) -> Dict[str, Any]:
+        return {
+            'event_id': self.event_id,
+            'timestamp': self.timestamp.isoformat(),
+            'asin': self.asin,
+            'campaign_id': self.campaign_id,
+            'spend': str(self.spend),
+            'clicks': self.clicks,
+            'impressions': self.impressions,
+        }
