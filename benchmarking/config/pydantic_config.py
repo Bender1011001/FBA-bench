@@ -64,6 +64,13 @@ class ScenarioType(str, Enum):
     MULTI_AGENT = "multi_agent"
     CUSTOM = "custom"
 
+class Tier(str, Enum):
+    """Constraint tiers for benchmark runs."""
+    T0 = "T0"
+    T1 = "T1"
+    T2 = "T2"
+    T3 = "T3"
+
 # Base configuration models
 class BaseConfig(BaseModel):
     """Base configuration model with common fields."""
@@ -188,38 +195,63 @@ class BenchmarkConfig(BaseConfig):
     benchmark_id: str = Field(..., description="Unique identifier for the benchmark")
     environment: EnvironmentType = Field(EnvironmentType.DEVELOPMENT, description="Environment type")
     log_level: LogLevel = Field(LogLevel.INFO, description="Log level")
-    
+
+    # Constraints/tier configuration
+    tier: Tier = Field(Tier.T0, description="Benchmark constraint tier (T0-T3)")
+    # Optional budget overrides to replace tier defaults in BudgetEnforcer when provided.
+    # Schema should match constraints.budget_enforcer dict format:
+    # {
+    #   "limits": {"total_tokens_per_tick": int, "total_tokens_per_run": int, ...},
+    #   "tool_limits": { "tool": {...} },
+    #   "warning_threshold_pct": float,
+    #   "allow_soft_overage": bool
+    # }
+    budget_overrides: Optional[Dict[str, Any]] = Field(None, description="Optional budget constraints override")
+
     # Sub-configurations
     agents: List[AgentConfig] = Field(default_factory=list, description="Agent configurations")
     scenarios: List[ScenarioConfig] = Field(default_factory=list, description="Scenario configurations")
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig, description="Execution configuration")
     metrics: MetricsCollectionConfig = Field(default_factory=MetricsCollectionConfig, description="Metrics configuration")
-    
+
+    # Weighting for KPI aggregation (used by engine.metric_suite)
+    metric_weights: Dict[str, float] = Field(default_factory=dict, description="Weights for KPI aggregation")
+
     # Additional settings
     tags: List[str] = Field(default_factory=list, description="Tags for the benchmark")
     created_at: datetime = Field(default_factory=datetime.now, description="Creation timestamp")
     updated_at: datetime = Field(default_factory=datetime.now, description="Last update timestamp")
-    
+
     @model_validator(mode='before')
     def validate_benchmark_config(cls, values):
         """Validate benchmark configuration."""
         agents = values.get('agents', [])
         scenarios = values.get('scenarios', [])
-        
+
         # Validate that at least one agent and one scenario are provided
         if not agents:
             raise ValueError("At least one agent configuration is required")
         if not scenarios:
             raise ValueError("At least one scenario configuration is required")
-        
+
         # Validate agent IDs are unique
         agent_ids = [agent.agent_id for agent in agents]
         if len(agent_ids) != len(set(agent_ids)):
             raise ValueError("Agent IDs must be unique")
-        
+
+        # Validate budget_overrides when provided
+        bo = values.get('budget_overrides')
+        if bo is not None and not isinstance(bo, dict):
+            raise ValueError("budget_overrides must be a dict matching BudgetEnforcer config schema")
+        # Minimal structure validation if present
+        if isinstance(bo, dict):
+            limits = bo.get("limits")
+            if limits is not None and not isinstance(limits, dict):
+                raise ValueError("budget_overrides.limits must be a dict of limit fields")
+
         # Update updated_at timestamp
         values['updated_at'] = datetime.now()
-        
+
         return values
 
 class UnifiedAgentRunnerConfig(BaseConfig):
