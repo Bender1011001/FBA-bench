@@ -2,6 +2,7 @@ import asyncio
 import logging
 import uuid
 import time
+import os
 from typing import Dict, List, Any, Optional, Set
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -137,46 +138,84 @@ class DistributedCoordinator:
     async def coordinate_tick_progression(self):
         """
         Synchronizes tick progression across all distributed workers.
-        This is a consensus mechanism where all workers must acknowledge a tick
-        before the global tick advances.
+        Consensus: all active workers must acknowledge a tick before advancing.
+        Adds timeout handling to avoid deadlock if a worker fails to ack.
         """
         logger.info("Tick synchronization loop started.")
-        while self._running:
-            # Wait for all active workers to acknowledge the current tick
-            required_acks = set(self._workers.keys()) # All current active workers
-            
-            if not required_acks:
-                logger.debug("No active workers to synchronize. Waiting...")
-                await asyncio.sleep(1.0) # Wait if no workers
-                continue
+        # Determine ack timeout (seconds)
+        default_timeout = 30.0
+        env_timeout = os.getenv("FBA_COORDINATOR_ACK_TIMEOUT_SECONDS")
+        try:
+            env_timeout_val = float(env_timeout) if env_timeout is not None else None
+        except ValueError:
+            env_timeout_val = None
+        configured_timeout = getattr(self.simulation_config, "coordinator_ack_timeout_seconds", None) if self.simulation_config else None
+        ack_timeout_seconds: float = float(configured_timeout or env_timeout_val or default_timeout)
 
-            # This loop waits for acknowledgements for the _global_current_tick
-            # before advancing it.
+        # Track when we started waiting for the current tick to be acknowledged
+        current_tick_wait_started_at: float = time.time()
+        last_observed_tick: int = self._global_current_tick
+
+        while self._running:
+            required_acks = set(self._workers.keys())  # All current active workers
             try:
-                # print(f"Current tick {self._global_current_tick}. Waiting for {len(required_acks)} acks. Received: {self._tick_acknowledgements.get(self._global_current_tick, set())}")
-                if self._tick_acknowledgements[self._global_current_tick] == required_acks:
+                # Reset wait start if tick advanced externally
+                if self._global_current_tick != last_observed_tick:
+                    last_observed_tick = self._global_current_tick
+                    current_tick_wait_started_at = time.time()
+
+                if not required_acks:
+                    logger.debug("No active workers to synchronize. Waiting...")
+                    await asyncio.sleep(1.0)
+                    continue
+
+                received = self._tick_acknowledgements[self._global_current_tick]
+                if received == required_acks:
                     logger.info(f"All {len(required_acks)} workers acknowledged tick {self._global_current_tick}.")
                     self._global_current_tick += 1
-                    # Publish a global "AdvanceTick" event, or orchestrator proceeds based on this
+                    # Publish a global "AdvanceTick" event
                     await self.distributed_event_bus.publish_event(
-                        "GlobalTickAdvanceEvent", 
+                        "GlobalTickAdvanceEvent",
                         {"new_tick_number": self._global_current_tick},
-                        target_partition=None
+                        target_partition=None,
                     )
-                    # Clear acknowledgements for the new tick
+                    # Clear acknowledgements for the new tick and cleanup old
                     self._tick_acknowledgements[self._global_current_tick].clear()
-                    # Clean up old acknowledgements
                     if self._global_current_tick > 1:
                         self._tick_acknowledgements.pop(self._global_current_tick - 1, None)
+                    # Reset wait timer for the next tick
+                    current_tick_wait_started_at = time.time()
+                    last_observed_tick = self._global_current_tick
                 else:
-                    missing_acks = required_acks - self._tick_acknowledgements[self._global_current_tick]
-                    logger.debug(f"Tick {self._global_current_tick} waiting for acks from: {missing_acks} (Total workers: {len(required_acks)})")
-                
-                await asyncio.sleep(self.simulation_config.tick_interval_seconds if self.simulation_config else 1.0) # Adapt to config
+                    missing_acks = required_acks - received
+                    # Check for timeout on missing acks
+                    elapsed = time.time() - current_tick_wait_started_at
+                    if missing_acks and elapsed >= ack_timeout_seconds:
+                        logger.warning(
+                            f"Ack timeout reached ({ack_timeout_seconds:.1f}s) for tick {self._global_current_tick}. "
+                            f"Missing acks from workers: {missing_acks}. Marking as failed and removing from pool."
+                        )
+                        # Handle failed workers: notify bus and remove; do not block progression on them
+                        for wid in list(missing_acks):
+                            try:
+                                await self.distributed_event_bus.handle_worker_failure(wid)
+                            except Exception as e:
+                                logger.error(f"Error handling failure for worker {wid}: {e}", exc_info=True)
+                            # Remove from registry; this implicitly shrinks required_acks on next iteration
+                            self._workers.pop(wid, None)
+                        # Reset timer after taking action to allow next cycle to evaluate progression
+                        current_tick_wait_started_at = time.time()
+                    else:
+                        logger.debug(
+                            f"Tick {self._global_current_tick} waiting for acks from: {missing_acks} "
+                            f"(Received {len(received)}/{len(required_acks)}; elapsed {elapsed:.1f}s/{ack_timeout_seconds:.1f}s)"
+                        )
+
+                await asyncio.sleep(self.simulation_config.tick_interval_seconds if self.simulation_config else 1.0)
 
             except Exception as e:
                 logger.error(f"Error in tick coordination loop: {e}", exc_info=True)
-                await asyncio.sleep(1.0) # Avoid tight loop on error
+                await asyncio.sleep(1.0)  # Avoid tight loop on error
         logger.info("Tick synchronization loop stopped.")
 
 

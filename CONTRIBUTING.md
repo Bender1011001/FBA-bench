@@ -29,16 +29,13 @@ Follow these steps to set up your development environment and make your first co
     cd fba-bench
     ```
 3.  **Set Up Your Environment**:
-    *   **Backend (Python)**:
+    *   **Backend (Python via Poetry)**:
         ```bash
-        python -m venv .venv
-        # On Windows
-        .venv\Scripts\activate
-        # On macOS/Linux
-        source .venv/bin/activate
-        pip install -r requirements.txt
-        pip install -r requirements-dev.txt
-        pip install -r requirements-frameworks.txt
+        pip install -U pip setuptools wheel
+        pip install poetry
+        poetry install --with dev
+        # Optional: activate a Poetry-managed virtualenv shell
+        poetry shell
         ```
     *   **Frontend (Node.js/TypeScript)**:
         ```bash
@@ -59,13 +56,15 @@ Follow these steps to set up your development environment and make your first co
     *   **Write Tests**: All new features and bug fixes should be accompanied by appropriate tests (unit, integration, or E2E).
     *   **Update Documentation**: If your changes introduce new functionality or modify existing APIs, update the relevant docstrings, inline comments, and markdown documentation files (like `README.md`, `API_REFERENCE.md`).
 6.  **Run Tests**: Before submitting, ensure all tests pass.
-    *   **Backend**: `pytest` (from root directory)
+    *   **Backend**: `poetry run pytest` (from root directory)
     *   **Frontend**: `cd frontend && npm test` (from `frontend/` directory)
 7.  **Format and Lint**: Ensure your code is formatted correctly.
-    *   **Python**: Use Black and Flake8.
+    *   **Python**: Use Black, Ruff/Flake8, and isort via Poetry.
         ```bash
-        black .
-        flake8 .
+        poetry run black .
+        poetry run ruff check .
+        poetry run flake8 .
+        poetry run isort .
         ```
     *   **TypeScript/React**: Use Prettier and ESLint.
         ```bash

@@ -106,15 +106,11 @@ else
     cd "${INSTALL_DIR}"
 fi
 
-# Create Python virtual environment
-print_status "Creating Python virtual environment..."
-python3 -m venv .venv
-source .venv/bin/activate
-
-# Install Python dependencies
+# Install Python dependencies via Poetry
 print_status "Installing Python dependencies..."
 pip install --upgrade pip
-pip install -r requirements.txt
+pip install poetry
+poetry install --with dev
 
 # Install frontend dependencies
 print_status "Installing frontend dependencies..."

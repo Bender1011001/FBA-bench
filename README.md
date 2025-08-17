@@ -127,13 +127,11 @@ graph TD
     source .venv/bin/activate
     ```
 
-3.  **Install the project in editable mode (recommended for development)**:
+3.  **Install dependencies with Poetry (recommended)**:
     ```bash
-    pip install -e .
-    # Optional extra requirements:
-    pip install -r requirements.txt
-    pip install -r requirements-dev.txt
-    pip install -r requirements-frameworks.txt
+    pip install -U pip setuptools wheel
+    pip install poetry
+    poetry install --with dev
     ```
 
 4.  **Database Initialization (if applicable)**:
@@ -177,7 +175,7 @@ graph TD
 From the root directory of the project, with your Python virtual environment activated:
 
 ```bash
-uvicorn fba_bench_api.main:app --reload --port 8000
+poetry run uvicorn fba_bench_api.main:app --reload --port 8000
 ```
 The API will be accessible at `http://localhost:8000`.
 

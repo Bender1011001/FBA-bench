@@ -30,7 +30,7 @@ The frontend is a single-page application built with React and TypeScript, using
 
 ### Prerequisites
 
-- Python 3.8+
+- Python 3.9+
 - Node.js 16+
 - npm or yarn
 - Git
@@ -43,15 +43,16 @@ The frontend is a single-page application built with React and TypeScript, using
    cd fba
    ```
 
-2. Create a virtual environment:
+2. Install Poetry and project dependencies:
    ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   pip install -U pip setuptools wheel
+   pip install poetry
+   poetry install --with dev
    ```
 
-3. Install Python dependencies:
+3. (Optional) Update dependencies:
    ```bash
-   pip install -r requirements.txt
+   poetry update
    ```
 
 4. Set up the database:
@@ -61,7 +62,7 @@ The frontend is a single-page application built with React and TypeScript, using
 
 5. Run the API server:
    ```bash
-   python -m api.main
+   poetry run uvicorn fba_bench_api.main:app --reload --port 8000
    ```
 
 ### Frontend Setup

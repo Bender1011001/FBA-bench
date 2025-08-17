@@ -4,6 +4,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from fba_bench_api.core.lifespan import lifespan
+from fba_bench.core.logging import setup_logging, RequestIdMiddleware
+from fba_bench_api.api.exception_handlers import add_exception_handlers
 
 from fba_bench_api.api.routes import root as root_routes
 from fba_bench_api.api.routes import config as config_routes
@@ -12,7 +14,8 @@ from fba_bench_api.api.routes import realtime as realtime_routes
 from fba_bench_api.api.routes import agents as agents_routes
 from fba_bench_api.api.routes import experiments as exp_routes
 
-logging.basicConfig(level=logging.INFO)
+# Centralized, idempotent logging initialization
+setup_logging()
 logger = logging.getLogger("fba_bench_api")
 
 def create_app() -> FastAPI:
@@ -22,6 +25,9 @@ def create_app() -> FastAPI:
         version="2.0.0",
         lifespan=lifespan,
     )
+    # Correlation id middleware (adds X-Request-ID and injects into logs)
+    app.add_middleware(RequestIdMiddleware)
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -29,6 +35,9 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
         allow_headers=["*"],
     )
+
+    # Exception handlers
+    add_exception_handlers(app)
 
     # Routers
     app.include_router(root_routes.router)
