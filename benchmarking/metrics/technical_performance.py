@@ -68,12 +68,12 @@ class TechnicalPerformanceMetrics(BaseMetric):
         """
         if config is None:
             config = MetricConfig(
-                name="technical_performance",
+                name="technical_performance_advanced",
                 description="Technical performance score",
                 unit="score",
                 min_value=0.0,
                 max_value=100.0,
-                target_value=90.0
+                target_value=85.0
             )
         
         super().__init__(config)

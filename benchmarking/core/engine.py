@@ -64,7 +64,7 @@ class BenchmarkEngine:
     integrates with various services like event bus, world store, and metrics.
     """
 
-    def __init__(self, config: BenchmarkConfig, agent_registry_override: 'AgentRegistry' | None = None):
+    def __init__(self, config: BenchmarkConfig, agent_registry_override: Optional["AgentRegistry"] = None):
         """
         Initialize the BenchmarkEngine with a configuration.
 

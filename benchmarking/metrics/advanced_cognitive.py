@@ -269,37 +269,49 @@ class AdvancedCognitiveMetrics(BaseMetric):
     def calculate_metacognition(self, data: Dict[str, Any]) -> float:
         """
         Calculate metacognition score.
-        
-        Args:
-            data: Data containing metacognition metrics
-            
-        Returns:
-            Metacognition score
+
+        Accepts confidence_calibration as:
+        - List[dict] with keys 'confidence_levels' and 'accuracy_levels'
+        - Single dict with the same keys
+        - Scalar (int/float) which will be treated as both confidence and accuracy for a single-point calibration
         """
         self_assessments = data.get('self_assessments', [])
         reflection_episodes = data.get('reflection_episodes', [])
         confidence_calibration = data.get('confidence_calibration', [])
-        
+
+        # Normalize confidence_calibration to a list of dicts
+        if isinstance(confidence_calibration, (int, float)):
+            val = float(confidence_calibration)
+            confidence_calibration = [{
+                'confidence_levels': [val],
+                'accuracy_levels': [val],
+            }]
+        elif isinstance(confidence_calibration, dict):
+            confidence_calibration = [confidence_calibration]
+        elif not isinstance(confidence_calibration, list):
+            confidence_calibration = []
+
         if not self_assessments and not reflection_episodes and not confidence_calibration:
             return 0.0
-        
-        metacognition_scores = []
-        
+
+        metacognition_scores: List[float] = []
+
         # Evaluate self-assessment accuracy
         for assessment in self_assessments:
             score = self._evaluate_self_assessment(assessment)
             metacognition_scores.append(score)
-        
+
         # Evaluate reflection quality
         for reflection in reflection_episodes:
             score = self._evaluate_reflection_quality(reflection)
             metacognition_scores.append(score)
-        
+
         # Evaluate confidence calibration
         for calibration in confidence_calibration:
-            score = self._evaluate_confidence_calibration(calibration)
-            metacognition_scores.append(score)
-        
+            if isinstance(calibration, dict):
+                score = self._evaluate_confidence_calibration(calibration)
+                metacognition_scores.append(score)
+
         return statistics.mean(metacognition_scores) * 100 if metacognition_scores else 0.0
     
     def calculate_multistep_planning(self, data: Dict[str, Any]) -> float:
@@ -755,3 +767,8 @@ class AdvancedCognitiveMetrics(BaseMetric):
         )
         
         return adaptation_score / 100.0  # Normalize to 0-1
+    def calculate_multi_step_planning(self, data: Dict[str, Any]) -> float:
+        """
+        Alias for calculate_multistep_planning to match external API expectations.
+        """
+        return self.calculate_multistep_planning(data)

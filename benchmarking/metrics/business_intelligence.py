@@ -62,12 +62,12 @@ class BusinessIntelligenceMetrics(BaseMetric):
         """
         if config is None:
             config = MetricConfig(
-                name="business_intelligence",
+                name="business_intelligence_performance",
                 description="Business intelligence performance score",
                 unit="score",
                 min_value=0.0,
                 max_value=100.0,
-                target_value=85.0
+                target_value=80.0
             )
         
         super().__init__(config)

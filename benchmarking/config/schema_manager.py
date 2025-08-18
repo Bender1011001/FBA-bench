@@ -165,22 +165,38 @@ class SchemaManager:
             "registered_at": datetime.now()
         }
         
-        # Register in global registry
+        # Register in global registry (idempotent)
         from ..registry.global_registry import ServiceRegistryEntry
-        entry = ServiceRegistryEntry(
-            name=f"config_schema_{name}",
-            description=f"Configuration schema: {description}",
-            metadata={
-                "schema_name": name,
-                "schema_class": schema_class.__name__,
-                "category": category,
-                "tags": tags or [],
-                "metadata": metadata or {}
-            }
-        )
-        self.registry.register(entry)
-        
-        logger.info(f"Registered configuration schema: {name}")
+        reg_name = f"config_schema_{name}"
+        existing = self.registry.get(reg_name)
+        if existing:
+            # Update existing entry metadata and timestamps without re-registering
+            self.registry.update(
+                reg_name,
+                description=f"Configuration schema: {description}",
+                metadata={
+                    "schema_name": name,
+                    "schema_class": schema_class.__name__,
+                    "category": category,
+                    "tags": tags or [],
+                    "metadata": metadata or {}
+                }
+            )
+            logger.info(f"Updated configuration schema in registry: {name}")
+        else:
+            entry = ServiceRegistryEntry(
+                name=reg_name,
+                description=f"Configuration schema: {description}",
+                metadata={
+                    "schema_name": name,
+                    "schema_class": schema_class.__name__,
+                    "category": category,
+                    "tags": tags or [],
+                    "metadata": metadata or {}
+                }
+            )
+            self.registry.register(entry)
+            logger.info(f"Registered configuration schema: {name}")
     
     def get_schema(self, name: str) -> Optional[Dict[str, Any]]:
         """

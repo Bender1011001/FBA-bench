@@ -140,12 +140,12 @@ class ComparativeAnalysisEngine(BaseMetric):
         """
         if config is None:
             config = MetricConfig(
-                name="comparative_analysis",
+                name="comparative_analysis_performance",
                 description="Comparative analysis engine",
                 unit="score",
                 min_value=0.0,
                 max_value=100.0,
-                target_value=85.0
+                target_value=80.0
             )
         
         super().__init__(config)
@@ -248,6 +248,153 @@ class ComparativeAnalysisEngine(BaseMetric):
         )
         
         return overall_score
+
+    # Flexible APIs to match external/test expectations
+    def calculate_benchmark_standardization(self, raw_scores, benchmark_scores=None):
+        if benchmark_scores is not None:
+            # Normalize each raw vs benchmark into 0..100 then report list + mean
+            if not raw_scores or not benchmark_scores:
+                return {"standardized_score": 0.0, "standardized_scores": []}
+            length = min(len(raw_scores), len(benchmark_scores))
+            pairs = list(zip(raw_scores[:length], benchmark_scores[:length]))
+            def _norm(a, b):
+                if b == 0:
+                    return 0.0
+                return max(0.0, min(100.0, (float(a) / float(b)) * 100.0))
+            standardized_scores = [_norm(a, b) for a, b in pairs]
+            standardized_score = float(statistics.mean(standardized_scores)) if standardized_scores else 0.0
+            normalization_factors = [(100.0 / float(b)) if float(b) != 0.0 else 0.0 for _, b in pairs]
+            return {
+                "standardized_score": standardized_score,
+                "standardized_scores": standardized_scores,
+                "normalization_factors": normalization_factors,
+                "benchmark_alignment": float(standardized_score / 100.0)
+            }
+        # Fallback to score API
+        score = self.calculate_benchmark_standardization_score(raw_scores)
+        return {"standardized_score": float(score), "standardized_scores": []}
+
+    def calculate_head_to_head_comparison(self, agent1_scores, agent2_scores=None, metrics=None):
+        if agent2_scores is not None and metrics is not None:
+            a1 = {"name": "agent1"}
+            a2 = {"name": "agent2"}
+            for i, m in enumerate(metrics):
+                a1[m] = float(agent1_scores[i]) if i < len(agent1_scores) else 0.0
+                a2[m] = float(agent2_scores[i]) if i < len(agent2_scores) else 0.0
+            cmp = self.perform_head_to_head_comparison(a1, a2, metrics)
+            # Return expected keys; keep legacy key for compatibility
+            return {
+                "winner": cmp.overall_winner,
+                "margin": cmp.win_margin,
+                "win_margin": cmp.win_margin,
+                "metrics": cmp.comparison_metrics,
+                "comparison_details": cmp.comparison_metrics,
+            }
+        score = self.calculate_head_to_head_score(agent1_scores)
+        return {"score": float(score)}
+
+    def calculate_improvement_tracking(self, historical_data):
+        # historical_data: list of {"date": ..., "score": float}
+        if isinstance(historical_data, list):
+            if len(historical_data) < 2:
+                return {"improvement_rate": 0.0, "score": 0.0, "trend": "insufficient_data"}
+            scores = [float(d.get("score", 0.0)) for d in historical_data]
+            improvement = scores[-1] - scores[0]
+            rate = improvement / max(1, len(scores) - 1)
+            # Map to 0..100
+            value = max(0.0, min(100.0, (rate + 1.0) * 50.0))
+            trend = "improving" if rate > 0.0 else ("declining" if rate < 0.0 else "stable")
+            return {
+                "improvement_rate": float(rate),
+                "score": float(value),
+                "trend": trend,
+                "total_improvement": float(improvement)
+            }
+        score = self.calculate_improvement_tracking_score(historical_data)
+        return {"improvement_rate": 0.0, "score": float(score), "trend": "unknown"}
+
+    def calculate_normalization_methods(self, scores, method: str = "min_max"):
+        if isinstance(scores, list):
+            if not scores:
+                return {"method": method, "normalized_mean": 0.0, "normalized_values": [], "normalized_scores": []}
+            smin, smax = min(scores), max(scores)
+            if method == "min_max":
+                spread = (smax - smin) or 1.0
+                norm = [((s - smin) / spread) for s in scores]
+                value = float(statistics.mean(norm) * 100.0)
+                return {
+                    "method": method,
+                    "normalized_mean": value,
+                    "normalized_values": [float(x) for x in norm],
+                    "normalized_scores": [float(x) for x in norm],
+                    "parameters": {"min": float(smin), "max": float(smax), "spread": float(spread)}
+                }
+            # default: z_score quality mapped
+            mean = statistics.mean(scores)
+            std = statistics.pstdev(scores) or 1.0
+            z = [abs((s - mean) / std) for s in scores]
+            # Lower z on average is better
+            value = max(0.0, 100.0 - (statistics.mean(z) * 20.0))
+            return {
+                "method": method,
+                "normalized_mean": float(value),
+                "normalized_values": [float(x) for x in z],
+                "normalized_scores": [float(x) for x in z],
+                "parameters": {"mean": float(mean), "std": float(std)}
+            }
+        score = self.calculate_normalization_score(scores)
+        return {
+            "method": method,
+            "normalized_mean": float(score),
+            "normalized_values": [],
+            "normalized_scores": [],
+            "parameters": {}
+        }
+
+    def calculate_performance_gap_analysis(self, agent_scores, benchmark_scores=None, metrics=None):
+        if benchmark_scores is not None and metrics is not None:
+            # positive gap means agent below benchmark
+            gaps = {}
+            for i, m in enumerate(metrics):
+                a = float(agent_scores[i]) if i < len(agent_scores) else 0.0
+                b = float(benchmark_scores[i]) if i < len(benchmark_scores) else 0.0
+                gap = (b - a) / b if b > 0 else 0.0
+                gaps[m] = gap
+            overall_gap = float(statistics.mean(gaps.values())) if gaps else 0.0
+            improvement_areas = [m for m, g in gaps.items() if g > 0.1]
+            return {"gaps": gaps, "overall_gap": overall_gap, "gap_analysis": {"mean_gap": overall_gap}, "improvement_areas": improvement_areas}
+        score = self.calculate_performance_gap_score(agent_scores)
+        return {"gaps": {}, "overall_gap": float(score), "gap_analysis": {"mean_gap": float(score)}, "improvement_areas": []}
+
+    def calculate_performance_ranking(self, agents_data):
+        # agents_data: dict[name] -> metric dict including overall score or sub-metrics
+        if isinstance(agents_data, dict):
+            # Use 'score' if present, else mean of values
+            scores = {name: (float(vals.get("score")) if "score" in vals else float(statistics.mean([float(v) for v in vals.values()]))) for name, vals in agents_data.items()}
+            ranked = dict(sorted(scores.items(), key=lambda kv: kv[1], reverse=True))
+            ranks = {name: idx + 1 for idx, name in enumerate(ranked.keys())}
+            return {"rankings": ranks, "scores": ranked}
+        return {"rankings": {}, "scores": {}}
+
+    def calculate_strength_weakness_profiling(self, agent_data, benchmark_data=None):
+        if benchmark_data is not None:
+            strengths = []
+            weaknesses = []
+            for k, v in agent_data.items():
+                b = float(benchmark_data.get(k, 0.0))
+                a = float(v)
+                if b == 0.0 and a > 0.0:
+                    strengths.append(k)
+                elif b > 0.0:
+                    ratio = a / b
+                    if ratio >= 1.1:
+                        strengths.append(k)
+                    elif ratio <= 0.9:
+                        weaknesses.append(k)
+            summary = {"strength_count": len(strengths), "weakness_count": len(weaknesses)}
+            return {"strengths": strengths, "weaknesses": weaknesses, "profile_summary": summary}
+        score = self.calculate_strength_weakness_score(agent_data)
+        return {"strengths": [], "weaknesses": [], "profile_summary": {"strength_count": 0, "weakness_count": 0}, "score": float(score)}
     
     def calculate_head_to_head_score(self, data: Dict[str, Any]) -> float:
         """

@@ -30,7 +30,8 @@ class RegistryType(str, Enum):
 class RegistryEntry:
     """Base class for registry entries."""
     name: str
-    entry_type: RegistryType
+    # entry_type is set by subclasses in their __post_init__, not at construction time.
+    entry_type: RegistryType = field(init=False, default=RegistryType.SERVICE)
     description: str = ""
     version: str = "1.0.0"
     metadata: Dict[str, Any] = field(default_factory=dict)

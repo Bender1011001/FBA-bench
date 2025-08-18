@@ -4,11 +4,27 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 name = "fba-bench"
-version = "0.1.0"
+version = "0.9.0rc1"
 description = "FBA-Bench: A benchmarking and simulation framework for financial/business agents"
 authors = ["FBA-Bench Maintainers <maintainers@example.com>"]
 readme = "README.md"
-license = "Apache-2.0"
+license = "MIT"
+keywords = ["agents", "benchmarking", "simulation", "fastapi", "research", "reinforcement-learning"]
+homepage = "https://github.com/your-org/fba-bench"
+repository = "https://github.com/your-org/fba-bench"
+documentation = "https://github.com/your-org/fba-bench/tree/main/docs"
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Software Development :: Testing",
+]
 packages = [
   { include = "fba_bench" },
   { include = "fba_bench_api" },
@@ -82,6 +98,7 @@ coverage = "^7.6.1"
 types-PyYAML = "^6.0.12.20240808"
 types-requests = "^2.32.0.20240712"
 pre-commit = "^4.0.1"
+elasticsearch = "^8.14.0"
 
 [tool.black]
 line-length = 100
@@ -161,3 +178,4 @@ precision = 2
 fba-bench-lint = "ruff.__main__:main"
 fba-bench-format = "black:main"
 fba-bench-test = "pytest:main"
+fba-bench-experiment = "experiment_cli:main"

@@ -1,13 +1,14 @@
 """
-Core benchmarking engine components.
+Core package initialization kept intentionally lightweight.
 
-This module contains the main BenchmarkEngine class that orchestrates the entire
-benchmarking process, including agent lifecycle management, metrics collection,
-and reproducible execution.
+Avoid importing heavy submodules (like engine) at package import time to
+prevent cascading side effects during test collection and simple imports
+(e.g., importing benchmarking.metrics.base).
+
+Consumers should import submodules explicitly:
+- from benchmarking.core.engine import BenchmarkEngine
+- from benchmarking.core.results import BenchmarkResult
+- from benchmarking.core.config import BenchmarkConfig
 """
 
-from .engine import BenchmarkEngine
-from .config import BenchmarkConfig
-from .results import BenchmarkResult
-
-__all__ = ["BenchmarkEngine", "benchmark_engine", "get_benchmark_engine", "BenchmarkConfig", "BenchmarkResult"]
+__all__: list[str] = []

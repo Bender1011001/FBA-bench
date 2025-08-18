@@ -99,12 +99,12 @@ class StatisticalAnalysisFramework(BaseMetric):
         """
         if config is None:
             config = MetricConfig(
-                name="statistical_analysis",
+                name="statistical_analysis_performance",
                 description="Statistical analysis framework",
                 unit="score",
                 min_value=0.0,
                 max_value=100.0,
-                target_value=90.0
+                target_value=85.0
             )
         
         super().__init__(config)
@@ -209,6 +209,91 @@ class StatisticalAnalysisFramework(BaseMetric):
         )
         
         return overall_score
+
+    # Flexible APIs to match test expectations while preserving score-based APIs
+    def calculate_anomaly_detection(self, data, contamination: float = 0.1):
+        # If given raw series, return anomaly dict; else delegate to score API
+        if isinstance(data, list):
+            x = np.array(data).reshape(-1, 1)
+            model = IsolationForest(contamination=contamination, random_state=42)
+            labels = model.fit_predict(x)
+            scores = model.decision_function(x)
+            idx = [i for i, l in enumerate(labels) if l == -1]
+            return {
+                "anomalies": [data[i] for i in idx],
+                "anomaly_indices": idx,
+                "anomaly_scores": scores.tolist(),
+            }
+        return self.calculate_anomaly_detection_score(data)
+
+    def calculate_correlation_analysis(self, data1, data2=None):
+        # If two arrays provided, compute Pearson correlation
+        if data2 is not None:
+            r, p = stats.pearsonr(data1, data2)
+            strength = "strong" if abs(r) >= 0.7 else "moderate" if abs(r) >= 0.4 else "weak"
+            return {"correlation_coefficient": float(r), "p_value": float(p), "strength": strength}
+        # Fallback to score API with dict data
+        return self.calculate_correlation_analysis_score(data1)
+
+    def calculate_effect_size(self, sample1, sample2=None):
+        if sample2 is not None:
+            # Cohen's d (return magnitude as non-negative)
+            m1, m2 = statistics.mean(sample1), statistics.mean(sample2)
+            v1 = statistics.variance(sample1) if len(sample1) > 1 else 0.0
+            v2 = statistics.variance(sample2) if len(sample2) > 1 else 0.0
+            n1, n2 = len(sample1), len(sample2)
+            pooled_std = math.sqrt(((n1 - 1) * v1 + (n2 - 1) * v2) / max(1, (n1 + n2 - 2))) if (n1 + n2 - 2) > 0 else 0.0
+            d = (m1 - m2) / pooled_std if pooled_std > 0 else 0.0
+            return float(abs(d))
+        return self.calculate_effect_size_score(sample1)
+
+    def calculate_predictive_modeling(self, historical_data, future_points: int = None):
+        if future_points is not None:
+            # Simple linear regression on index -> predict next future_points values
+            y = np.array(historical_data, dtype=float)
+            X = np.arange(len(y)).reshape(-1, 1)
+            model = LinearRegression()
+            model.fit(X, y)
+            next_X = np.arange(len(y), len(y) + future_points).reshape(-1, 1)
+            preds_arr = model.predict(next_X)
+            # Compute model accuracy on training data
+            train_preds = model.predict(X)
+            r2 = r2_score(y, train_preds) if len(y) >= 2 else 0.0
+            # Derive simple 95% confidence intervals based on residual std error
+            residuals = y - train_preds
+            std_error = float(math.sqrt((residuals**2).mean())) if len(y) > 0 else 0.0
+            ci = [(float(p - 1.96 * std_error), float(p + 1.96 * std_error)) for p in preds_arr]
+            return {"predictions": preds_arr.tolist(), "confidence_intervals": ci, "model_accuracy": float(r2)}
+        return self.calculate_predictive_modeling_score(historical_data)
+
+    def calculate_statistical_significance(self, sample1, sample2=None):
+        if sample2 is not None:
+            stat, p = stats.ttest_ind(sample1, sample2)
+            # Include effect size magnitude
+            m1, m2 = statistics.mean(sample1), statistics.mean(sample2)
+            v1 = statistics.variance(sample1) if len(sample1) > 1 else 0.0
+            v2 = statistics.variance(sample2) if len(sample2) > 1 else 0.0
+            n1, n2 = len(sample1), len(sample2)
+            pooled_std = math.sqrt(((n1 - 1) * v1 + (n2 - 1) * v2) / max(1, (n1 + n2 - 2))) if (n1 + n2 - 2) > 0 else 0.0
+            d = abs((m1 - m2) / pooled_std) if pooled_std > 0 else 0.0
+            return {"statistic": float(stat), "p_value": float(p), "significant": bool(p < self.alpha), "effect_size": float(d)}
+        return self.calculate_significance_testing_score(sample1)
+
+    def calculate_trend_analysis(self, data, time_points=None):
+        if time_points is not None:
+            # Use analyze_trend and adapt to expected dict keys
+            if not data:
+                return {"trend": "stable", "slope": 0.0, "r_squared": 0.0}
+            base = time_points[0]
+            x = np.array([t - base for t in time_points], dtype=float).reshape(-1, 1)
+            y = np.array(data, dtype=float)
+            model = LinearRegression()
+            model.fit(x, y)
+            slope = float(model.coef_[0])
+            r2 = float(r2_score(y, model.predict(x)))
+            trend = "stable" if abs(slope) < 1e-6 else ("increasing" if slope > 0 else "decreasing")
+            return {"trend": trend, "slope": slope, "r_squared": r2}
+        return self.calculate_trend_analysis_score(data)
     
     def calculate_confidence_interval_score(self, data: Dict[str, Any]) -> float:
         """

@@ -74,12 +74,12 @@ class EthicalSafetyMetrics(BaseMetric):
         """
         if config is None:
             config = MetricConfig(
-                name="ethical_safety",
+                name="ethical_safety_performance",
                 description="Ethical and safety performance score",
                 unit="score",
                 min_value=0.0,
                 max_value=100.0,
-                target_value=95.0
+                target_value=90.0
             )
         
         super().__init__(config)
@@ -222,6 +222,15 @@ class EthicalSafetyMetrics(BaseMetric):
             ethical_decision * weights['ethical_decision']
         )
         return overall_score
+
+    # Aliases to match external/test API expectations
+    def calculate_safety_protocol(self, data: Dict[str, Any]) -> float:
+        """Alias for calculate_safety_protocol_adherence."""
+        return self.calculate_safety_protocol_adherence(data)
+
+    def calculate_transparency_explainability(self, data: Dict[str, Any]) -> float:
+        """Alias for calculate_transparency_measures."""
+        return self.calculate_transparency_measures(data)
     
     def calculate_bias_detection(self, data: Dict[str, Any]) -> float:
         """

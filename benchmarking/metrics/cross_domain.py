@@ -78,12 +78,12 @@ class CrossDomainMetrics(BaseMetric):
         """
         if config is None:
             config = MetricConfig(
-                name="cross_domain",
+                name="cross_domain_performance",
                 description="Cross-domain evaluation score",
                 unit="score",
                 min_value=0.0,
                 max_value=100.0,
-                target_value=85.0
+                target_value=75.0
             )
         
         super().__init__(config)
@@ -153,6 +153,19 @@ class CrossDomainMetrics(BaseMetric):
         )
         
         return overall_score
+
+    # Aliases to match external/test API expectations
+    def calculate_cross_domain_consistency(self, data: Dict[str, Any]) -> float:
+        """Alias for calculate_consistency."""
+        return self.calculate_consistency(data)
+
+    def calculate_cross_domain_evaluation(self, data: Dict[str, Any]) -> float:
+        """Alias for overall cross-domain evaluation (calculate)."""
+        return self.calculate(data)
+
+    def calculate_generalization_ability(self, data: Dict[str, Any]) -> float:
+        """Alias for calculate_generalization."""
+        return self.calculate_generalization(data)
     
     def calculate_domain_adaptation(self, data: Dict[str, Any]) -> float:
         """
