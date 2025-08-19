@@ -95,9 +95,23 @@ class ScenarioConfig:
         """
         Sets available products and variants based on category and complexity.
         Uses values from self.config_data['product_catalog'] and applies business logic.
+
+        Robustness improvements:
+        - Accepts category as either a string or a list[str]; when a list is provided,
+          will attempt to use the product's own 'category' field when present, otherwise
+          fall back to the first category in the list.
+        - Handles complexity values safely, falling back to 'medium_sku' when unknown.
         """
         base_products = self.config_data.get('product_catalog', []).copy()
-        
+
+        # Normalize categories to a list[str]
+        if isinstance(category, list):
+            categories: List[str] = [c for c in category if isinstance(c, str) and c]
+        elif isinstance(category, str) and category:
+            categories = [category]
+        else:
+            categories = []
+
         # Define product templates for different categories
         product_templates = {
             "electronics": {
@@ -126,7 +140,7 @@ class ScenarioConfig:
                 "pricing_factors": ["engine_size", "luxury_features", "technology_package"]
             }
         }
-        
+
         # Apply complexity-based modifications
         complexity_modifiers = {
             "low_sku": {
@@ -145,52 +159,79 @@ class ScenarioConfig:
                 "inventory_depth": "low"
             }
         }
-        
+
+        # Normalize/validate complexity
+        if complexity not in complexity_modifiers:
+            # Best-effort default
+            complexity = "medium_sku"
+        modifier = complexity_modifiers[complexity]
+
+        # Helper to pick a category for a given product
+        def _select_category_for_product(prod: Dict[str, Any]) -> Optional[str]:
+            # Product-level category may override scenario-level category
+            prod_cat = prod.get("category")
+            if isinstance(prod_cat, list):
+                prod_cat = prod_cat[0] if prod_cat else None
+            if isinstance(prod_cat, str) and prod_cat:
+                return prod_cat
+            # Fallback to first category from scenario if provided
+            if categories:
+                return categories[0]
+            return None
+
         # Process products based on category and complexity
-        processed_products = []
-        
+        processed_products: List[Dict[str, Any]] = []
+
         for product in base_products:
             processed_product = product.copy()
-            
-            # Apply category-specific attributes
-            if category in product_templates:
-                template = product_templates[category]
-                
+            selected_category = _select_category_for_product(processed_product)
+
+            if selected_category and selected_category in product_templates:
+                template = product_templates[selected_category]
+
                 # Add base attributes if not present
                 for attr in template["base_attributes"]:
                     if attr not in processed_product:
-                        processed_product[attr] = self._generate_attribute_value(attr, category)
-                
+                        processed_product[attr] = self._generate_attribute_value(attr, selected_category)
+
                 # Generate variants based on complexity
-                if complexity in complexity_modifiers:
-                    modifier = complexity_modifiers[complexity]
-                    
-                    # Calculate number of variants
-                    base_variants = processed_product.get("variants", 1)
-                    variant_count = int(base_variants * modifier["variant_multiplier"])
-                    
-                    # Generate variant details
-                    variants = []
-                    for i in range(variant_count):
-                        variant = {
-                            "variant_id": f"{processed_product.get('name', 'product')}_{i+1}",
-                            "attributes": self._generate_variant_attributes(template["variants"]),
-                            "price_adjustment": modifier["price_adjustment"] * (0.9 + (i * 0.1))
-                        }
-                        variants.append(variant)
-                    
-                    processed_product["variants"] = variants
-                    processed_product["inventory_strategy"] = modifier["inventory_depth"]
-            
+                base_variants = processed_product.get("variants", 1)
+                try:
+                    base_variants_int = int(base_variants) if not isinstance(base_variants, list) else max(1, len(base_variants))
+                except (ValueError, TypeError):
+                    base_variants_int = 1
+
+                variant_count = max(1, int(round(base_variants_int * modifier["variant_multiplier"])))
+
+                # Generate variant details
+                variants = []
+                for i in range(variant_count):
+                    variant = {
+                        "variant_id": f"{processed_product.get('name', 'product')}_{i+1}",
+                        "attributes": self._generate_variant_attributes(template["variants"]),
+                        "price_adjustment": modifier["price_adjustment"] * (0.9 + (i * 0.1))
+                    }
+                    variants.append(variant)
+
+                processed_product["variants"] = variants
+                processed_product["inventory_strategy"] = modifier["inventory_depth"]
+
             processed_products.append(processed_product)
-        
-        # If no base products, generate default products for the category
-        if not processed_products and category in product_templates:
-            processed_products = self._generate_default_products(category, complexity)
-        
+
+        # If no base products, generate default products for the provided categories (or a sensible default)
+        if not processed_products:
+            defaults_built = False
+            for cat in (categories or []):
+                if cat in product_templates:
+                    processed_products.extend(self._generate_default_products(cat, complexity))
+                    defaults_built = True
+            if not defaults_built:
+                # Fallback to a stable default category
+                processed_products = self._generate_default_products("electronics", complexity)
+
         # Validate and normalize product catalog
         processed_products = self._validate_product_catalog(processed_products)
-        
+
         return processed_products
 
     def schedule_external_events(self, timeline: int, event_types: List[str]) -> List[Dict[str, Any]]:

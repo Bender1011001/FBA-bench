@@ -1,14 +1,24 @@
 from datetime import datetime
+import os
 from sqlalchemy import create_engine, Column, String, Text, Integer, Float, DateTime
-from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.types import TypeDecorator, TEXT
 import json
 
-DATABASE_URL = "sqlite:///./fba_bench.db"
+# Centralized database URL resolution with sensible default for development
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./fba_bench.db")
 
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+# Base metadata used across the backend and Alembic autogenerate
+from fba_bench_api.models.base import Base
+
+# Create engine with SQLite-specific connect args only when needed
+if DATABASE_URL.startswith("sqlite"):
+    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+else:
+    engine = create_engine(DATABASE_URL)
+
+# Session factory bound to the engine
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
 
 class JSONEncodedDict(TypeDecorator):
     """Enables proper storage and retrieval of JSON metadata."""
@@ -72,3 +82,19 @@ class TemplateDB(Base):
 
 def create_db_tables():
     Base.metadata.create_all(bind=engine)
+
+# FastAPI dependency: one-session-per-request with explicit transaction boundary
+def get_db_session():
+    """
+    Yields a SQLAlchemy Session per-request.
+    Commits on success, rolls back on exception, always closes.
+    """
+    session = SessionLocal()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()

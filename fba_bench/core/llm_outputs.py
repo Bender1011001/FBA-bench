@@ -63,3 +63,74 @@ class FbaDecision(BaseModel):
         Convenience method to produce a JSON string of the decision.
         """
         return self.model_dump_json()
+
+
+# Additional canonical LLM output contracts used across the system.
+# These models are intentionally generic and reusable. Validation utilities
+# in fba_bench.core.llm_validation provide strict vs non-strict modes.
+from typing import Any, Dict  # noqa: E402
+
+
+class TaskPlan(BaseModel):
+    """
+    High-level task planning output from an LLM.
+
+    Examples:
+        {
+            "objective": "Increase market share for ASIN B07XEXAMPLE",
+            "steps": ["Analyze competitors", "Adjust price", "Monitor results"],
+            "constraints": ["Budget <= $100", "Price >= cost_basis"],
+            "metadata": {"priority": "high"}
+        }
+    """
+    objective: str = Field(..., description="Primary objective of the plan.")
+    steps: list[str] = Field(..., min_length=1, description="Ordered steps to execute.")
+    constraints: Optional[list[str]] = Field(
+        default=None, description="Optional constraints or guardrails."
+    )
+    metadata: Optional[Dict[str, Any]] = Field(
+        default=None, description="Optional additional metadata."
+    )
+
+
+class ToolCall(BaseModel):
+    """
+    A structured tool invocation request from an LLM.
+
+    Examples:
+        {
+            "tool_name": "set_price",
+            "arguments": {"asin": "B07XEXAMPLE", "price": 23.47},
+            "id": "call-001"
+        }
+    """
+    tool_name: str = Field(..., description="Name of the tool to invoke.")
+    arguments: Dict[str, Any] = Field(..., description="Arguments for the tool.")
+    id: Optional[str] = Field(default=None, description="Optional correlation identifier.")
+
+
+class AgentResponse(BaseModel):
+    """
+    A general-purpose agent response envelope that can include natural language,
+    optional citations, optional tool calls, and an optional plan.
+
+    Examples:
+        {
+            "content": "Lowering price slightly to improve competitiveness.",
+            "citations": ["https://example.com/market-report"],
+            "tool_calls": [
+                {"tool_name": "set_price", "arguments": {"asin": "B07XEXAMPLE", "price": 23.47}}
+            ],
+            "plan": {
+                "objective": "Improve competitiveness",
+                "steps": ["Analyze", "Adjust price", "Observe"],
+                "constraints": ["Price > 0"]
+            }
+        }
+    """
+    content: str = Field(..., description="Primary content or summary.")
+    citations: Optional[list[str]] = Field(default=None, description="Optional reference links.")
+    tool_calls: Optional[list[ToolCall]] = Field(
+        default=None, description="Optional list of tool calls to execute."
+    )
+    plan: Optional[TaskPlan] = Field(default=None, description="Optional task plan.")

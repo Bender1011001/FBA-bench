@@ -1,18 +1,58 @@
 """
-Validator registry for managing available validators.
+Validator registries for managing available validators.
 
-This module provides a centralized registry for all available validators,
-allowing for dynamic registration, discovery, and instantiation of validators.
+This module provides:
+- A legacy class-based registry (ValidatorRegistry) to construct class validators
+- A function-style registry (register_validator/get_validator/list_validators) that maps keys to callables
+  with the interface validate(report: dict, context: dict|None=None) -> dict per the engine contract.
 """
 
 import logging
-from typing import Dict, Any, List, Optional, Type, Union
+from typing import Any, Callable, Dict, List, Optional, Type
 from dataclasses import dataclass
 
 from .base import ValidatorConfig
 from .base import BaseValidator
 
 logger = logging.getLogger(__name__)
+
+# ------------------------------------------------------------------------------
+# Function-style registry (preferred by Engine)
+# ------------------------------------------------------------------------------
+
+_FN_REGISTRY: Dict[str, Callable[[Dict[str, Any], Optional[Dict[str, Any]]], Dict[str, Any]]] = {}
+
+
+def register_validator(key: str, fn: Callable[[Dict[str, Any], Optional[Dict[str, Any]]], Dict[str, Any]]) -> None:
+    """
+    Register a function-style validator.
+
+    Interface requirement:
+      fn(report: dict, context: dict|None=None) -> dict with keys:
+        {"issues": list[dict], "summary": dict}
+    """
+    if not isinstance(key, str) or not key:
+        raise ValueError("validator key must be a non-empty string")
+    if not callable(fn):
+        raise TypeError("validator must be callable")
+    _FN_REGISTRY[key] = fn
+    logger.debug(f"Registered function-style validator '{key}'")
+
+
+def get_validator(key: str) -> Callable[[Dict[str, Any], Optional[Dict[str, Any]]], Dict[str, Any]]:
+    """
+    Lookup a function-style validator by key. Raises KeyError if not found.
+    """
+    if key not in _FN_REGISTRY:
+        raise KeyError(f"validator_not_found: {key}")
+    return _FN_REGISTRY[key]
+
+
+def list_validators() -> List[str]:
+    """
+    List all registered function-style validator keys.
+    """
+    return sorted(_FN_REGISTRY.keys())
 
 
 @dataclass
@@ -40,18 +80,15 @@ class ValidatorRegistry:
     """
     
     def __init__(self):
-        """Initialize the validator registry."""
+        """Initialize the legacy class-based validator registry."""
         self._validators: Dict[str, ValidatorRegistration] = {}
         self._categories: Dict[str, List[str]] = {}
         self._tags: Dict[str, List[str]] = {}
-        
-        # Register built-in validators
-        self._register_builtin_validators()
+        # Legacy path no-op; function-style built-ins are auto-registered at module import below.
     
     def _register_builtin_validators(self) -> None:
-        """Register all built-in validators."""
-        # Note: Built-in validators would be registered here
-        logger.info("No built-in validators registered")
+        """Deprecated: kept for backward-compat with older code paths."""
+        logger.debug("ValidatorRegistry._register_builtin_validators called (no-op).")
     
     def register_validator(
         self,
@@ -397,7 +434,7 @@ class ValidatorRegistry:
         """
         enabled_count = sum(1 for r in self._validators.values() if r.enabled)
         disabled_count = len(self._validators) - enabled_count
-        
+
         return {
             "total_validators": len(self._validators),
             "enabled_validators": enabled_count,
@@ -415,3 +452,14 @@ class ValidatorRegistry:
 
 # Global registry instance
 validator_registry = ValidatorRegistry()
+# Auto-register built-in function-style validators on import
+# Import modules that call register_validator(...) at import-time.
+try:
+    from . import structural_consistency  # noqa: F401
+    from . import determinism_check  # noqa: F401
+    from . import reproducibility_metadata  # noqa: F401
+    from . import schema_adherence  # noqa: F401
+    from . import outlier_detection  # noqa: F401
+    from . import fairness_balance  # noqa: F401
+except Exception as _e:
+    logger.debug(f"Built-in validators import failed or partial: {_e}")

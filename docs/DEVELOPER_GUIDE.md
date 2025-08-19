@@ -189,6 +189,30 @@ frontend/src/
 └── setupTests.ts        # Test setup
 ```
 
+## Redis-backed State Manager
+
+A minimal, production-ready Redis-backed StateManager is available for backend components that need shared state, counters, or lightweight coordination.
+
+Usage:
+
+- Initialize with a namespace to avoid key collisions:
+  ```python
+  from fba_bench_api.core.state import StateManager
+
+  sm = StateManager("sim")  # namespaced under state:sim:*
+  await sm.set("last_status", {"id": "abc", "status": "running"})
+  val = await sm.get("last_status")  # -> {"id": "abc", "status": "running"}
+  cnt = await sm.incr("counter")     # -> 1
+  await sm.notify("changed", {"id": "abc"})
+  keys = await sm.keys("last_*")     # -> ["last_status"]
+  ```
+- All values are JSON-serialized with safe handling for datetime (ISO8601 UTC) and UUID.
+
+Notes:
+- Uses the existing Redis helper and REDIS_URL.
+- Keys are prefixed with state:{namespace}: to prevent clashes.
+- For testing without a real Redis, see tests/integration/test_state_manager.py which uses fakeredis (async) and monkeypatches the Redis client helper.
+
 ## Development Guidelines
 
 ### Backend Development Guidelines

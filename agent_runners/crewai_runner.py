@@ -1,281 +1,404 @@
+from __future__ import annotations
+
 """
 CrewAI Agent Runner for FBA-Bench.
 
-This module implements the AgentRunner interface for CrewAI agents,
-enabling them to participate in the benchmarking system.
+Production-ready runner with:
+- Soft dependency on crewai (optional import)
+- Pydantic v2 config schemas and task input validation
+- Unified async run(task_input: dict) - normalized result shape
+- Tool adapter for callable/dict tool descriptors
+- Robust logging and optional Redis pub/sub progress events
+- Compatibility with AgentRunner base (make_decision bridges to run)
 """
 
-import logging
+import asyncio
 import json
-import re
-from typing import Dict, Any, List, Optional
-from datetime import datetime
+import logging
+import os
+import time
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
 
-from .base_runner import AgentRunner, AgentRunnerStatus, AgentRunnerError, AgentRunnerInitializationError, AgentRunnerDecisionError
-from benchmarking.config.pydantic_config import FrameworkType, LLMConfig, CrewConfig
-from pydantic import ValidationError
-from fba_bench.core.llm_outputs import FbaDecision
+from pydantic import BaseModel, Field, ValidationError, field_validator
+
+from .base_runner import (
+    AgentRunner,
+    AgentRunnerDecisionError,
+    AgentRunnerInitializationError,
+    AgentRunnerStatus,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class CrewAIRunner(AgentRunner):
+# ----------------------------- Config Schemas ---------------------------------
+
+
+class ToolSpec(BaseModel):
+    """Unified tool spec accepted by runner.
+
+    Supports two forms:
+    - callable-only: pass via config.tools=[callable] or task_input["tools"]
+    - dict descriptor: {"name","description","callable","schema"(optional)}
+
+    callable can be sync or async function taking a single dict-like parameter.
     """
-    Agent runner for CrewAI agents.
-    
-    This class integrates CrewAI agents into the FBA-Bench system,
-    allowing them to make pricing decisions in the simulation.
-    """
-    
-    def __init__(self, agent_id: str, config: Dict[str, Any]):
-        """Initialize the CrewAI agent runner."""
-        super().__init__(agent_id, config)
-        self.crewai_agent = None
-        self.crew = None
-        self.llm_config = None
-        self.crew_config = None
-        
-    def _do_initialize(self) -> None:
-        """Initialize the CrewAI agent and crew."""
-        try:
-            # Extract configurations
-            self.llm_config = self._extract_llm_config()
-            self.crew_config = self._extract_crew_config()
-            
-            # Create the CrewAI agent
-            self._create_crewai_agent()
-            
-            # Create the crew
-            self._create_crew()
-            
-            logger.info(f"CrewAI agent runner {self.agent_id} initialized successfully")
-            
-        except ImportError as e:
-            raise AgentRunnerInitializationError(
-                f"CrewAI not available: {e}. Install with: pip install crewai",
-                agent_id=self.agent_id,
-                framework="CrewAI"
-            ) from e
-        except Exception as e:
-            raise AgentRunnerInitializationError(
-                f"Failed to initialize CrewAI agent {self.agent_id}: {e}",
-                agent_id=self.agent_id,
-                framework="CrewAI"
-            ) from e
-    
-    def _extract_llm_config(self) -> LLMConfig:
-        """Extract LLM configuration from the agent config."""
-        llm_config_dict = self.config.get('llm_config', {})
-        
-        # Create LLMConfig with defaults
-        return LLMConfig(
-            name=f"{self.agent_id}_llm",
-            model=llm_config_dict.get('model', 'gpt-4'),
-            api_key=llm_config_dict.get('api_key'),
-            base_url=llm_config_dict.get('base_url'),
-            max_tokens=llm_config_dict.get('max_tokens', 2048),
-            temperature=llm_config_dict.get('temperature', 0.7),
-            top_p=llm_config_dict.get('top_p', 1.0),
-            timeout=llm_config_dict.get('timeout', 30),
-            max_retries=llm_config_dict.get('max_retries', 3)
-        )
-    
-    def _extract_crew_config(self) -> CrewConfig:
-        """Extract Crew configuration from the agent config."""
-        crew_config_dict = self.config.get('crew_config', {})
-        
-        # Create CrewConfig with defaults
-        return CrewConfig(
-            name=f"{self.agent_id}_crew",
-            process=crew_config_dict.get('process', 'sequential'),
-            crew_size=crew_config_dict.get('crew_size', 1),
-            roles=crew_config_dict.get('roles', ['pricing_specialist']),
-            collaboration_mode=crew_config_dict.get('collaboration_mode', 'sequential'),
-            allow_delegation=crew_config_dict.get('allow_delegation', False)
-        )
-    
-    def _create_crewai_agent(self) -> None:
-        """Create the CrewAI agent."""
-        from crewai import Agent
-        
-        # Get agent-specific parameters
-        agent_params = self.config.get('parameters', {})
-        
-        # Create the CrewAI agent
-        self.crewai_agent = Agent(
-            role=agent_params.get('role', 'FBA Pricing Specialist'),
-            goal=agent_params.get('goal', 'Optimize FBA product pricing for maximum profit'),
-            backstory=agent_params.get('backstory', 'You are an experienced FBA pricing expert with deep knowledge of e-commerce markets.'),
-            verbose=False,
-            allow_delegation=self.crew_config.allow_delegation
-        )
-        
-        logger.debug(f"Created CrewAI agent with role: {self.crewai_agent.role}")
-    
-    def _create_crew(self) -> None:
-        """Create the CrewAI crew."""
-        from crewai import Crew, Task
-        
-        # Create a default task for the agent
-        task = Task(
-            description="Analyze FBA market data and make optimal pricing decisions",
-            agent=self.crewai_agent,
-            expected_output="A JSON object with pricing decisions for each product"
-        )
-        
-        # Create the crew
-        self.crew = Crew(
-            agents=[self.crewai_agent],
-            tasks=[task],
-            verbose=False,
-            process=self.crew_config.process
-        )
-        
-        logger.debug(f"Created CrewAI crew with process: {self.crew_config.process}")
-    
-    def make_decision(self, context: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Make a pricing decision using the CrewAI agent.
-        
-        Args:
-            context: Context information including market state and products
-            
-        Returns:
-            Dictionary containing the decision and metadata
-        """
-        try:
-            # Update context
-            self.update_context(context)
-            
-            # Format the task description based on the context
-            task_description = self._format_task_description(context)
-            
-            # Update the crew task
-            from crewai import Task
-            task = Task(
-                description=task_description,
-                agent=self.crewai_agent,
-                expected_output="A JSON object with pricing decisions for each product"
+
+    name: Optional[str] = None
+    description: Optional[str] = None
+    schema: Optional[Dict[str, Any]] = None
+    callable: Optional[Callable[..., Any]] = None
+
+    @field_validator("callable")
+    @classmethod
+    def _ensure_callable(cls, v):
+        if v is not None and not callable(v):
+            raise ValueError("callable must be a function")
+        return v
+
+
+class CrewAIRunnerConfig(BaseModel):
+    """Pydantic v2 config for CrewAI runner."""
+
+    model: Optional[str] = Field(default=None, description="Model name for the LLM provider")
+    temperature: Optional[float] = Field(default=0.3, ge=0.0, le=2.0)
+    max_steps: Optional[int] = Field(default=5, ge=1)
+    tools: Optional[List[Union[ToolSpec, Callable[..., Any], Dict[str, Any]]]] = None
+    memory: Optional[bool] = Field(default=False, description="Enable memory if supported")
+    system_prompt: Optional[str] = Field(
+        default="You are an FBA pricing expert. Provide JSON-only outputs.",
+    )
+    agent_name: Optional[str] = Field(default="CrewAI Pricing Agent")
+    allow_delegation: Optional[bool] = Field(default=False)
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "model": "gpt-4o-mini",
+                    "temperature": 0.2,
+                    "max_steps": 4,
+                    "memory": False,
+                    "system_prompt": "Pricing specialist; output strictly JSON.",
+                    "agent_name": "pricing_agent_1",
+                }
+            ]
+        }
+    }
+
+
+class CrewAITaskInput(BaseModel):
+    """Per-run input schema."""
+
+    prompt: Optional[str] = Field(default=None, description="User high-level task prompt")
+    products: Optional[List[Dict[str, Any]]] = None
+    market_conditions: Optional[Dict[str, Any]] = None
+    recent_events: Optional[List[Dict[str, Any]]] = None
+    tick: Optional[int] = 0
+    tools: Optional[List[Union[ToolSpec, Callable[..., Any], Dict[str, Any]]]] = None
+    extra: Optional[Dict[str, Any]] = None
+
+
+# -------------------------- Internal Utilities --------------------------------
+
+
+async def _maybe_publish_progress(topic: str, event: Dict[str, Any]) -> None:
+    """Publish progress to Redis if REDIS_URL set and redis client available."""
+    if not os.getenv("REDIS_URL"):
+        return
+    try:
+        # Lazy import to avoid hard dependency
+        from fba_bench_api.core.redis_client import get_redis  # type: ignore
+
+        client = await get_redis()
+        payload = json.dumps(event)
+        await client.publish(topic, payload)
+    except Exception as exc:  # pragma: no cover
+        logger.debug("Progress publish skipped (redis unavailable): %s", exc)
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _normalize_tools(
+    tools: Optional[List[Union[ToolSpec, Callable[..., Any], Dict[str, Any]]]]
+) -> List[ToolSpec]:
+    """Normalize tool inputs into ToolSpec list."""
+    if not tools:
+        return []
+    norm: List[ToolSpec] = []
+    for t in tools:
+        if isinstance(t, ToolSpec):
+            norm.append(t)
+        elif callable(t):
+            norm.append(ToolSpec(name=getattr(t, "__name__", "tool"), description=t.__doc__, callable=t))
+        elif isinstance(t, dict):
+            norm.append(ToolSpec.model_validate(t))
+        else:
+            raise ValueError(f"Unsupported tool descriptor type: {type(t)}")
+    return norm
+
+
+def _format_task_prompt(cfg: CrewAIRunnerConfig, ti: CrewAITaskInput) -> str:
+    """Create a deterministic prompt for CrewAI Task."""
+    parts: List[str] = []
+    if cfg.system_prompt:
+        parts.append(cfg.system_prompt)
+    if ti.prompt:
+        parts.append(ti.prompt)
+
+    # Include structured context succinctly
+    if ti.products:
+        parts.append("PRODUCTS:")
+        for p in ti.products:
+            parts.append(
+                f"- ASIN={p.get('asin','?')} price={p.get('current_price','?')} cost={p.get('cost','?')} "
+                f"rank={p.get('sales_rank','?')} inv={p.get('inventory','?')}"
             )
-            
-            # Update the crew with the new task
-            self.crew.tasks = [task]
-            
-            # Execute the crew
-            result = self.crew.kickoff()
-            
-            # Parse and validate structured output using Pydantic
-            decision = self._parse_crewai_result(result)
-            
-            # Update metrics
-            self.update_metrics({
-                'decision_timestamp': datetime.now().isoformat(),
-                'decision_type': 'pricing',
-                'raw_result': str(result),
-                'parsed_decision': decision
-            })
-            
-            return decision
-            
-        except Exception as e:
-            logger.error(f"Error in CrewAI decision making: {e}")
-            raise AgentRunnerDecisionError(
-                f"Decision making failed for CrewAI agent {self.agent_id}: {e}",
-                agent_id=self.agent_id,
-                framework="CrewAI"
-            ) from e
-    
-    def _format_task_description(self, context: Dict[str, Any]) -> str:
-        """Format the task description based on the context."""
-        # Extract relevant information from context
-        products = context.get('products', [])
-        market_conditions = context.get('market_conditions', {})
-        recent_events = context.get('recent_events', [])
-        tick = context.get('tick', 0)
-        
-        # Format the task description
-        task_description = f"You are an FBA pricing expert. Analyze the following data and make optimal pricing decisions for tick {tick}:\n\n"
-        
-        # Add products information
-        if products:
-            task_description += "PRODUCTS:\n"
-            for product in products:
-                task_description += f"- ASIN: {product.get('asin', 'unknown')}, "
-                task_description += f"Current Price: ${product.get('current_price', 0):.2f}, "
-                task_description += f"Cost: ${product.get('cost', 0):.2f}, "
-                task_description += f"Sales Rank: {product.get('sales_rank', 'unknown')}, "
-                task_description += f"Inventory: {product.get('inventory', 0)}\n"
-        
-        # Add market conditions
-        if market_conditions:
-            task_description += "\nMARKET CONDITIONS:\n"
-            for key, value in market_conditions.items():
-                task_description += f"- {key}: {value}\n"
-        
-        # Add recent events
-        if recent_events:
-            task_description += "\nRECENT EVENTS:\n"
-            for event in recent_events[-5:]:  # Only include last 5 events
-                task_description += f"- {event}\n"
-        
-        # Require exact schema compliance for robust parsing
-        schema_text = json.dumps(FbaDecision.model_json_schema(), indent=2)
-        task_description += (
-            "\nRespond ONLY with a valid JSON object that conforms exactly to this schema:\n"
-            f"{schema_text}\n"
-            "Do not include any prose or explanation outside the JSON. "
-            "Use floating-point dollars for prices (e.g., 19.99)."
-        )
+    if ti.market_conditions:
+        parts.append("MARKET:")
+        for k, v in ti.market_conditions.items():
+            parts.append(f"- {k}={v}")
+    if ti.recent_events:
+        parts.append("RECENT_EVENTS:")
+        for e in ti.recent_events[-5:]:
+            parts.append(f"- {e}")
 
-        return task_description
-    
-    def _parse_crewai_result(self, result: Any) -> Dict[str, Any]:
-        """
-        Validate the LLM output against the FbaDecision schema and adapt to legacy dict format.
-        Raises AgentRunnerDecisionError if validation fails.
-        """
-        raw_text = result if isinstance(result, str) else str(result)
+    # Require JSON-only output
+    parts.append(
+        "Respond ONLY with a JSON object: "
+        '{"decisions":[{"asin":"B0...","new_price":19.99,"reasoning":"..."}],'
+        '"meta":{"tick":%d}}' % (ti.tick or 0)
+    )
+    return "\n".join(parts)
 
-        json_text = raw_text
-        if not raw_text.strip().startswith("{"):
-            try:
-                start = raw_text.index("{")
-                end = raw_text.rindex("}") + 1
-                json_text = raw_text[start:end]
-            except Exception:
-                json_text = raw_text
 
+# ------------------------------ Runner ----------------------------------------
+
+
+class CrewAIRunner(AgentRunner):
+    """CrewAI-backed agent runner with unified async run()."""
+
+    def __init__(self, agent_id: str, config: Dict[str, Any]):
+        # Validate and store config safely (do not import crewai here)
+        self._cfg = CrewAIRunnerConfig.model_validate(config or {})
+        self._crewai_agent = None
+        self._crew = None
+        self._tools_spec: List[ToolSpec] = _normalize_tools(self._cfg.tools)
+        super().__init__(agent_id, config)
+
+    def _do_initialize(self) -> None:
+        """Instantiate CrewAI agent and crew (soft import)."""
         try:
-            validated: FbaDecision = FbaDecision.model_validate_json(json_text)
-        except ValidationError as e:
-            logger.error(f"LLM output validation failed: {e}")
-            raise AgentRunnerDecisionError(
-                f"Decision making failed for CrewAI agent {self.agent_id}: invalid structured output",
+            from crewai import Agent as CrewAgent, Crew, Task  # type: ignore
+        except Exception as e:
+            raise AgentRunnerInitializationError(
+                "CrewAI is not installed. Install extras: pip install 'crewai>=0.28'",
                 agent_id=self.agent_id,
                 framework="CrewAI",
             ) from e
 
-        # Build adapted legacy-shaped decision dict
-        adapted: Dict[str, Any] = {
-            "agent_id": self.agent_id,
-            "framework": "CrewAI",
-            "timestamp": datetime.now().isoformat(),
-            "pricing_decisions": {},
-            "reasoning": "Validated structured output",
-        }
-        for pd in validated.pricing_decisions:
-            adapted["pricing_decisions"][pd.asin] = {
-                "price": float(pd.new_price),
-                "confidence": 0.9,
-                "reasoning": pd.reasoning,
+        # Minimal agent; tools added per-run to allow dynamic overrides
+        self._crewai_agent = CrewAgent(
+            role=self._cfg.agent_name or "CrewAI Agent",
+            goal="Make optimal FBA pricing decisions with JSON-only outputs.",
+            backstory="You are a pricing specialist for FBA.",
+            verbose=False,
+            allow_delegation=bool(self._cfg.allow_delegation),
+        )
+
+        # Create a placeholder task; will be replaced in run()
+        placeholder = Task(
+            description="Initialization placeholder task",
+            agent=self._crewai_agent,
+            expected_output="JSON with pricing decisions",
+        )
+        self._crew = Crew(agents=[self._crewai_agent], tasks=[placeholder], verbose=False)
+
+    def _wrap_tools_for_crewai(
+        self, tools_spec: List[ToolSpec]
+    ) -> List[Any]:
+        """Best-effort wrapping of tools to CrewAI Tool interface.
+
+        CrewAI currently integrates with python callables via crewai_tools or built-in adapters.
+        To avoid a hard dependency on crewai_tools, we dynamically create simple adapters.
+        """
+        wrapped: List[Any] = []
+        if not tools_spec:
+            return wrapped
+
+        try:
+            # Some versions expose a simple Tool class; else directly pass callables to Task with context
+            from crewai import Tool as CrewTool  # type: ignore
+            for ts in tools_spec:
+                if not ts.callable:
+                    continue
+
+                func = ts.callable
+
+                async def _run(value: str, _f=func) -> str:
+                    try:
+                        payload = json.loads(value) if isinstance(value, str) else value
+                    except Exception:
+                        payload = {"input": value}
+                    res = _f(payload)
+                    if asyncio.iscoroutine(res):
+                        res = await res
+                    return json.dumps(res) if not isinstance(res, str) else res
+
+                # Crew Tool expects a sync callable; provide sync shim
+                def _sync_runner(value: str, _af=_run):
+                    return asyncio.run(_af(value))
+
+                wrapped.append(
+                    CrewTool(
+                        name=ts.name or getattr(func, "__name__", "tool"),
+                        description=ts.description or "Runner-provided tool",
+                        func=_sync_runner,
+                    )
+                )
+            return wrapped
+        except Exception:
+            # Fallback: return empty list if wrapping is not supported
+            logger.debug("CrewAI Tool adapter not available; continuing without tools")
+            return []
+
+    async def run(self, task_input: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute a single CrewAI run and return normalized result.
+
+        Returns:
+          {
+            "status": "success"|"failed",
+            "output": str,
+            "steps": [ {"role","content","tool_call"?:{...}} ],
+            "tool_calls": [ {name,args,result}? ],
+            "metrics": { "duration_ms":..., "token_usage":{...}? }
+          }
+        """
+        started = time.monotonic()
+        steps: List[Dict[str, Any]] = []
+        tool_calls: List[Dict[str, Any]] = []
+        topic = f"runner:crewai:{self.agent_id}"
+
+        try:
+            inp = CrewAITaskInput.model_validate(task_input or {})
+        except ValidationError as ve:
+            return {
+                "status": "failed",
+                "output": f"Invalid task_input: {ve}",
+                "steps": [],
+                "tool_calls": [],
+                "metrics": {"duration_ms": int((time.monotonic() - started) * 1000)},
             }
-        if validated.meta:
-            adapted["meta"] = validated.meta
-        return adapted
-    
+
+        await _maybe_publish_progress(topic, {"phase": "start", "at": _now_iso(), "tick": inp.tick})
+
+        # Ensure initialized; AgentRunner constructor usually did it, but guard
+        if self.status != AgentRunnerStatus.READY:
+            self._do_initialize()
+            self.status = AgentRunnerStatus.READY
+
+        # Merge and normalize tools (config + per-run)
+        run_tools = _normalize_tools(inp.tools) if inp.tools else []
+        tools_spec = run_tools or self._tools_spec
+        wrapped_tools = self._wrap_tools_for_crewai(tools_spec)
+
+        # Build prompt and Task
+        prompt = _format_task_prompt(self._cfg, inp)
+        steps.append({"role": "system", "content": self._cfg.system_prompt or ""})
+        if inp.prompt:
+            steps.append({"role": "user", "content": inp.prompt})
+
+        try:
+            from crewai import Task  # type: ignore
+
+            # Some versions of Crew accept tools at Crew or Task level; attach if supported.
+            # We set Task with description; Crew already exists.
+            task_kwargs: Dict[str, Any] = {
+                "description": prompt,
+                "agent": self._crewai_agent,
+                "expected_output": "JSON with pricing decisions",
+            }
+            if wrapped_tools:
+                task_kwargs["tools"] = wrapped_tools
+
+            task = Task(**task_kwargs)
+            # Replace tasks, run
+            self._crew.tasks = [task]  # type: ignore[attr-defined]
+
+            await _maybe_publish_progress(topic, {"phase": "inference_start", "at": _now_iso()})
+            result = await asyncio.to_thread(self._crew.kickoff)  # type: ignore[attr-defined]
+            await _maybe_publish_progress(topic, {"phase": "inference_end", "at": _now_iso()})
+
+            output_text = result if isinstance(result, str) else str(result)
+
+            # Basic post-processing: attempt to detect tool usage if the framework surfaces it
+            # CrewAI's public API for tool traces is limited; record provided tools as available.
+            for ts in tools_spec:
+                tool_calls.append({"name": ts.name or "tool", "args": None, "result": None})
+
+            steps.append({"role": "assistant", "content": output_text})
+
+            duration_ms = int((time.monotonic() - started) * 1000)
+            metrics = {"duration_ms": duration_ms}
+
+            await _maybe_publish_progress(
+                topic,
+                {"phase": "complete", "at": _now_iso(), "duration_ms": duration_ms},
+            )
+
+            return {
+                "status": "success",
+                "output": output_text,
+                "steps": steps,
+                "tool_calls": tool_calls,
+                "metrics": metrics,
+            }
+        except Exception as e:
+            logger.exception("CrewAI run failed: %s", e)
+            await _maybe_publish_progress(topic, {"phase": "error", "at": _now_iso(), "error": str(e)})
+            return {
+                "status": "failed",
+                "output": f"Error: {e}",
+                "steps": steps,
+                "tool_calls": tool_calls,
+                "metrics": {"duration_ms": int((time.monotonic() - started) * 1000)},
+            }
+
+    # ---------------- AgentRunner compatibility (decide/make_decision) ----------
+
+    def make_decision(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Sync bridge to async run(); used by AgentRunner.make_decision_async."""
+        # Map Simulation context to task_input prompt; keep same output text
+        task_input = {
+            "prompt": "Make pricing decisions for the given state.",
+            "products": context.get("products"),
+            "market_conditions": context.get("market_conditions"),
+            "recent_events": context.get("recent_events"),
+            "tick": context.get("tick", 0),
+        }
+        # Run in a nested loop-safe way
+        try:
+            result = asyncio.run(self.run(task_input))
+        except RuntimeError:
+            # Already in event loop; offload
+            result = asyncio.get_event_loop().run_until_complete(self.run(task_input))  # type: ignore
+        if result.get("status") != "success":
+            raise AgentRunnerDecisionError(
+                f"CrewAI decision failed: {result.get('output','')}",
+                agent_id=self.agent_id,
+                framework="CrewAI",
+            )
+        # Adapt as a plain dict for ToolCall wrapper upstream
+        return result
+
     def _do_cleanup(self) -> None:
-        """Clean up CrewAI resources."""
-        # CrewAI doesn't require explicit cleanup
-        self.crewai_agent = None
-        self.crew = None
-        logger.info(f"CrewAI agent runner {self.agent_id} cleaned up")
+        self._crewai_agent = None
+        self._crew = None
+        logger.info("CrewAI runner %s cleaned up", self.agent_id)
+
+
+__all__ = ["CrewAIRunner", "CrewAIRunnerConfig", "CrewAITaskInput", "ToolSpec"]

@@ -68,3 +68,62 @@ class SimulationStatusResponse(BaseModel):
     statistics: Dict[str, Any]
     simulation_id: Optional[str] = None
     message: Optional[str] = None
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Dict, Optional
+
+from sqlalchemy import String, ForeignKey, Enum as SAEnum
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from .base import Base, JSONEncoded, TimestampMixin
+
+
+def websocket_topic(sim_id: str) -> str:
+    return f"simulation-progress:{sim_id}"
+
+
+class SimulationStatusEnum(str):
+    pending = "pending"
+    running = "running"
+    stopped = "stopped"
+    completed = "completed"
+    failed = "failed"
+
+
+class SimulationORM(TimestampMixin, Base):
+    __tablename__ = "simulations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)  # UUID4 string
+    experiment_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("experiments.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    status: Mapped[str] = mapped_column(
+        SAEnum(
+            SimulationStatusEnum.pending,
+            SimulationStatusEnum.running,
+            SimulationStatusEnum.stopped,
+            SimulationStatusEnum.completed,
+            SimulationStatusEnum.failed,
+            name="simulation_status_enum",
+            native_enum=False,
+            validate_strings=True,
+        ),
+        nullable=False,
+        default=SimulationStatusEnum.pending,
+    )
+
+    metadata: Mapped[dict] = mapped_column(JSONEncoded, nullable=True, default=dict)
+
+    # Relationships
+    experiment = relationship("ExperimentORM", backref="simulations", lazy="joined")
+
+    def to_dict_with_topic(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "experiment_id": self.experiment_id,
+            "status": self.status,
+            "websocket_topic": websocket_topic(self.id),
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "metadata": self.metadata or {},
+        }

@@ -1,47 +1,33 @@
-# DEPRECATED: RunnerFactory has been removed in favor of unified AgentFactory usage.
-# This module remains importable for legacy code paths but raises on use.
+"""
+Deprecated module: agent_runners.runner_factory
 
+This module has been removed. Import from agent_runners.registry instead.
+
+Migration:
+- from agent_runners.registry import create_runner, supported_runners
+
+Example:
+- runner = create_runner("crewai", {"model": "gpt-4o-mini"})
+"""
+
+from __future__ import annotations
+
+import importlib
 import logging
-from typing import Any, Dict, List, Type
 
 logger = logging.getLogger(__name__)
 
+try:
+    registry = importlib.import_module("agent_runners.registry")
+    supported = getattr(registry, "supported_runners", lambda: [])()
+except Exception:
+    supported = []
 
-class AgentRunner:  # minimal type for legacy annotations; not to be instantiated here
-    pass
+msg = (
+    "runner_factory is deprecated and has been removed.\n"
+    "Use agent_runners.registry:create_runner instead.\n"
+    f"Supported keys: {', '.join(supported) if supported else '(unknown)'}"
+)
 
-
-class RunnerFactory:  # legacy shim
-    _runners: Dict[str, Type[AgentRunner]] = {}
-
-    @classmethod
-    def register_runner(cls, framework_name: str, runner_cls: Type[AgentRunner]) -> None:
-        raise ImportError(
-            "RunnerFactory.register_runner is deprecated. "
-            "Agent creation is handled by AgentManager with unified agents."
-        )
-
-    @classmethod
-    def create_runner(cls, framework: str, agent_id: str, config: Dict[str, Any]) -> AgentRunner:
-        raise ImportError(
-            "RunnerFactory.create_runner is deprecated. "
-            "Agent creation is handled by AgentManager with unified agents."
-        )
-
-    @classmethod
-    def list_runners(cls) -> List[str]:
-        # Return empty list for compatibility with code that enumerates frameworks
-        logger.warning("RunnerFactory.list_runners is deprecated. Returning empty list.")
-        return []
-
-    @classmethod
-    async def create_and_initialize_runner(cls, framework: str, agent_id: str, config: Dict[str, Any]) -> AgentRunner:
-        raise ImportError(
-            "RunnerFactory.create_and_initialize_runner is deprecated. "
-            "Agent creation is handled by AgentManager with unified agents."
-        )
-
-    @classmethod
-    def get_all_frameworks(cls) -> List[str]:
-        return []
+raise RuntimeError(msg)
 

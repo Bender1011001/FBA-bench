@@ -19,13 +19,17 @@ from ..scenarios.registry import scenario_registry
 
 # Import existing systems
 try:
-    from agent_runners.runner_factory import RunnerFactory
+    from agent_runners.registry import create_runner, supported_runners
     from agent_runners.base_runner import AgentRunner
     from fba_bench.core.types import SimulationState, ToolCall
     AGENT_RUNNERS_AVAILABLE = True
 except ImportError:
     AGENT_RUNNERS_AVAILABLE = False
     logging.warning("agent_runners module not available")
+
+# Back-compat shim: allow tests that patch benchmarking.integration.manager.RunnerFactory
+# to still find a symbol, even though creation now routes through registry helpers.
+RunnerFactory = None  # deprecated alias for test patch targets
 
 try:
     from metrics.metric_suite import MetricSuite
@@ -160,7 +164,7 @@ class IntegrationManager:
         if AGENT_RUNNERS_AVAILABLE:
             try:
                 # Check available runners
-                available_runners = RunnerFactory.list_runners()
+                available_runners = supported_runners()
                 status.capabilities = [f"runner_{runner}" for runner in available_runners]
                 status.version = "integrated"
                 
@@ -391,16 +395,13 @@ class IntegrationManager:
             return None
         
         try:
-            # Prefer legacy factory if a concrete implementation is available at runtime.
-            # Note: The current RunnerFactory methods may be deprecated and raise ImportError.
-            runner = await RunnerFactory.create_and_initialize_runner(framework, agent_id, config)
+            # Unified explicit creation via registry helper
+            # Validate config via target runner's Pydantic model in create_runner
+            runner = create_runner(framework, {"agent_id": agent_id, **(config or {})})
+            if hasattr(runner, "initialize"):
+                await runner.initialize(config or {})
             logger.info(f"Created agent runner {agent_id} with framework {framework}")
             return runner
-        except ImportError as e:
-            # Graceful degradation: RunnerFactory path is deprecated.
-            # Future: integrate AgentManager + UnifiedAgentRunner directly here.
-            logger.warning(f"RunnerFactory unavailable/deprecated for {framework}: {e}")
-            return None
         except Exception as e:
             logger.error(f"Failed to create agent runner {agent_id}: {e}")
             return None

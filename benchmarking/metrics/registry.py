@@ -631,5 +631,69 @@ class MetricRegistry:
         }
 
 
-# Global registry instance
+# Global registry instance (legacy class-based)
 metrics_registry = MetricRegistry()
+
+# -----------------------------------------------------------------------------
+# Function-style metrics registry (new)
+# -----------------------------------------------------------------------------
+from typing import Callable, Optional as _Optional
+
+_FN_METRICS: dict[str, Callable[[dict, dict | None], dict]] = {}
+
+def register_metric(key: str, fn: Callable[[dict, dict | None], dict]) -> None:
+    """
+    Register a function-style metric.
+
+    Args:
+        key: Unique metric key
+        fn: Callable evaluate(run: dict, context: dict|None=None) -> dict
+    """
+    if not isinstance(key, str) or not key:
+        raise ValueError("Metric key must be a non-empty string")
+    if not callable(fn):
+        raise TypeError("Metric function must be callable")
+    _FN_METRICS[key] = fn
+    logger.debug(f"Registered function metric '{key}'")
+
+def get_metric(key: str) -> Callable[[dict, dict | None], dict]:
+    """
+    Lookup a function-style metric by key.
+
+    Raises:
+        KeyError if the metric is not found with a clear guidance message.
+    """
+    try:
+        return _FN_METRICS[key]
+    except KeyError as exc:
+        available = ", ".join(sorted(_FN_METRICS.keys()))
+        raise KeyError(
+            f"Unknown metric '{key}'. Available metrics: [{available}]. "
+            "Ensure the metric module is importable or correctly registered."
+        ) from exc
+
+def list_metrics() -> list[str]:
+    """List function-style metric keys."""
+    return sorted(_FN_METRICS.keys())
+
+# Soft import built-in function metrics to auto-register without importing heavy legacy modules
+def _auto_register_builtin_function_metrics() -> None:
+    # Importing modules triggers their self-registration via register_metric(...)
+    # Each import is wrapped to avoid hard failures on optional modules.
+    modules = [
+        "benchmarking.metrics.technical_performance_v2",
+        "benchmarking.metrics.accuracy_score",
+        "benchmarking.metrics.keyword_coverage",
+        "benchmarking.metrics.policy_compliance",
+        "benchmarking.metrics.robustness",
+        "benchmarking.metrics.cost_efficiency",
+        "benchmarking.metrics.completeness",
+        "benchmarking.metrics.custom_scriptable",
+    ]
+    for mod in modules:
+        try:
+            __import__(mod)
+        except Exception as e:
+            logger.debug(f"Optional metric module '{mod}' not importable: {e}")
+
+_auto_register_builtin_function_metrics()

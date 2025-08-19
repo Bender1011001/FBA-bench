@@ -1,122 +1,145 @@
 from __future__ import annotations
-import uuid
+
+import logging
 from datetime import datetime
-from typing import Dict, Any, List
-from fastapi import APIRouter, HTTPException
+from typing import Optional, Literal
 
-from fba_bench_api.core.state import experiment_configs_db
-from fba_bench_api.models.experiments import (
-    ExperimentCreateRequest, ExperimentStatusResponse, ExperimentResultsResponse
-)
+from fastapi import APIRouter, HTTPException, Depends, status
+from pydantic import BaseModel, Field, field_validator
+from sqlalchemy.orm import Session
 
+from fba_bench_api.core.database import get_db_session
+from fba_bench_api.core.persistence import PersistenceManager
+
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/experiments", tags=["Experiments"])
 
-@router.post("", response_model=ExperimentStatusResponse, status_code=201)
-async def create_experiment(req: ExperimentCreateRequest):
-    exp_id = str(uuid.uuid4())
-    now = datetime.now()
-    total = 1
-    for values in req.parameter_sweep.values():
-        total *= len(values)
-    if req.max_runs:
-        total = min(total, req.max_runs)
+# Status enum and validation
+ExperimentStatus = Literal["draft", "running", "completed", "failed"]
 
-    data: Dict[str, Any] = {
-        "experiment_id": exp_id,
-        "config": {
-            "experiment_name": req.experiment_name,
-            "description": req.description,
-            "base_parameters": req.base_parameters,
-            "parameter_sweep": req.parameter_sweep,
-            "output_config": req.output_config,
-            "parallel_workers": req.parallel_workers,
-            "max_runs": req.max_runs,
-        },
-        "status": "running",
-        "total_runs": total,
-        "completed_runs": 0,
-        "successful_runs": 0,
-        "failed_runs": 0,
-        "progress_percentage": 0.0,
-        "start_time": now,
-        "end_time": None,
-        "current_run_details": None,
-        "message": f"Experiment started with {total} total runs",
+# Pydantic Schemas
+class ExperimentBase(BaseModel):
+    name: str = Field(..., min_length=1, description="Experiment name")
+    description: Optional[str] = Field(None, description="Optional description")
+    agent_id: str = Field(..., min_length=1, description="Associated agent id (UUID4 string)")
+    scenario_id: Optional[str] = Field(None, description="Scenario identifier")
+    params: dict = Field(default_factory=dict, description="Arbitrary parameters for the run")
+
+    @field_validator("name")
+    @classmethod
+    def _validate_name(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("name must be non-empty")
+        return v.strip()
+
+class ExperimentCreate(ExperimentBase):
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "name": "Exp1",
+                "description": "Benchmark agent on scenario-abc",
+                "agent_id": "7f3a3a2f-6f2b-4bfb-8b9b-2b7b0f5f8e12",
+                "scenario_id": "scenario-abc",
+                "params": {"k": 1, "seed": 42}
+            }
+        }
+
+class ExperimentUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1)
+    description: Optional[str] = None
+    params: Optional[dict] = None
+    status: Optional[ExperimentStatus] = None
+
+    @field_validator("name")
+    @classmethod
+    def _validate_name(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not v.strip():
+            raise ValueError("name must be non-empty when provided")
+        return v.strip() if v else v
+
+    class Config:
+        json_schema_extra = {
+            "example": {"name": "Exp1-updated", "status": "running", "params": {"k": 2}}
+        }
+
+class Experiment(ExperimentBase):
+    id: str
+    status: ExperimentStatus = "draft"
+    created_at: datetime
+    updated_at: datetime
+
+def get_pm(db: Session = Depends(get_db_session)) -> PersistenceManager:
+    return PersistenceManager(db)
+
+# Utilities
+import uuid as _uuid
+def _uuid4() -> str:
+    return str(_uuid.uuid4())
+
+def _now() -> datetime:
+    return datetime.utcnow()
+
+# Transition validation
+def _validate_transition(current: ExperimentStatus, desired: ExperimentStatus) -> None:
+    allowed = {
+        "draft": {"running"},
+        "running": {"completed", "failed"},
+        "completed": set(),
+        "failed": set(),
     }
-    experiment_configs_db[exp_id] = data
-    return ExperimentStatusResponse(**data)
+    if desired not in allowed[current]:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"Invalid status transition: {current} -> {desired}",
+        )
 
-@router.get("/{experiment_id}", response_model=ExperimentStatusResponse)
-async def get_experiment_status(experiment_id: str):
-    if experiment_id not in experiment_configs_db:
-        raise HTTPException(404, f"Experiment '{experiment_id}' not found")
-    return ExperimentStatusResponse(**experiment_configs_db[experiment_id])
+# Routes
 
-@router.post("/{experiment_id}/stop", response_model=ExperimentStatusResponse)
-async def stop_experiment(experiment_id: str):
-    if experiment_id not in experiment_configs_db:
-        raise HTTPException(404, f"Experiment '{experiment_id}' not found")
-    ex = experiment_configs_db[experiment_id]
-    if ex["status"] not in {"running", "paused"}:
-        raise HTTPException(400, f"Experiment '{experiment_id}' is not running")
-    ex["status"] = "stopped"
-    ex["end_time"] = datetime.now()
-    ex["message"] = "Experiment stopped by user request"
-    return ExperimentStatusResponse(**ex)
+@router.get("", response_model=list[Experiment], description="List all experiments")
+async def list_experiments(pm: PersistenceManager = Depends(get_pm)):
+    items = pm.experiments().list()
+    return [Experiment(**i) for i in items]
 
-@router.get("/{experiment_id}/results", response_model=ExperimentResultsResponse)
-async def get_experiment_results(experiment_id: str):
-    if experiment_id not in experiment_configs_db:
-        raise HTTPException(404, f"Experiment '{experiment_id}' not found")
-    ex = experiment_configs_db[experiment_id]
-    summary = {
-        "experiment_name": ex["config"]["experiment_name"],
-        "total_runs": ex["total_runs"],
-        "successful_runs": ex["successful_runs"],
-        "failed_runs": ex["failed_runs"],
-        "average_execution_time": 0.0,
-        "parameter_sweep_summary": ex["config"]["parameter_sweep"],
+@router.post("", response_model=Experiment, status_code=status.HTTP_201_CREATED, description="Create a new experiment (starts as draft)")
+async def create_experiment(payload: ExperimentCreate, pm: PersistenceManager = Depends(get_pm)):
+    data = payload.model_dump()
+    item = {
+        "id": _uuid4(),
+        "name": data["name"],
+        "description": data.get("description"),
+        "agent_id": data["agent_id"],
+        "scenario_id": data.get("scenario_id"),
+        "params": data.get("params") or {},
+        "status": "draft",
+        "created_at": _now(),
+        "updated_at": _now(),
     }
-    return ExperimentResultsResponse(
-        experiment_id=experiment_id,
-        status=ex["status"],
-        results_summary=summary,
-        individual_run_results=[],
-        results_uri=f"results/{ex['config']['experiment_name']}_{experiment_id}"
-    )
+    created = pm.experiments().create(item)
+    return Experiment(**created)
 
-# Convenience lists for your ExperimentManagement page
-@router.get("/../api/experiments/active")
-async def get_active_experiments():
-    out = []
-    for exp_id, ex in experiment_configs_db.items():
-        if ex.get("status") in {"running", "queued", "paused"}:
-            out.append({
-                "id": exp_id,
-                "experimentName": ex["config"]["experiment_name"],
-                "description": ex["config"].get("description", ""),
-                "config": ex["config"],
-                "status": ex["status"],
-                "progress": ex.get("progress_percentage", 0),
-                "startTime": ex.get("start_time").isoformat() if ex.get("start_time") else None,
-                "lastUpdated": ex.get("last_updated", ""),
-            })
-    return out
+@router.get("/{experiment_id}", response_model=Experiment, description="Retrieve experiment by id")
+async def get_experiment(experiment_id: str, pm: PersistenceManager = Depends(get_pm)):
+    item = pm.experiments().get(experiment_id)
+    if not item:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Experiment '{experiment_id}' not found")
+    return Experiment(**item)
 
-@router.get("/../api/experiments/completed-full")
-async def get_completed_experiments():
-    out = []
-    for exp_id, ex in experiment_configs_db.items():
-        if ex.get("status") in {"completed", "failed", "cancelled", "stopped"}:
-            out.append({
-                "id": exp_id,
-                "experimentName": ex["config"]["experiment_name"],
-                "description": ex["config"].get("description", ""),
-                "config": ex["config"],
-                "status": ex["status"],
-                "progress": 100 if ex["status"] == "completed" else ex.get("progress_percentage", 0),
-                "startTime": ex.get("start_time").isoformat() if ex.get("start_time") else None,
-                "endTime": ex.get("end_time").isoformat() if ex.get("end_time") else None,
-                "lastUpdated": ex.get("last_updated", ""),
-            })
-    return out
+@router.patch("/{experiment_id}", response_model=Experiment, description="Update experiment metadata or transition status")
+async def update_experiment(experiment_id: str, payload: ExperimentUpdate, pm: PersistenceManager = Depends(get_pm)):
+    current = pm.experiments().get(experiment_id)
+    if not current:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Experiment '{experiment_id}' not found")
+    update_data = payload.model_dump(exclude_unset=True)
+    # Handle status transitions
+    if "status" in update_data:
+        _validate_transition(current["status"], update_data["status"])  # type: ignore[arg-type]
+    update_data["updated_at"] = _now()
+    updated = pm.experiments().update(experiment_id, update_data)
+    return Experiment(**updated)  # type: ignore[arg-type]
+
+@router.delete("/{experiment_id}", status_code=status.HTTP_204_NO_CONTENT, description="Delete an experiment")
+async def delete_experiment(experiment_id: str, pm: PersistenceManager = Depends(get_pm)):
+    ok = pm.experiments().delete(experiment_id)
+    if not ok:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Experiment '{experiment_id}' not found")
+    return None

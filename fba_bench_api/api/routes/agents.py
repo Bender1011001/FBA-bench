@@ -1,12 +1,18 @@
 from __future__ import annotations
 import os, yaml, logging
-from typing import Dict, Any, List
-from fastapi import APIRouter, HTTPException
+from typing import Dict, Any, List, Optional, Literal
+from datetime import datetime
+
+from fastapi import APIRouter, HTTPException, Depends, status
+from pydantic import BaseModel, Field, validator
 
 from fba_bench_api.models.agents import (
     AgentConfigurationResponse, AgentValidationRequest, AgentValidationResponse, FrameworksResponse
 )
 from benchmarking.config.pydantic_config import UnifiedAgentRunnerConfig, LLMConfig, MemoryConfig, AgentConfig, CrewConfig
+from fba_bench_api.core.database import get_db_session
+from sqlalchemy.orm import Session
+from fba_bench_api.core.persistence import PersistenceManager
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/agents", tags=["Agents"])
@@ -105,3 +111,111 @@ async def validate_agent_configuration(req: AgentValidationRequest):
         msg = f"Agent configuration has {len(errors)} validation errors"
         details["errors"] = errors
     return AgentValidationResponse(is_valid=ok, message=msg, details=details)
+
+# === CRUD Agent Management (in-memory repository, production-ready interface) ===
+from fastapi import status
+
+def get_pm(db: Session = Depends(get_db_session)) -> PersistenceManager:
+    return PersistenceManager(db)
+
+# Pydantic Schemas
+FrameworkEnum = Literal["baseline", "langchain", "crewai", "custom"]
+
+class AgentBase(BaseModel):
+    name: str = Field(..., min_length=1, description="Human-readable agent name")
+    framework: FrameworkEnum = Field(..., description="Agent framework")
+    config: dict | None = Field(default=None, description="Framework-specific configuration")
+
+    @validator("name")
+    def _validate_name(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("name must be non-empty")
+        return v.strip()
+
+class AgentCreate(AgentBase):
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "name": "My Agent",
+                "framework": "baseline",
+                "config": {"model": "gpt-4o-mini", "temperature": 0.2}
+            }
+        }
+
+class AgentUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1)
+    framework: Optional[FrameworkEnum] = None
+    config: Optional[dict] = None
+
+    @validator("name")
+    def _validate_name(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not v.strip():
+            raise ValueError("name must be non-empty when provided")
+        return v.strip() if v else v
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "name": "Updated Agent",
+                "config": {"temperature": 0.3}
+            }
+        }
+
+class Agent(AgentBase):
+    id: str = Field(..., description="UUID4 identifier")
+    created_at: datetime
+    updated_at: datetime
+
+# Utilities
+import uuid as _uuid
+def _uuid4() -> str:
+    return str(_uuid.uuid4())
+
+def _now() -> datetime:
+    return datetime.utcnow()
+
+# CRUD Endpoints
+
+@router.get("", response_model=list[Agent], description="List all agents")
+async def list_agents(pm: PersistenceManager = Depends(get_pm)):
+    items = pm.agents().list()
+    return [Agent(**i) for i in items]
+
+@router.post("", response_model=Agent, status_code=status.HTTP_201_CREATED, description="Create a new agent")
+async def create_agent(payload: AgentCreate, pm: PersistenceManager = Depends(get_pm)):
+    data = payload.model_dump()
+    item = {
+        "id": _uuid4(),
+        "name": data["name"],
+        "framework": data["framework"],
+        "config": data.get("config") or {},
+        "created_at": _now(),
+        "updated_at": _now(),
+    }
+    created = pm.agents().create(item)
+    return Agent(**created)
+
+@router.get("/{agent_id}", response_model=Agent, description="Retrieve an agent by id")
+async def get_agent(agent_id: str, pm: PersistenceManager = Depends(get_pm)):
+    item = pm.agents().get(agent_id)
+    if not item:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Agent '{agent_id}' not found")
+    return Agent(**item)
+
+@router.patch("/{agent_id}", response_model=Agent, description="Update an existing agent")
+async def update_agent(agent_id: str, payload: AgentUpdate, pm: PersistenceManager = Depends(get_pm)):
+    # Validate framework transitions are within enum (handled by pydantic)
+    current = pm.agents().get(agent_id)
+    if not current:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Agent '{agent_id}' not found")
+    update_data = payload.model_dump(exclude_unset=True)
+    update_data["updated_at"] = _now()
+    updated = pm.agents().update(agent_id, update_data)
+    return Agent(**updated)  # type: ignore[arg-type]
+
+@router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT, description="Delete an agent")
+async def delete_agent(agent_id: str, pm: PersistenceManager = Depends(get_pm)):
+    ok = pm.agents().delete(agent_id)
+    if not ok:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Agent '{agent_id}' not found")
+    return None

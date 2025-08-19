@@ -1,0 +1,333 @@
+/* Global, framework-agnostic styles for responsive layout, focus visibility, and dark mode support */
+
+/* CSS Reset-lite and base vars */
+:root {
+  --header-height: 56px;
+  --sidebar-width: 260px;
+  --sidebar-width-collapsed: 64px;
+  --transition-fast: 160ms;
+  --ring-color: 60 130 246;
+  color-scheme: light dark;
+}
+
+/* Focus outlines for accessibility */
+:where(a, button, input, select, textarea, [tabindex]:not([tabindex="-1"])):focus {
+  outline: 3px solid rgb(var(--ring-color) / 0.6);
+  outline-offset: 2px;
+}
+
+/* Skip to content link utility (paired with App.tsx anchor) */
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+.focus\:not-sr-only:focus {
+  position: static !important;
+  width: auto !important;
+  height: auto !important;
+  margin: 0 !important;
+  overflow: visible !important;
+  clip: auto !important;
+  white-space: normal !important;
+}
+
+/* App shell grid */
+.app-shell {
+  display: grid;
+  grid-template-rows: var(--header-height) 1fr;
+  min-height: 100dvh;
+}
+
+@media (min-width: 768px) {
+  .app-shell.with-sidebar {
+    grid-template-columns: var(--sidebar-width) 1fr;
+    grid-template-rows: var(--header-height) 1fr;
+    grid-template-areas:
+      "header header"
+      "sidebar main";
+  }
+}
+
+.header {
+  grid-area: header;
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: var(--header-bg, #ffffff);
+  border-bottom: 1px solid color-mix(in oklab, CanvasText 10%, transparent);
+}
+
+.sidebar {
+  grid-area: sidebar;
+  position: relative;
+  z-index: 30;
+  width: 100%;
+  transform: translateX(-100%);
+  transition: transform var(--transition-fast) ease, width var(--transition-fast) ease;
+  background: var(--sidebar-bg, #0b1220);
+  color: #e8eefc;
+  will-change: transform, width;
+}
+
+.sidebar.open {
+  transform: translateX(0);
+}
+
+@media (min-width: 768px) {
+  .sidebar {
+    transform: none;
+    width: var(--sidebar-width);
+  }
+  .sidebar.collapsed {
+    width: var(--sidebar-width-collapsed);
+  }
+}
+
+.main {
+  grid-area: main;
+  min-width: 0;
+  overflow: auto;
+}
+
+/* Dark mode preferences */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --header-bg: #0b1220;
+    --sidebar-bg: #0b1220;
+  }
+  body {
+    color: #e5e7eb;
+    background: #0b1220;
+  }
+  .header {
+    border-bottom-color: color-mix(in oklab, Canvas 20%, transparent);
+  }
+}
+
+/* Utility: visually-hidden but available to screen-readers */
+.visually-hidden {
+  position: absolute !important;
+  clip: rect(0 0 0 0) !important;
+  clip-path: inset(50%) !important;
+  height: 1px !important;
+  width: 1px !important;
+  overflow: hidden !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+  padding: 0 !important;
+  margin: -1px !important;
+}
+
+/* Sidebar overlay on mobile */
+.sidebar-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 0.4);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-fast) ease;
+  z-index: 20;
+}
+
+.sidebar-overlay.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Simple container constraints */
+.container {
+  width: 100%;
+  max-width: 1200px;
+  margin-inline: auto;
+  padding-inline: 1rem;
+}
+
+/* Header search input baseline styling */
+.header-search {
+  appearance: none;
+  border: 1px solid #d1d5db;
+  background: #fff;
+  border-radius: .5rem;
+  padding: .5rem .75rem;
+  width: 100%;
+  min-width: 200px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .header-search {
+    background: #0f172a;
+    color: #e5e7eb;
+    border-color: #334155;
+  }
+}
+
+/* Toggle button icon baseline */
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  width: 36px;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+  transition: background var(--transition-fast) ease, border-color var(--transition-fast) ease;
+}
+
+.icon-btn:hover {
+  background: #f3f4f6;
+}
+
+@media (prefers-color-scheme: dark) {
+  .icon-btn {
+    background: #0f172a;
+    border-color: #334155;
+  }
+  .icon-btn:hover {
+    background: #111827;
+  }
+}
+
+/* Badges */
+.badge-neutral {
+  color: #374151;
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+}
+.badge-info {
+  color: #1e40af;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+}
+.badge-success {
+  color: #065f46;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+}
+.badge-warning {
+  color: #92400e;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+}
+.badge-danger {
+  color: #991b1b;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+}
+
+/* Table responsive styles */
+.table-root {
+  width: 100%;
+}
+.table-thead th.table-th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.875rem;
+  padding: 0.5rem 0.75rem;
+  color: #111827;
+  border-bottom: 1px solid #e5e7eb;
+}
+.table-tbody .table-tr:nth-child(odd) {
+  background: #ffffff;
+}
+.table-tbody .table-tr:nth-child(even) {
+  background: #f9fafb;
+}
+.table-td {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  color: #111827;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+/* Small screens: stacked rows with header labels */
+@media (max-width: 640px) {
+  .table-root table thead {
+    display: none;
+  }
+  .table-root table tbody .table-tr {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.25rem;
+    padding: 0.5rem 0.25rem;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+  .table-root table tbody .table-tr .table-td {
+    display: grid;
+    grid-template-columns: 8rem 1fr;
+    align-items: baseline;
+    border: none;
+    padding: 0.25rem 0.5rem;
+  }
+  .table-root table tbody .table-tr .table-td::before {
+    content: attr(data-header);
+    font-weight: 600;
+    color: #4b5563;
+    padding-right: 0.5rem;
+  }
+}
+
+/* Modal overlay utility (used by Modal component) */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+/* Dark mode tweaks */
+@media (prefers-color-scheme: dark) {
+  .badge-neutral {
+    color: #e5e7eb;
+    background: #1f2937;
+    border-color: #374151;
+  }
+  .badge-info {
+    color: #bfdbfe;
+    background: #0b1220;
+    border-color: #1d4ed8;
+  }
+  .badge-success {
+    color: #a7f3d0;
+    background: #0b1220;
+    border-color: #065f46;
+  }
+  .badge-warning {
+    color: #fde68a;
+    background: #0b1220;
+    border-color: #92400e;
+  }
+  .badge-danger {
+    color: #fecaca;
+    background: #0b1220;
+    border-color: #991b1b;
+  }
+
+  .table-thead th.table-th {
+    color: #e5e7eb;
+    border-bottom-color: #334155;
+  }
+  .table-tbody .table-tr:nth-child(odd) {
+    background: #0f172a;
+  }
+  .table-tbody .table-tr:nth-child(even) {
+    background: #111827;
+  }
+  .table-td {
+    color: #e5e7eb;
+    border-bottom-color: #1f2937;
+  }
+}

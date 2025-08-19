@@ -31,8 +31,9 @@ __all__: List[str] = [
     "SimulationState",
     "ToolCall",
 
-    # Factory system
-    "RunnerFactory",
+    # Registry helper
+    "create_runner",
+    "supported_runners",
 
     # Integration
     "AgentManager",
@@ -53,7 +54,7 @@ __all__: List[str] = [
 # Order matters: light/leaf modules should come first to minimize side effects.
 _CANDIDATE_MODULES = [
     "agent_runners.base_runner",
-    "agent_runners.runner_factory",
+    "agent_runners.registry",
     "agent_runners.dependency_manager",
     "agent_runners.agent_manager",  # kept last to reduce circular import risk
 ]
@@ -97,10 +98,10 @@ def get_framework_status() -> dict:
     }
     try:
         dep_mod = importlib.import_module("agent_runners.dependency_manager")
-        rf_mod = importlib.import_module("agent_runners.runner_factory")
+        reg_mod = importlib.import_module("agent_runners.registry")
         get_avail = getattr(dep_mod, "get_available_frameworks", lambda: [])
         dep_mgr = getattr(dep_mod, "dependency_manager", None)
-        get_all = getattr(rf_mod.RunnerFactory, "get_all_frameworks", lambda: [])
+        get_all = getattr(reg_mod, "supported_runners", lambda: [])
 
         result["available_frameworks"] = list(get_avail() or [])
         result["all_frameworks"] = list(get_all() or [])

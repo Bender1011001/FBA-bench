@@ -9,6 +9,7 @@ from .persistence import config_persistence_manager
 from services.dashboard_api_service import DashboardAPIService
 from event_bus import EventBus
 from api.dependencies import connection_manager
+from fba_bench_api.core.redis_client import close_redis  # Graceful Redis shutdown
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,10 @@ async def lifespan(app: FastAPI):
             pass
         try:
             await connection_manager.stop()
+        except Exception:
+            pass
+        try:
+            await close_redis()
         except Exception:
             pass
         logger.info("FBA-Bench API stopped")

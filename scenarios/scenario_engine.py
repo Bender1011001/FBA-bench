@@ -55,11 +55,27 @@ class ScenarioEngine:
         logging.info(f"Initializing market conditions: {market_params}")
         # self.environment.set_market_conditions(market_params)
 
-        # Define product catalog
-        product_catalog = config.define_product_catalog(
-            config.config_data.get('business_parameters', {}).get('product_categories', 'default'),
-            config.config_data.get('business_parameters', {}).get('supply_chain_complexity', 'default')
-        )
+        # Define product catalog (robustly handle list/scalar categories/complexities)
+        business_params = config.config_data.get('business_parameters', {})
+        raw_categories = business_params.get('product_categories', 'default')
+        raw_complexity = business_params.get('supply_chain_complexity', 'default')
+
+        # Normalize complexity: if list provided, use first entry as representative
+        complexity = raw_complexity[0] if isinstance(raw_complexity, list) and raw_complexity else (raw_complexity or 'default')
+
+        product_catalog: List[Dict[str, Any]] = []
+        if isinstance(raw_categories, list):
+            # Generate and merge product catalogs for each category
+            for cat in raw_categories:
+                try:
+                    cat_products = config.define_product_catalog(cat, complexity)
+                    product_catalog.extend(cat_products or [])
+                except Exception as e:
+                    logging.warning(f"Failed to build product catalog for category '{cat}': {e}")
+        else:
+            # Single category path
+            product_catalog = config.define_product_catalog(raw_categories, complexity)
+
         logging.info(f"Defining product catalog with: {len(product_catalog)} products.")
         # self.environment.set_product_catalog(product_catalog)
 

@@ -1,13 +1,30 @@
 from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, Set, Dict, Any
+import json
+import logging
+
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Query, Header
 
 from fba_bench_api.core.state import dashboard_service
 from api.dependencies import connection_manager
+from fba_bench_api.core.redis_client import get_pubsub, get_redis
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["simulation"])
+
+# Protocol documentation:
+# Client -> Server JSON frames:
+#   {"type":"subscribe","topic":"topic-name"}
+#   {"type":"unsubscribe","topic":"topic-name"}
+#   {"type":"publish","topic":"topic-name","data":{...}}
+#   {"type":"ping"}
+# Server -> Client JSON frames:
+#   {"type":"event","topic":"topic-name","data":{...},"ts":"2025-08-18T16:01:00Z"}
+#   {"type":"pong","ts":"2025-08-18T16:01:01Z"}
+#   {"type":"error","error":"message"}
 
 
 def _now_iso() -> str:
@@ -137,8 +154,195 @@ async def get_recent_events(
     return resp
 
 
-@router.websocket("/ws/events")
-async def websocket_events(websocket: WebSocket, origin: Optional[str] = Header(None)):
+@router.websocket("/ws/realtime")
+async def websocket_realtime(websocket: WebSocket, origin: Optional[str] = Header(None)):
+    """
+    Topic-based realtime WebSocket over Redis pub/sub.
+
+    - Supports multiple topics per connection
+    - JSON protocol:
+        subscribe:   {"type":"subscribe","topic":"X"}
+        unsubscribe: {"type":"unsubscribe","topic":"X"}
+        publish:     {"type":"publish","topic":"X","data":{...}}
+        ping:        {"type":"ping"}
+    - Server event: {"type":"event","topic":"X","data":{...},"ts": "..."}
+    - Error:        {"type":"error","error":"..."}
+    """
+    # Accept connection up-front
+    await websocket.accept()
+
+    # Prepare per-connection state
+    subscribed_topics: Set[str] = set()
+    stop_event = asyncio.Event()
+    pubsub = None
+
+    async def _send_safe(payload: Dict[str, Any]) -> None:
+        try:
+            await websocket.send_text(json.dumps(payload))
+        except Exception as exc:
+            # Client likely disconnected or backpressure failure; trigger shutdown
+            logger.warning("WebSocket send failed, closing connection: %s", exc)
+            stop_event.set()
+            raise
+
+    async def _listener_loop():
+        # Background task that forwards Redis pubsub messages to this websocket
+        try:
+            while not stop_event.is_set():
+                try:
+                    message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                except Exception as exc:
+                    logger.error("Redis pubsub get_message error: %s", exc)
+                    await _send_safe({"type": "error", "error": "redis_error"})
+                    stop_event.set()
+                    break
+                if not message:
+                    continue
+                # redis-py returns dict with keys: type, channel, data
+                msg_type = message.get("type")
+                if msg_type != "message":
+                    continue
+                topic = message.get("channel")
+                raw = message.get("data")
+                try:
+                    data = json.loads(raw) if isinstance(raw, str) else raw
+                except Exception:
+                    data = {"raw": raw}
+                await _send_safe({"type": "event", "topic": topic, "data": data, "ts": _now_iso()})
+        except asyncio.CancelledError:
+            pass
+        except WebSocketDisconnect:
+            pass
+        except Exception as exc:
+            logger.error("Listener loop error: %s", exc)
+            try:
+                await _send_safe({"type": "error", "error": "listener_error"})
+            except Exception:
+                pass
+        finally:
+            try:
+                await pubsub.close()
+            except Exception:
+                pass
+
+    # Initialize Redis pubsub
+    try:
+        pubsub = await get_pubsub()
+    except Exception:
+        await _send_safe({"type": "error", "error": "redis_unavailable"})
+        await websocket.close()
+        return
+
+    listener_task = asyncio.create_task(_listener_loop())
+
+    # Acknowledge connection
+    await _send_safe(
+        {
+            "type": "connection_established",
+            "message": "Realtime WebSocket connection established",
+            "ts": _now_iso(),
+            "origin": origin,
+        }
+    )
+
+    malformed_count = 0
+    try:
+        while not stop_event.is_set():
+            try:
+                raw = await websocket.receive_text()
+            except WebSocketDisconnect:
+                break
+            except Exception as exc:
+                logger.warning("WebSocket receive error: %s", exc)
+                break
+
+            try:
+                msg = json.loads(raw)
+            except Exception:
+                malformed_count += 1
+                await _send_safe({"type": "error", "error": "invalid_json"})
+                if malformed_count >= 3:
+                    await websocket.close()
+                    break
+                continue
+
+            if not isinstance(msg, dict):
+                await _send_safe({"type": "error", "error": "invalid_message"})
+                continue
+
+            mtype = msg.get("type")
+            topic = msg.get("topic")
+            data = msg.get("data")
+
+            if mtype == "ping":
+                await _send_safe({"type": "pong", "ts": _now_iso()})
+                continue
+
+            if mtype == "subscribe":
+                if not topic:
+                    await _send_safe({"type": "error", "error": "missing_topic"})
+                    continue
+                if topic in subscribed_topics:
+                    # idempotent
+                    await _send_safe({"type": "subscribed", "topic": topic, "ts": _now_iso()})
+                    continue
+                try:
+                    await pubsub.subscribe(topic)
+                    subscribed_topics.add(topic)
+                    logger.info("WS subscribed topic=%s (origin=%s)", topic, origin)
+                    await _send_safe({"type": "subscribed", "topic": topic, "ts": _now_iso()})
+                except Exception as exc:
+                    logger.error("Subscribe failed topic=%s: %s", topic, exc)
+                    await _send_safe({"type": "error", "error": "redis_error"})
+                continue
+
+            if mtype == "unsubscribe":
+                if not topic:
+                    await _send_safe({"type": "error", "error": "missing_topic"})
+                    continue
+                if topic not in subscribed_topics:
+                    # no-op
+                    await _send_safe({"type": "unsubscribed", "topic": topic, "ts": _now_iso()})
+                    continue
+                try:
+                    await pubsub.unsubscribe(topic)
+                    subscribed_topics.discard(topic)
+                    logger.info("WS unsubscribed topic=%s (origin=%s)", topic, origin)
+                    await _send_safe({"type": "unsubscribed", "topic": topic, "ts": _now_iso()})
+                except Exception as exc:
+                    logger.error("Unsubscribe failed topic=%s: %s", topic, exc)
+                    await _send_safe({"type": "error", "error": "redis_error"})
+                continue
+
+            if mtype == "publish":
+                if not topic or data is None:
+                    await _send_safe({"type": "error", "error": "missing_topic_or_data"})
+                    continue
+                try:
+                    r = await get_redis()
+                    await r.publish(topic, json.dumps(data))
+                except Exception as exc:
+                    logger.error("Publish failed topic=%s: %s", topic, exc)
+                    await _send_safe({"type": "error", "error": "redis_error"})
+                continue
+
+            # Unknown type
+            await _send_safe({"type": "error", "error": "unknown_type"})
+
+    finally:
+        stop_event.set()
+        try:
+            listener_task.cancel()
+        except Exception:
+            pass
+        try:
+            await pubsub.close()
+        except Exception:
+            pass
+        try:
+            await websocket.close()
+        except Exception:
+            pass
     """
     WebSocket stream for real-time events.
 
@@ -210,3 +414,7 @@ async def websocket_events(websocket: WebSocket, origin: Optional[str] = Header(
                 break
     finally:
         await connection_manager.disconnect(websocket)
+# Back-compat alias: keep /ws/events endpoint working by delegating to /ws/realtime
+@router.websocket("/ws/events")
+async def websocket_events(websocket: WebSocket, origin: Optional[str] = Header(None)):
+    await websocket_realtime(websocket, origin)

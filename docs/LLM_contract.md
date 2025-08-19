@@ -272,3 +272,47 @@ To integrate your LLM agent, you will need to:
 6.  **Manage Token Usage**: Optimize your LLM's responses to stay within budget constraints to avoid penalties and potential simulation termination.
 
 This contract provides a clear and robust framework for integrating diverse LLM agents into FBA-Bench, fostering fair and effective benchmarking.
+
+## 7. Programmatic Validation Utilities
+
+For enforcing these contracts in code, use the centralized validation helpers:
+
+- Schema/introspection:
+  - [python.def get_schema(model: type[BaseModel]) -> dict](fba_bench/core/llm_validation.py:120)
+- Pydantic validation with strictness modes:
+  - [python.def validate_output(model: type[BaseModel], payload: str|bytes|dict, strict: bool = True) -> tuple[bool, BaseModel|None, list[dict]]](fba_bench/core/llm_validation.py:128)
+- Optional jsonschema path:
+  - [python.def validate_with_jsonschema(schema: dict, payload: dict) -> list[dict]](fba_bench/core/llm_validation.py:185)
+- Validate by contract name:
+  - [python.def validate_by_name(contract: str, payload: str|dict|bytes, strict: bool = True) -> tuple[bool, dict|None, list[dict]]](fba_bench/core/llm_validation.py:213)
+
+Available contract models:
+- [python.class FbaDecision](fba_bench/core/llm_outputs.py:45)
+- [python.class TaskPlan](fba_bench/core/llm_outputs.py:74)
+- [python.class ToolCall](fba_bench/core/llm_outputs.py:104)
+- [python.class AgentResponse](fba_bench/core/llm_outputs.py:123)
+
+Quick usage:
+
+```python
+from fba_bench.core.llm_outputs import FbaDecision
+from fba_bench.core.llm_validation import validate_output, validate_by_name, get_schema
+
+# Generate schema to embed in prompts or for external validation
+schema = get_schema(FbaDecision)
+
+# Strict validation (unknown fields fail, no coercions)
+ok, model, errors = validate_output(FbaDecision, llm_json_text, strict=True)
+
+# Non-strict validation (unknowns ignored/stripped, safe coercions applied)
+ok, model, errors = validate_by_name("fba_decision", llm_json_text, strict=False)
+if ok:
+    sanitized = model  # dict if using validate_by_name, BaseModel if validate_output
+else:
+    # errors: [{"loc": "...", "msg": "...", "type": "..."}]
+    pass
+```
+
+Logging:
+- Validation utilities log successes at DEBUG and failures at WARNING/ERROR via [python.import()](fba_bench/core/logging.py:1).
+- Failure messages include model name, error count, and a truncated payload preview.

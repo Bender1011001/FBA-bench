@@ -658,3 +658,758 @@ class BenchmarkEngine:
 
 # The SimulationRunner class was a placeholder and is removed as the core
 # simulation logic is handled within BenchmarkEngine and its components.
+# -------------------- Lightweight, async Benchmarking Engine (new API) --------------------
+# This section implements a clean, self-contained benchmarking engine that coexists with the
+# existing BenchmarkEngine above. It follows the spec described in the task.
+#
+# Example EngineConfig (see models for full schema and examples):
+# {
+#   "scenarios":[{"key":"example_scenario","params":{"difficulty":"easy"},"repetitions":2,"seeds":[1,2],"timeout_seconds":5}],
+#   "runners":[{"key":"diy","config":{"agent_id":"baseline-1"}}],
+#   "metrics":["technical_performance"],
+#   "validators":["basic_consistency"],
+#   "parallelism":2,
+#   "retries":1
+# }
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import importlib
+import json
+import math
+import time as _time
+from dataclasses import dataclass
+from hashlib import sha256
+from statistics import mean
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+
+try:
+    # Use FBA centralized logging if available
+    from fba_bench.core.logging import setup_logging  # type: ignore
+    setup_logging()
+except Exception:
+    pass
+
+try:
+    from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
+except Exception as e:  # pragma: no cover
+    # pydantic is a dependency in pyproject; this guard avoids import-time crash in exotic envs
+    raise
+
+# Registries and helpers
+from benchmarking.scenarios.registry import scenario_registry
+from benchmarking.metrics.registry import MetricRegistry
+from benchmarking.validators.registry import ValidatorRegistry
+from agent_runners.registry import create_runner
+from agent_runners.base_runner import AgentRunnerInitializationError  # type: ignore
+
+# Optional Redis pubsub
+with contextlib.suppress(Exception):
+    from fba_bench_api.core.redis_client import get_redis  # type: ignore
+
+# ---------------------------------------------------------------------------
+# Pydantic v2 models
+# ---------------------------------------------------------------------------
+
+class RunnerSpec(BaseModel):
+    key: str = Field(..., description="Runner registry key (e.g., 'diy','crewai','langchain').")
+    config: Dict[str, Any] = Field(default_factory=dict)
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {"key": "diy", "config": {"agent_id": "baseline-1"}}
+            ]
+        }
+    }
+
+
+class ScenarioSpec(BaseModel):
+    key: str = Field(..., description="Scenario key in registry or dotted import path module:function or module:Class")
+    params: Optional[Dict[str, Any]] = Field(default=None)
+    repetitions: int = Field(default=1, ge=1)
+    seeds: Optional[List[int]] = Field(default=None)
+    timeout_seconds: Optional[int] = Field(default=None, ge=1)
+    # Per the spec
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "key": "tests.simple_scenario",
+                    "params": {"difficulty": "easy"},
+                    "repetitions": 2,
+                    "seeds": [1, 2],
+                    "timeout_seconds": 5,
+                }
+            ]
+        }
+    }
+
+
+class EngineConfig(BaseModel):
+    scenarios: List[ScenarioSpec]
+    runners: List[RunnerSpec]
+    metrics: List[str] = Field(default_factory=list)
+    validators: List[str] = Field(default_factory=list)
+    parallelism: int = Field(default=1, ge=1, description="Maximum concurrent run tasks")
+    retries: int = Field(default=0, ge=0, description="Retry attempts for failed/error runs")
+    observation_topic_prefix: str = Field(default="benchmark")
+
+    @model_validator(mode="after")
+    def _validate_lists(self) -> "EngineConfig":
+        if not self.scenarios:
+            raise ValueError("At least one scenario must be provided")
+        if not self.runners:
+            raise ValueError("At least one runner must be provided")
+        return self
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "scenarios": [
+                        {
+                            "key": "example_scenario",
+                            "params": {"difficulty": "easy"},
+                            "repetitions": 2,
+                            "seeds": [1, 2],
+                            "timeout_seconds": 5,
+                        }
+                    ],
+                    "runners": [{"key": "diy", "config": {"agent_id": "baseline-1"}}],
+                    "metrics": ["technical_performance"],
+                    "validators": ["basic_consistency"],
+                    "parallelism": 2,
+                    "retries": 1,
+                    "observation_topic_prefix": "benchmark",
+                }
+            ]
+        }
+    }
+
+
+class RunResult(BaseModel):
+    scenario_key: str
+    runner_key: str
+    seed: Optional[int] = None
+    status: str = Field(description="success|failed|timeout|error")
+    output: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    duration_ms: int
+    metrics: Dict[str, Any] = Field(default_factory=dict)
+    artifacts: Optional[Dict[str, Any]] = None
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "scenario_key": "example_scenario",
+                    "runner_key": "diy",
+                    "seed": 1,
+                    "status": "success",
+                    "output": {"value": 42},
+                    "error": None,
+                    "duration_ms": 120,
+                    "metrics": {"score": 0.95},
+                    "artifacts": {"log": "s3://..."},
+                }
+            ]
+        }
+    }
+
+
+class ScenarioReport(BaseModel):
+    scenario_key: str
+    runs: List[RunResult]
+    aggregates: Dict[str, Any] = Field(default_factory=dict)
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "scenario_key": "example_scenario",
+                    "runs": [],
+                    "aggregates": {"pass_count": 1, "fail_count": 0, "duration_ms": {"avg": 120}},
+                }
+            ]
+        }
+    }
+
+
+class EngineReport(BaseModel):
+    started_at: float
+    finished_at: float
+    config_digest: str
+    scenario_reports: List[ScenarioReport]
+    totals: Dict[str, Any] = Field(default_factory=dict)
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "started_at": 1723948123.123,
+                    "finished_at": 1723948125.223,
+                    "config_digest": "abc123...",
+                    "scenario_reports": [],
+                    "totals": {"runs": 4, "success": 4, "failed": 0, "duration_ms": {"sum": 480}},
+                }
+            ]
+        }
+    }
+
+
+# ---------------------------------------------------------------------------
+# Engine implementation
+# ---------------------------------------------------------------------------
+
+class Engine:
+    """
+    Orchestrates: load scenario -> run agents/runs -> collect raw results -> apply metrics
+                   -> run validators -> aggregate/report.
+    """
+
+    def __init__(self, config: EngineConfig):
+        self.config = config
+        self._metrics_registry = MetricRegistry()
+        self._validators_registry = ValidatorRegistry()
+        self._sema = asyncio.Semaphore(self.config.parallelism)
+        self._started_at: float = 0.0
+        self._redis_available: bool = False
+        # Detect if redis client import succeeded
+        self._redis_available = "get_redis" in globals()
+
+    async def run(self) -> EngineReport:
+        self._started_at = _time.time()
+        digest = _digest_config(self.config)
+        scenario_reports: List[ScenarioReport] = []
+
+        # Execute each scenario
+        for sc in self.config.scenarios:
+            runs: List[RunResult] = []
+            tasks: List[asyncio.Task] = []
+
+            # Determine seeds/repetitions
+            seeds = sc.seeds if sc.seeds else [None] * sc.repetitions
+
+            for runner_spec in self.config.runners:
+                for seed in seeds:
+                    tasks.append(asyncio.create_task(self._guarded_run(sc, runner_spec, seed)))
+
+            # Concurrency bound
+            for chunk in _as_completed_bounded(tasks, self._sema):
+                run_result: RunResult = await chunk
+                runs.append(run_result)
+                # Pub/sub per-run finished
+                await self._publish_event(
+                    topic=f"{self.config.observation_topic_prefix}:scenario:{sc.key}",
+                    event={
+                        "type": "run_finished",
+                        "runner": run_result.runner_key,
+                        "seed": run_result.seed,
+                        "status": run_result.status,
+                    },
+                )
+
+            # After runs: apply scenario metrics aggregation and validators
+            aggregates = summarize_scenario(ScenarioReport(scenario_key=sc.key, runs=runs, aggregates={}))
+            # Apply validators via function-style registry first; fallback to legacy class-based
+            try:
+                # Provide a full ScenarioReport-like dict to validators
+                validations = await self._apply_validators(
+                    scenario_report={
+                        "scenario_key": sc.key,
+                        "runs": [r.model_dump() for r in runs],
+                        "aggregates": aggregates,
+                    },
+                    context={
+                        "scenario_key": sc.key,
+                        "expected_seeds": sc.seeds,
+                        "config_digest": digest,
+                        **(sc.params or {}),
+                    },
+                )
+            except Exception as e:
+                logger.error(f"_apply_validators failed: {e}")
+                validations = [{"validator": "engine_apply_validators", "error": _short_error(str(e))}]
+            if validations:
+                aggregates.setdefault("validations", validations)
+
+            scenario_reports.append(ScenarioReport(scenario_key=sc.key, runs=runs, aggregates=aggregates))
+
+        finished_at = _time.time()
+        report = EngineReport(
+            started_at=self._started_at,
+            finished_at=finished_at,
+            config_digest=digest,
+            scenario_reports=scenario_reports,
+            totals=compute_totals(scenario_reports),
+        )
+        return report
+
+    async def _guarded_run(self, scenario_spec: ScenarioSpec, runner_spec: RunnerSpec, seed: Optional[int]) -> RunResult:
+        # Create runner with error handling
+        try:
+            runner = await _maybe_async(create_runner, runner_spec.key, runner_spec.config)
+        except (ValueError, AgentRunnerInitializationError) as e:
+            return RunResult(
+                scenario_key=scenario_spec.key,
+                runner_key=runner_spec.key,
+                seed=seed,
+                status="error",
+                error=_short_error(str(e)),
+                output=None,
+                duration_ms=0,
+                metrics={},
+                artifacts=None,
+            )
+        except Exception as e:
+            return RunResult(
+                scenario_key=scenario_spec.key,
+                runner_key=runner_spec.key,
+                seed=seed,
+                status="error",
+                error=_short_error(f"runner_create_failed: {e}"),
+                output=None,
+                duration_ms=0,
+                metrics={},
+                artifacts=None,
+            )
+
+        # Resolve scenario target
+        try:
+            scenario_target = _resolve_scenario(scenario_spec.key)
+        except Exception as e:
+            return RunResult(
+                scenario_key=scenario_spec.key,
+                runner_key=runner_spec.key,
+                seed=seed,
+                status="error",
+                error=_short_error(f"scenario_not_found: {e}"),
+                output=None,
+                duration_ms=0,
+                metrics={},
+                artifacts=None,
+            )
+
+        payload = _build_payload(scenario_spec.params or {}, seed)
+
+        # Optional pub/sub started
+        await self._publish_event(
+            topic=f"{self.config.observation_topic_prefix}:scenario:{scenario_spec.key}",
+            event={"type": "run_started", "runner": runner_spec.key, "seed": seed},
+        )
+
+        # Attempts with retries
+        attempts = 0
+        last_error: Optional[str] = None
+        t0 = _time.perf_counter()
+        while True:
+            attempts += 1
+            try:
+                coro = _execute_scenario(scenario_target, runner, payload)
+                if scenario_spec.timeout_seconds:
+                    output = await asyncio.wait_for(coro, timeout=scenario_spec.timeout_seconds)
+                else:
+                    output = await coro
+                duration_ms = int((_time.perf_counter() - t0) * 1000)
+                # Apply metrics non-fatal
+                run_for_metrics = {
+                    "scenario_key": scenario_spec.key,
+                    "runner_key": runner_spec.key,
+                    "seed": seed,
+                    "status": "success",
+                    "output": _safe_jsonable(output),
+                    "error": None,
+                    "duration_ms": duration_ms,
+                    "metrics": {},
+                    "artifacts": None,
+                }
+                # Merge scenario params at top-level for metric contexts so metrics can
+                # directly access expected keys (e.g., expected_output, keywords).
+                metrics_context = {
+                    "scenario_key": scenario_spec.key,
+                    **(scenario_spec.params or {}),
+                }
+                metrics_out = await self._apply_metrics(run_for_metrics, metrics_context)
+                return RunResult(
+                    scenario_key=scenario_spec.key,
+                    runner_key=runner_spec.key,
+                    seed=seed,
+                    status="success",
+                    error=None,
+                    output=_safe_jsonable(output),
+                    duration_ms=duration_ms,
+                    metrics=metrics_out,
+                    artifacts=None,
+                )
+            except asyncio.TimeoutError:
+                duration_ms = int((_time.perf_counter() - t0) * 1000)
+                return RunResult(
+                    scenario_key=scenario_spec.key,
+                    runner_key=runner_spec.key,
+                    seed=seed,
+                    status="timeout",
+                    error="timeout",
+                    output=None,
+                    duration_ms=duration_ms,
+                    metrics={},
+                    artifacts=None,
+                )
+            except Exception as e:
+                last_error = _short_error(str(e))
+                # Only retry for failed/error (not timeout per spec)
+                if attempts <= self.config.retries:
+                    # Deterministic backoff (no sleep to keep tests fast)
+                    continue
+                duration_ms = int((_time.perf_counter() - t0) * 1000)
+                return RunResult(
+                    scenario_key=scenario_spec.key,
+                    runner_key=runner_spec.key,
+                    seed=seed,
+                    status="error",
+                    error=last_error,
+                    output=None,
+                    duration_ms=duration_ms,
+                    metrics={},
+                    artifacts=None,
+                )
+
+    async def _apply_metrics(self, run: Dict[str, Any], context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Apply configured metrics to a single run.
+
+        Supports two metric systems:
+        1) Legacy class-based MetricRegistry where metric.calculate(data: dict) -> number/dict
+        2) New function-style registry: evaluate(run: dict, context: dict|None=None) -> dict
+
+        The function-style registry is attempted first by key; if not found, falls back to the legacy registry.
+        Any exceptions are caught and reported as non-fatal errors per metric.
+
+        Implementation detail: we pass the metrics computed so far in this loop to subsequent metrics
+        via run['metrics'] to enable composite metrics (e.g., custom_scriptable) to reference prior results.
+        """
+        # Local import to avoid import cycles at module import time
+        try:
+            from ..metrics.registry import get_metric as _get_fn_metric  # function-style registry
+        except Exception:
+            _get_fn_metric = None  # soft-fail; we still attempt legacy
+
+        result: Dict[str, Any] = {}
+        for mkey in self.config.metrics:
+            try:
+                # Prepare a view of the run including metrics computed so far
+                if isinstance(run, dict):
+                    run_with_partial = dict(run)
+                    # ensure nested dict
+                    existing = run_with_partial.get("metrics") or {}
+                    # do not mutate caller
+                    merged = dict(existing)
+                    merged.update(result)
+                    run_with_partial["metrics"] = merged
+                else:
+                    run_with_partial = {"output": run, "metrics": dict(result)}
+
+                # Prefer function-style metrics if available
+                if _get_fn_metric is not None:
+                    try:
+                        fn = _get_fn_metric(mkey)
+                    except KeyError:
+                        fn = None
+                    if callable(fn):
+                        # New interface: evaluate(run: dict, context: dict|None=None) -> dict
+                        val = fn(run_with_partial, context)
+                        result[mkey] = val
+                        continue
+
+                # Fallback to legacy class-based MetricRegistry
+                metric = self._metrics_registry.create_metric(mkey)
+                if metric is None:
+                    # Graceful: not found
+                    result[mkey] = {"error": "metric_not_found"}
+                    continue
+                # Legacy interface calculate(data: dict) -> float|dict
+                payload = run_with_partial if isinstance(run_with_partial, dict) else {"output": run_with_partial}
+                # For legacy metrics, they typically expect "output" structure; provide both for compatibility
+                if "output" not in payload and isinstance(run_with_partial, dict):
+                    payload = {"output": run_with_partial.get("output", run_with_partial)}
+                val = metric.calculate(payload)
+                result[mkey] = val
+            except Exception as e:
+                logger.error(f"Metric '{mkey}' failed: {e}")
+                result[mkey] = {"error": _short_error(str(e))}
+        return result
+
+    async def _apply_validators(self, scenario_report: Dict[str, Any], context: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """
+        Apply configured validators to a ScenarioReport-like dict.
+
+        Supports two validator systems:
+        1) Function-style registry: validate(report: dict, context: dict|None=None) -> dict
+           via benchmarking.validators.registry.get_validator
+        2) Legacy class-based ValidatorRegistry (self._validators_registry)
+
+        All exceptions are caught and converted to non-fatal errors per validator.
+        """
+        # Local import to avoid import cycles
+        try:
+            from ..validators.registry import get_validator as _get_fn_validator  # function-style
+        except Exception:
+            _get_fn_validator = None
+
+        results: List[Dict[str, Any]] = []
+        for vkey in self.config.validators:
+            try:
+                # Prefer function-style validator
+                if _get_fn_validator is not None:
+                    try:
+                        vfn = _get_fn_validator(vkey)
+                    except KeyError:
+                        vfn = None
+                    if callable(vfn):
+                        out = vfn(scenario_report if isinstance(scenario_report, dict) else dict(scenario_report), context or {})
+                        results.append({"validator": vkey, "issues": out.get("issues", []), "summary": out.get("summary", {})})
+                        continue
+
+                # Fallback: legacy class-based validator
+                validator = self._validators_registry.create_validator(vkey)
+                if validator is None:
+                    results.append({"validator": vkey, "error": "validator_not_found"})
+                    continue
+                # legacy .validate(...) may expect various shapes; pass scenario_report
+                legacy_out = validator.validate(scenario_report)
+                try:
+                    normalized = legacy_out.to_dict() if hasattr(legacy_out, "to_dict") else dict(legacy_out)
+                except Exception:
+                    normalized = {"result": str(legacy_out)}
+                # Normalize to standard container
+                if "issues" in normalized or "summary" in normalized:
+                    results.append({"validator": vkey, "issues": normalized.get("issues", []), "summary": normalized.get("summary", {})})
+                else:
+                    results.append({"validator": vkey, "result": normalized})
+            except Exception as e:
+                logger.error(f"Validator '{vkey}' failed: {e}")
+                results.append({"validator": vkey, "error": _short_error(str(e))})
+        return results
+
+    async def _publish_event(self, topic: str, event: Dict[str, Any]) -> None:
+        if not self._redis_available:
+            return
+        try:
+            client = await get_redis()  # type: ignore
+            await client.publish(topic, json.dumps(event))
+        except Exception:
+            # Silent per spec
+            return
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _digest_config(cfg: EngineConfig) -> str:
+    try:
+        data = cfg.model_dump()
+    except Exception:
+        data = dict(cfg)  # type: ignore
+    return sha256(json.dumps(data, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _resolve_scenario(key: str) -> Any:
+    """
+    Resolve a scenario target by key:
+    - Try scenario_registry.get(key) which returns a class; instantiate with params if __init__ accepts it
+    - Else treat key as 'module:attr' and import (function or class). If class, instantiate.
+    The returned object must be either:
+      - an object with async def run(self, runner, payload) -> dict
+      - or an async callable like async def fn(runner, payload) -> dict
+    """
+    with contextlib.suppress(Exception):
+        cls = scenario_registry.get(key)  # type: ignore
+        # Return class (instantiate later in _execute_scenario to pass params)
+        return cls
+
+    # Dotted import fallback: "path.to.module:callable_or_Class"
+    if ":" not in key:
+        raise ValueError(f"Scenario '{key}' not found in registry and not a dotted path")
+    mod_name, attr = key.split(":", 1)
+    module = importlib.import_module(mod_name)
+    target = getattr(module, attr)
+    return target
+
+
+async def _execute_scenario(target: Any, runner: Any, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Execute the resolved scenario target uniformly.
+    If target is a class with optional generate_input(params, seed) and async run(runner, payload).
+    If target is a function async def f(runner, payload).
+    """
+    # Instantiate if class type
+    if isinstance(target, type):
+        instance = target(payload.get("params"))
+        gen = getattr(instance, "generate_input", None)
+        if callable(gen):
+            try:
+                payload = {"params": payload.get("params"), "seed": payload.get("seed"), "input": gen(payload.get("seed"), payload.get("params"))}
+            except Exception:
+                # fall back to original payload
+                pass
+        run = getattr(instance, "run", None)
+        if not callable(run):
+            raise TypeError("Scenario class missing run(...)")
+        out = run(runner=runner, payload=payload)
+        return await _maybe_await(out)
+
+    # If target has generate_input in module-level attr, apply (rare)
+    gen = getattr(target, "generate_input", None)
+    if callable(gen):
+        try:
+            payload = {"params": payload.get("params"), "seed": payload.get("seed"), "input": gen(payload.get("seed"), payload.get("params"))}  # type: ignore
+        except Exception:
+            pass
+
+    # Callable scenario function
+    if callable(target):
+        out = target(runner=runner, payload=payload)
+        return await _maybe_await(out)
+
+    raise TypeError("Unsupported scenario target type")
+
+
+def _build_payload(params: Dict[str, Any], seed: Optional[int]) -> Dict[str, Any]:
+    return {"params": json.loads(json.dumps(params)), "seed": seed}
+
+
+async def _maybe_async(fn: Callable, *a: Any, **kw: Any) -> Any:
+    res = fn(*a, **kw)
+    return await _maybe_await(res)
+
+
+async def _maybe_await(x: Any) -> Any:
+    if asyncio.iscoroutine(x):
+        return await x
+    return x
+
+
+def _short_error(msg: str, max_len: int = 300) -> str:
+    m = msg.strip().replace("\n", " ")[:max_len]
+    return m
+
+
+def _as_completed_bounded(tasks: List[asyncio.Task], sema: asyncio.Semaphore):
+    """
+    Consume tasks with a concurrency bound using a semaphore. The tasks
+    are created already; we acquire before awaiting each to avoid over-parallelism spikes.
+    """
+    async def _consume(t: asyncio.Task):
+        async with sema:
+            return await t
+    return [_consume(t) for t in tasks]
+
+
+# ---------------------------------------------------------------------------
+# Reporting helpers
+# ---------------------------------------------------------------------------
+
+def summarize_scenario(report: ScenarioReport) -> Dict[str, Any]:
+    """
+    Compute scenario aggregates:
+    - pass/fail counts by status
+    - duration stats
+    - aggregated numeric metrics means per metric key
+    """
+    statuses = [r.status for r in report.runs]
+    success = sum(1 for s in statuses if s == "success")
+    failed = sum(1 for s in statuses if s in ("failed", "error"))
+    timeouts = sum(1 for s in statuses if s == "timeout")
+    durations = [r.duration_ms for r in report.runs if r.duration_ms is not None]
+    dur_stats = {
+        "count": len(durations),
+        "sum": sum(durations) if durations else 0,
+        "avg": mean(durations) if durations else 0.0,
+        "min": min(durations) if durations else 0,
+        "max": max(durations) if durations else 0,
+    }
+
+    # Aggregate metrics: if metric value is numeric, compute mean; else count occurrences
+    metric_keys: Dict[str, List[float]] = {}
+    categorical_counts: Dict[str, Dict[str, int]] = {}
+    for r in report.runs:
+        for k, v in (r.metrics or {}).items():
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(float(v)):
+                metric_keys.setdefault(k, []).append(float(v))
+            else:
+                # stringify non-numeric for counting
+                categorical_counts.setdefault(k, {})
+                sval = json.dumps(v, sort_keys=True) if isinstance(v, (dict, list)) else str(v)
+                categorical_counts[k][sval] = categorical_counts[k].get(sval, 0) + 1
+
+    metric_means = {k: (mean(vals) if vals else 0.0) for k, vals in metric_keys.items()}
+    aggregates = {
+        "pass_count": success,
+        "fail_count": failed,
+        "timeout_count": timeouts,
+        "runs": len(report.runs),
+        "duration_ms": dur_stats,
+        "metrics": {"mean": metric_means, "categorical_counts": categorical_counts},
+    }
+    return aggregates
+
+
+def compute_totals(scenario_reports: List[ScenarioReport]) -> Dict[str, Any]:
+    total_runs = sum(len(sr.runs) for sr in scenario_reports)
+    success = sum(1 for sr in scenario_reports for r in sr.runs if r.status == "success")
+    failed = sum(1 for sr in scenario_reports for r in sr.runs if r.status in ("failed", "error"))
+    timeouts = sum(1 for sr in scenario_reports for r in sr.runs if r.status == "timeout")
+    durations = [r.duration_ms for sr in scenario_reports for r in sr.runs if r.duration_ms is not None]
+    dur_stats = {
+        "count": len(durations),
+        "sum": sum(durations) if durations else 0,
+        "avg": mean(durations) if durations else 0.0,
+        "min": min(durations) if durations else 0,
+        "max": max(durations) if durations else 0,
+    }
+
+    # Per-metric aggregates (mean across all runs for numeric)
+    metric_values: Dict[str, List[float]] = {}
+    for sr in scenario_reports:
+        for r in sr.runs:
+            for k, v in (r.metrics or {}).items():
+                if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(float(v)):
+                    metric_values.setdefault(k, []).append(float(v))
+    metric_means = {k: (mean(vals) if vals else 0.0) for k, vals in metric_values.items()}
+
+    return {
+        "runs": total_runs,
+        "success": success,
+        "failed": failed,
+        "timeout": timeouts,
+        "duration_ms": dur_stats,
+        "metrics": {"mean": metric_means},
+    }
+
+
+# ---------------------------------------------------------------------------
+# Sync convenience wrapper
+# ---------------------------------------------------------------------------
+
+def run_benchmark(config: Union[Dict[str, Any], EngineConfig]) -> EngineReport:
+    """
+    Synchronous convenience wrapper.
+    - Accepts dict or EngineConfig.
+    - Runs event loop safely (loop-aware).
+    """
+    cfg = config if isinstance(config, EngineConfig) else EngineConfig.model_validate(config)  # type: ignore
+    eng = Engine(cfg)
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop and loop.is_running():
+        # In a running loop context; run via task and wait
+        return asyncio.run_coroutine_threadsafe(eng.run(), loop).result()
+    return asyncio.run(eng.run())
+# Fallback logger for lightweight engine section (defined late is fine for runtime use)
+import logging as _logging
+logger = _logging.getLogger(__name__)
