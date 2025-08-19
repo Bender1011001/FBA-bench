@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fba_bench_api.core.lifespan import lifespan
 from fba_bench.core.logging import setup_logging, RequestIdMiddleware
 from fba_bench_api.api.exception_handlers import add_exception_handlers
+from fba_bench import __version__
 
 from fba_bench_api.api.routes import root as root_routes
 from fba_bench_api.api.routes import config as config_routes
@@ -22,7 +23,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="FBA-Bench Research Toolkit API",
         description="Real-time simulation data API for research and analysis, with control.",
-        version="2.0.0",
+        version=__version__,
         lifespan=lifespan,
     )
     # Correlation id middleware (adds X-Request-ID and injects into logs)

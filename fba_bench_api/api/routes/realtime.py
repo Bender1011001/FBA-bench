@@ -8,7 +8,7 @@ import logging
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Query, Header
 
 from fba_bench_api.core.state import dashboard_service
-from api.dependencies import connection_manager
+from fba_bench_api.api.dependencies import connection_manager  # fixed import
 from fba_bench_api.core.redis_client import get_pubsub, get_redis
 
 logger = logging.getLogger(__name__)

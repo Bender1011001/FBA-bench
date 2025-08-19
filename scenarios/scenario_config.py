@@ -139,14 +139,27 @@ class ScenarioConfigManager:
 
     def integration_hook_example(self, simulation_system_api: Any):
         """
-        Provides an example of how scenario configs can hook into other simulation systems.
+        Example-only integration hook.
+
+        This method demonstrates how scenario configs could hook into other simulation
+        systems. It is DISABLED by default for safety and has no side effects.
+
+        Enable explicitly by setting environment variable:
+          SCENARIO_INTEGRATION_HOOK_ENABLED=true
+
+        Behavior:
+        - When disabled (default): log at DEBUG and return immediately (no-ops).
+        - When enabled: perform a safe no-op and log that the demo hook executed.
         """
-        logging.info("Example: Integrating ScenarioConfigManager with a simulation system.")
-        # This method would typically modify the simulation system's state or configuration
-        # based on loaded scenario details, e.g.,
-        # simulation_system_api.set_events(self.current_scenario.external_events)
-        # simulation_system_api.set_agent_parameters(self.current_scenario.agent_constraints)
-        pass
+        enabled = os.environ.get("SCENARIO_INTEGRATION_HOOK_ENABLED", "").lower() in {"1", "true", "yes"}
+        if not enabled:
+            logging.debug("ScenarioConfigManager.integration_hook_example disabled by default; set SCENARIO_INTEGRATION_HOOK_ENABLED to enable demo mode.")
+            return
+
+        # Demo mode: do not mutate external state; just log once to show the path is reachable.
+        logging.info("ScenarioConfigManager.integration_hook_example executed in demonstration mode (no-op). No external state was modified.")
+        # Intentionally avoid calling any simulation_system_api mutators here.
+        return
 
     def generate_dynamic_scenario(self, base_template_name: str, randomization_config: Dict[str, Any], target_tier: Optional[int] = None) -> ScenarioConfig:
         """

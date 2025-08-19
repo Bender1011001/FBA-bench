@@ -4,7 +4,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 name = "fba-bench"
-version = "0.9.0rc1"
+version = "3.0.0"
 description = "FBA-Bench: A benchmarking and simulation framework for financial/business agents"
 authors = ["FBA-Bench Maintainers <maintainers@example.com>"]
 readme = "README.md"
@@ -32,7 +32,14 @@ packages = [
   { include = "benchmarking" },
   { include = "integration" },
   { include = "observability" },
-  { include = "services" }
+  { include = "services" },
+  { include = "models" },
+  { include = "metrics" },
+  { include = "memory_experiments" },
+  { include = "reproducibility" },
+  { include = "redteam" },
+  { include = "scenarios" },
+  { include = "plugins" }
 ]
 
 # Pin a conservative Python range compatible with repo/test references (e.g., tests assume 3.9.0)
@@ -145,9 +152,9 @@ exclude = '(frontend|\.venv|\.venv-1|build|dist)'
 plugins = []
 
 [tool.pytest.ini_options]
-minversion = "8.0"
+minversion = "7.0"
 addopts = "-ra -q --cov=fba_bench --cov=fba_bench_api --cov=agent_runners --cov-report=term-missing"
-testpaths = ["tests", "frontend/src"]
+testpaths = ["tests"]
 asyncio_mode = "auto"
 
 [tool.ruff]

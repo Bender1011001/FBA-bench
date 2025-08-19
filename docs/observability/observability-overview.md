@@ -53,3 +53,10 @@ For detailed instructions on setting up dashboards, performing trace analysis, h
 -   [`Dashboard Setup`](dashboard-setup.md)
 -   [`Alert Configuration`](alert-configuration.md)
 -   [`OpenTelemetry Setup`](opentelemetry-setup.md)
+
+## Tracing Status Endpoint Behavior
+
+The tracing status endpoint follows these policies:
+- Exposure is governed by the OTEL_ENABLED environment variable. When OTEL_ENABLED is not enabled, tracing is effectively disabled and the status endpoint reports tracing as inactive.
+- collectorConnected reflects best-effort connectivity: it may be true when a collector is reachable, false when not, and unknown if connectivity cannot be determined reliably at runtime.
+- The configured OTLP endpoint is redacted by default for safety. It is only shown in full when DEBUG is true; otherwise a masked/redacted value is returned.

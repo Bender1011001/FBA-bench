@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import re
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Dict, List, Mapping, MutableMapping, Optional, Tuple, Union
+from typing import Any, Awaitable, Callable, Dict, List, Mapping, MutableMapping, Optional, Tuple, Union, Set
 
 logger = logging.getLogger(__name__)
 
@@ -92,8 +94,20 @@ class InMemoryEventBus(EventBus):
         self._subscribers: MutableMapping[Selector, List[Handler]] = {}
         self._queue: "asyncio.Queue[Tuple[Any, str, str]]" = asyncio.Queue()
         self._runner_task: Optional[asyncio.Task] = None
-        self._recording_enabled: bool = False
+
+        # Recording controls (defaults hardened for production-safety)
+        self._recording_enabled: bool = False  # Default OFF
         self._recorded: List[Dict[str, Any]] = []
+        # Cap for recorded events; default 5000, configurable via env
+        self._recording_max: int = self._read_recording_max()
+        self._recording_truncated: bool = False
+
+        # Pre-compiled redaction configuration
+        self._redact_key_patterns: List[re.Pattern] = [
+            re.compile(pat, re.IGNORECASE)
+            for pat in ["password", "api_key", "token", "secret", "authorization", "cookie"]
+        ]
+
         self._started: bool = False
 
     async def start(self) -> None:
@@ -157,10 +171,12 @@ class InMemoryEventBus(EventBus):
             pass
 
     async def start_recording(self) -> None:
+        # Enable recording; do not clear existing buffer to avoid losing prior diagnostics
         self._recording_enabled = True
 
     async def get_recorded_events(self) -> List[Dict[str, Any]]:
         # Return a shallow copy to ensure stability for callers
+        # Non-blocking, respects cap (we stop appending once cap reached)
         return list(self._recorded)
 
     # -------------------------
@@ -176,13 +192,36 @@ class InMemoryEventBus(EventBus):
                 # Record before dispatch to ensure full audit trail even if handlers fail
                 if self._recording_enabled:
                     try:
-                        self._recorded.append({
-                            "event_type": event_type,
-                            "timestamp": ts,
-                            "data": self._event_to_summary(event),
-                        })
+                        if len(self._recorded) < self._recording_max:
+                            # Build summary and redact sensitive fields
+                            summary = self._event_to_summary(event)
+                            safe_summary = self._redact_sensitive(summary)
+                            self._recorded.append({
+                                "event_type": event_type,
+                                "timestamp": ts,
+                                "data": safe_summary,
+                            })
+                        else:
+                            # Cap reached; mark truncated and stop appending
+                            if not self._recording_truncated:
+                                self._recording_truncated = True
                     except Exception as rec_e:
+                        # Defensive: never crash the bus due to recording failure
                         logger.warning("Failed to record event %s: %s", event_type, rec_e)
+                        try:
+                            # Append minimal error record if capacity allows
+                            if len(self._recorded) < self._recording_max:
+                                self._recorded.append({
+                                    "event_type": event_type,
+                                    "timestamp": ts,
+                                    "data": {"_error": "recording_failed"},
+                                })
+                            else:
+                                if not self._recording_truncated:
+                                    self._recording_truncated = True
+                        except Exception:
+                            # As a last resort, swallow errors silently to keep dispatching
+                            pass
 
                 # Dispatch concurrently
                 for h in handlers:
@@ -320,3 +359,74 @@ class InMemoryEventBus(EventBus):
             return str(v)
         except Exception:
             return repr(v)
+
+    # -------------------------
+    # Recording configuration & helpers
+    # -------------------------
+    def _read_recording_max(self) -> int:
+        default_max = 5000
+        try:
+            val = os.getenv("EVENT_RECORDING_MAX", str(default_max)).strip()
+            if not val:
+                return default_max
+            parsed = int(val)
+            return parsed if parsed > 0 else default_max
+        except Exception:
+            return default_max
+
+    def get_recording_stats(self) -> Dict[str, Any]:
+        """
+        Read-only recording stats.
+        Returns: {"enabled": bool, "count": int, "truncated": bool, "max": int}
+        """
+        return {
+            "enabled": self._recording_enabled,
+            "count": len(self._recorded),
+            "truncated": self._recording_truncated,
+            "max": self._recording_max,
+        }
+
+    def _redact_sensitive(self, data: Any, *, max_depth: int = 20, _depth: int = 0, _seen: Optional[Set[int]] = None) -> Any:
+        """
+        Return a deep-copied, redacted version of data.
+        Redacts values for keys matching common sensitive names (case-insensitive).
+        Handles dicts/lists/tuples safely, avoids cycles by tracking visited ids.
+        """
+        if _seen is None:
+            _seen = set()
+
+        # Depth guard
+        if _depth > max_depth:
+            return data  # Stop traversal; return as-is (already jsonified primitives expected)
+
+        # Prevent cycles
+        obj_id = id(data)
+        if obj_id in _seen:
+            return data
+        _seen.add(obj_id)
+
+        # Primitives remain as-is
+        if data is None or isinstance(data, (bool, int, float, str)):
+            return data
+
+        # Dict: redact keys
+        if isinstance(data, dict):
+            redacted: Dict[Any, Any] = {}
+            for k, v in data.items():
+                key_str = str(k)
+                value = v
+                if any(pat.search(key_str) for pat in self._redact_key_patterns):
+                    redacted[key_str] = "[redacted]"
+                else:
+                    redacted[key_str] = self._redact_sensitive(v, max_depth=max_depth, _depth=_depth + 1, _seen=_seen)
+            return redacted
+
+        # List/Tuple
+        if isinstance(data, (list, tuple)):
+            return [self._redact_sensitive(i, max_depth=max_depth, _depth=_depth + 1, _seen=_seen) for i in data]
+
+        # Fallback: keep string representation (should be rare after _to_jsonable)
+        try:
+            return str(data)
+        except Exception:
+            return repr(data)

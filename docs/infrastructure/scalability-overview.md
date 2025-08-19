@@ -47,3 +47,13 @@ For more detailed information on configuring and deploying scalable simulations,
 - [`Monitoring and Alerts`](monitoring-and-alerts.md)
 - [`Deployment Guide`](deployment-guide.md)
 - [`Infrastructure Configuration Guide`](../configuration/infrastructure-config.md)
+
+## SPA Deployment Behind Nginx (High-Level Notes)
+
+- Build the frontend SPA and deploy the generated assets to a static root such as /usr/share/nginx/html (or your configured path).
+- Enable long-term caching for hashed static assets (e.g., *.css, *.js) with Cache-Control: public, max-age=31536000, immutable.
+- Serve index.html with no-store/no-cache headers to ensure clients always fetch the latest application shell.
+- Proxy API requests to the FastAPI backend and support WebSocket upgrades. See nginx.conf in the repository root for a reference configuration, including:
+  - location /api/ proxy settings
+  - proxy_set_header Upgrade and Connection for WebSocket routes
+  - appropriate timeouts and buffering for streaming endpoints

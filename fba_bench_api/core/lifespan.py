@@ -8,7 +8,7 @@ from .state import dashboard_service as _dash_ref, active_event_bus as _bus_ref
 from .persistence import config_persistence_manager
 from services.dashboard_api_service import DashboardAPIService
 from event_bus import EventBus
-from api.dependencies import connection_manager
+from fba_bench_api.api.dependencies import connection_manager  # fixed import
 from fba_bench_api.core.redis_client import close_redis  # Graceful Redis shutdown
 
 logger = logging.getLogger(__name__)

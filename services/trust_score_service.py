@@ -50,12 +50,26 @@ class TrustScoreService:
 
     def get_current_trust_score(self) -> Optional[float]:
         """
-        This method is not suitable for a stateless calculator.
-        TrustMetrics should call `calculate_trust_score` with relevant data.
-        Raising an error to highlight incorrect usage or need for refactoring if this interface is strict.
+        DEPRECATED/UNSUPPORTED: This stateless service does not maintain a current score.
+
+        Callers must use calculate_trust_score(violations_count, buyer_feedback_scores, total_days)
+        and provide the required inputs. This method will always warn and raise to prevent misuse.
         """
-        logger.error("TrustScoreService.get_current_trust_score() called on a stateless calculator. This indicates a design issue or misuse. Use calculate_trust_score method.")
-        raise NotImplementedError("This TrustScoreService is stateless. Use calculate_trust_score method with relevant data.")
+        import warnings
+
+        warnings.warn(
+            "TrustScoreService.get_current_trust_score() is deprecated and unsupported. "
+            "Use calculate_trust_score(violations_count, buyer_feedback_scores, total_days) instead.",
+            category=DeprecationWarning,
+            stacklevel=2,
+        )
+        logger.error(
+            "TrustScoreService.get_current_trust_score() called on a stateless calculator. "
+            "Use calculate_trust_score with explicit inputs."
+        )
+        raise NotImplementedError(
+            "This TrustScoreService is stateless. Use calculate_trust_score(...) with relevant data."
+        )
 
     async def start(self, event_bus=None): # EventBus might not be needed if stateless and called directly
         logger.info("TrustScoreService (stateless calculator) started.")
