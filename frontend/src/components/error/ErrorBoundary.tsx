@@ -134,10 +134,21 @@ export const ErrorBoundary = ({
   onReset,
   resetKeys,
 }: BoundaryProps) => {
+  const env = (import.meta as unknown as { env: Record<string, string | undefined> }).env;
+  const logLevel = (env.VITE_LOG_LEVEL || 'info').toLowerCase();
+  const isProd = logLevel !== 'debug';
+
   return (
     <REBErrorBoundary
       FallbackComponent={FallbackComponent ?? DefaultFallback}
-      onError={onError}
+      onError={(error, info) => {
+        // Avoid noisy logs in production; still allow user callback
+        if (!isProd) {
+          // eslint-disable-next-line no-console
+          console.error('ErrorBoundary caught:', error, info);
+        }
+        onError?.(error, info);
+      }}
       onReset={onReset}
       resetKeys={resetKeys}
     >

@@ -1,6 +1,6 @@
 # metrics/finance_metrics.py
 import numpy as np
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional, Callable
 
 class FinanceMetrics:
     def __init__(self, financial_audit_service: Any):
@@ -10,16 +10,12 @@ class FinanceMetrics:
         self.shock_net_worth_snapshots: Dict[str, Tuple[float, float, float]] = {} # shock_id: (before, during, after)
 
     def update(self, current_tick: int, events: List[Dict]):
-        # Assuming financial_audit_service gives current net worth and cash flow
-        current_net_worth = self.financial_audit_service.get_current_net_worth()
+        # Resolve current net worth from audit service
+        current_net_worth = float(self.financial_audit_service.get_current_net_worth())
         self.net_worth_history.append(current_net_worth)
 
-        # For a more robust cash flow, we would need detailed ledger analysis from financial_audit.py
-        # For now, let's simulate a simple cash flow change based on events if available
-        # This is a placeholder and should be replaced with actual cash flow calculation
-        cash_inflow = sum(e.get('amount', 0) for e in events if e.get('type') == 'SaleOccurred') # Example
-        cash_outflow = sum(e.get('cost', 0) for e in events if e.get('type') == 'PurchaseOccurred') # Example
-        current_cash_flow = cash_inflow - cash_outflow
+        # Compute cash flow via audit service if available; otherwise compute from events
+        current_cash_flow = self._compute_cash_flow(events)
         self.cash_flow_history.append(current_cash_flow)
 
     def record_shock_snapshot(self, shock_id: str, phase: str):
@@ -73,6 +69,49 @@ class FinanceMetrics:
 
         # This is a simplified recovery; true recovery would track time to new peak
         return 1.0 - max_drawdown if max_drawdown > 0 else 1.0 # Return as a recovery percentage (1.0 = full recovery)
+
+    def _compute_cash_flow(self, events: List[Dict]) -> float:
+        """
+        Compute cash flow using the following precedence:
+        1) financial_audit_service.get_current_cash_flow() if available
+        2) Sum of cash-in (SaleOccurred.amount or unit_price*units) minus cash-out (PurchaseOccurred.cost or unit_cost*units)
+        """
+        try:
+            getter: Optional[Callable[[], float]] = getattr(self.financial_audit_service, "get_current_cash_flow", None)
+            if callable(getter):
+                val = getter()
+                if isinstance(val, (int, float)):
+                    return float(val)
+        except Exception:
+            pass
+
+        cash_in = 0.0
+        cash_out = 0.0
+        for e in events:
+            et = e.get("type")
+            if et == "SaleOccurred":
+                amount = e.get("amount")
+                if isinstance(amount, (int, float)):
+                    cash_in += float(amount)
+                else:
+                    units = e.get("units_sold") or e.get("units") or 0
+                    unit_price = e.get("unit_price") or e.get("price") or 0.0
+                    try:
+                        cash_in += float(units) * float(unit_price)
+                    except Exception:
+                        pass
+            elif et == "PurchaseOccurred":
+                cost = e.get("cost")
+                if isinstance(cost, (int, float)):
+                    cash_out += float(cost)
+                else:
+                    units = e.get("units") or 0
+                    unit_cost = e.get("unit_cost") or e.get("price") or 0.0
+                    try:
+                        cash_out += float(units) * float(unit_cost)
+                    except Exception:
+                        pass
+        return cash_in - cash_out
 
     def calculate_cash_flow_stability(self) -> float:
         if len(self.cash_flow_history) < 2:

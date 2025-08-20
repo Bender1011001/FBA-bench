@@ -243,6 +243,29 @@ def _ensure_results_dir(base_dir: Path, experiment_name: str) -> Path:
 # ----------------------------
 # Main CLI
 # ----------------------------
+class SimulationRunner:
+    """
+    Thin wrapper exposing a run(config_path, parallel) API to satisfy legacy tests.
+    """
+    def run(self, config_file: str, parallel: int = 1, max_runs: int | None = None) -> Dict[str, Any]:
+        exp_config, run_items = _load_config_and_expand_run_params(config_file)
+        if max_runs is not None:
+            run_items = run_items[:max_runs]
+        results_dir = _ensure_results_dir(Path("results"), exp_config.experiment_name)
+        successes = _parallel_run(config_file, run_items, results_dir, parallel)
+        return {"successes": successes, "results_dir": str(results_dir)}
+
+class ExperimentManager:
+    """
+    Provides higher-level orchestration expected by legacy tests.
+    """
+    def __init__(self) -> None:
+        self.runner = SimulationRunner()
+
+    def run_experiment(self, config_file: str, parallel: int = 1) -> Dict[str, Any]:
+        return self.runner.run(config_file, parallel)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="experiment_cli",

@@ -53,10 +53,30 @@ const useWebSocket = (options: WebSocketOptions): WebSocketHookResult => {
       setConnectionStatus('connecting');
       setReadyState(WebSocket.CONNECTING);
       
-      const ws = new WebSocket(url, protocols);
+      // Attach Authorization via Sec-WebSocket-Protocol when token is available in localStorage or via a getter
+      let subprotocols: string | string[] | undefined = protocols;
+      try {
+        const token = localStorage.getItem('auth:jwt'); // optional: app should set this on login
+        if (token) {
+          const proto = `auth.bearer.token.${token}`;
+          if (Array.isArray(protocols)) {
+            subprotocols = [...protocols, proto];
+          } else if (typeof protocols === 'string' && protocols.length > 0) {
+            subprotocols = [protocols, proto];
+          } else {
+            subprotocols = [proto];
+          }
+        }
+      } catch {
+        // ignore storage access issues
+      }
+      const ws = new WebSocket(url, subprotocols);
       
       ws.onopen = (event: Event) => {
-        console.log('useWebSocket: Connection established successfully');
+       if ((import.meta as unknown as { env: Record<string, string | undefined> }).env.VITE_LOG_LEVEL === 'debug') {
+         // eslint-disable-next-line no-console
+         console.log('useWebSocket: Connection established successfully');
+       }
         setConnectionStatus('connected');
         setReadyState(WebSocket.OPEN);
         reconnectCountRef.current = 0;
@@ -64,7 +84,10 @@ const useWebSocket = (options: WebSocketOptions): WebSocketHookResult => {
       };
       
       ws.onclose = (event: CloseEvent) => {
-        console.log('useWebSocket: Connection closed, code:', event.code, 'reason:', event.reason);
+       if ((import.meta as unknown as { env: Record<string, string | undefined> }).env.VITE_LOG_LEVEL === 'debug') {
+         // eslint-disable-next-line no-console
+         console.log('useWebSocket: Connection closed, code:', event.code, 'reason:', event.reason);
+       }
         setConnectionStatus('disconnected');
         setReadyState(WebSocket.CLOSED);
         websocketRef.current = null;
@@ -81,7 +104,10 @@ const useWebSocket = (options: WebSocketOptions): WebSocketHookResult => {
       };
       
       ws.onerror = (event: Event) => {
-        console.error('useWebSocket: Error event:', event);
+       if ((import.meta as unknown as { env: Record<string, string | undefined> }).env.VITE_LOG_LEVEL === 'debug') {
+         // eslint-disable-next-line no-console
+         console.error('useWebSocket: Error event:', event);
+       }
         onError?.(event);
       };
       

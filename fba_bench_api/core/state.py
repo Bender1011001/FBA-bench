@@ -16,7 +16,7 @@ except Exception:
 
 # External, already in your repo (lifespan populates these)
 from services.dashboard_api_service import DashboardAPIService
-from event_bus import EventBus
+from fba_events.bus import EventBus  # type: ignore
 from fba_bench_api.core.redis_client import get_redis
 
 # --------------------------------------------------------------------------------------

@@ -94,6 +94,26 @@ class ValidationResult:
         }
 
 
+class MemoryValidator:
+    """
+    Backwards-compat wrapper expected by tests:
+    from memory_experiments.memory_validator import MemoryValidator
+    """
+    def __init__(self, memory_manager: DualMemoryManager, config: Optional[MemoryConfig] = None, agent_id: str = "agent"):
+        self._checker = MemoryConsistencyChecker(agent_id=agent_id, config=config or MemoryConfig())
+        self._memory_manager = memory_manager
+
+    async def validate_all_memory(self) -> bool:
+        """Validate current memory contents and return pass/fail."""
+        facts = await self._memory_manager.retrieve_recent_memories(limit=100) if hasattr(self._memory_manager, "retrieve_recent_memories") else []
+        result = await self._checker.validate_memory_retrieval(facts, proposed_action={"type": "noop"})
+        return bool(result.validation_passed)
+
+    def get_statistics(self) -> Dict[str, Any]:
+        """Expose validation statistics."""
+        return self._checker.get_validation_statistics()
+
+
 class MemoryConsistencyChecker:
     """
     Validates memory retrieval consistency and detects contradictions.

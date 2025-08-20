@@ -17,7 +17,7 @@ from pathlib import Path
 
 from money import Money
 from events import BaseEvent, SetPriceCommand, ProductPriceUpdated, InventoryUpdate, WorldStateSnapshotEvent
-from event_bus import EventBus, get_event_bus
+from fba_events.bus import InMemoryEventBus as EventBus
 
 
 logger = logging.getLogger(__name__)
@@ -277,7 +277,8 @@ class WorldStore:
             storage_backend: Optional backend for persisting state snapshots.
                             If None, defaults to InMemoryStorageBackend.
         """
-        self.event_bus = event_bus or get_event_bus()
+        # Use provided bus or a new in-memory bus
+        self.event_bus = event_bus or EventBus()
         self.storage_backend = storage_backend if storage_backend is not None else InMemoryStorageBackend()
         
         # Canonical state storage

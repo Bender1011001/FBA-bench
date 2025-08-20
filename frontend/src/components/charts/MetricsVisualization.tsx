@@ -6,11 +6,16 @@ import {
 } from 'recharts';
 import type {
   BenchmarkResult,
-  CapabilityAssessment,
-  PerformanceHeatmap
+  CapabilityAssessment
 } from '../../types';
 import LoadingSpinner from '../LoadingSpinner';
 import ErrorBoundary from '../ErrorBoundary';
+
+// Helper to derive a human-readable name across historical shapes
+type BenchmarkResultCompat = BenchmarkResult & Partial<{ name: string; benchmark_name: string }>;
+function getResultDisplayName(r: BenchmarkResultCompat): string {
+  return r.name ?? r.benchmark_name ?? r.benchmark_id;
+}
 
 interface MetricsVisualizationProps {
   benchmarkResults: BenchmarkResult[];
@@ -59,7 +64,7 @@ const MetricsVisualization: React.FC<MetricsVisualizationProps> = ({
             // Create capability assessment from metrics
             const assessment: CapabilityAssessment = {
               agent_id: agentResult.agent_id,
-              scenario_name: agentResult.scenario_name,
+              scenario_name: scenario.scenario_name,
               capabilities: {
                 cognitive: 0,
                 business: 0,
@@ -78,23 +83,20 @@ const MetricsVisualization: React.FC<MetricsVisualizationProps> = ({
               metricsSet.add(metric.name);
               
               // Simple mapping of metric names to capability categories
-              if (metric.name.toLowerCase().includes('accuracy') || 
-                  metric.name.toLowerCase().includes('precision')) {
+              const m = metric.name.toLowerCase();
+              if (m.includes('accuracy') || m.includes('precision')) {
                 assessment.capabilities.cognitive += metric.value;
                 totalScore += metric.value;
                 metricCount++;
-              } else if (metric.name.toLowerCase().includes('profit') || 
-                         metric.name.toLowerCase().includes('revenue')) {
+              } else if (m.includes('profit') || m.includes('revenue')) {
                 assessment.capabilities.business += metric.value;
                 totalScore += metric.value;
                 metricCount++;
-              } else if (metric.name.toLowerCase().includes('time') || 
-                         metric.name.toLowerCase().includes('speed')) {
+              } else if (m.includes('time') || m.includes('speed')) {
                 assessment.capabilities.technical += metric.value;
                 totalScore += metric.value;
                 metricCount++;
-              } else if (metric.name.toLowerCase().includes('fairness') || 
-                         metric.name.toLowerCase().includes('bias')) {
+              } else if (m.includes('fairness') || m.includes('bias')) {
                 assessment.capabilities.ethical += metric.value;
                 totalScore += metric.value;
                 metricCount++;
@@ -104,9 +106,8 @@ const MetricsVisualization: React.FC<MetricsVisualizationProps> = ({
             // Normalize scores
             if (metricCount > 0) {
               assessment.overall_score = totalScore / metricCount;
-              Object.keys(assessment.capabilities).forEach(key => {
-                const capabilityKey = key as keyof typeof assessment.capabilities;
-                assessment.capabilities[capabilityKey] = assessment.capabilities[capabilityKey] / Math.max(1, metricCount / 4);
+              (Object.keys(assessment.capabilities) as Array<keyof typeof assessment.capabilities>).forEach((cap) => {
+                assessment.capabilities[cap] = assessment.capabilities[cap] / Math.max(1, metricCount / 4);
               });
             }
             
@@ -116,26 +117,8 @@ const MetricsVisualization: React.FC<MetricsVisualizationProps> = ({
       });
       
       setCapabilityData(capabilities);
-      setSelectedMetrics(Array.from(metrics).slice(0, 5)); // Select first 5 metrics by default
-      
-      // Create heatmap data structure
-      const agents = Array.from(new Set(capabilities.map(c => c.agent_id)));
-      const scenarios = Array.from(new Set(capabilities.map(c => c.scenario_name)));
-      const metricNames = Array.from(metrics).slice(0, 5);
-      
-      const heatmap: PerformanceHeatmap = {
-        agents,
-        scenarios,
-        metrics: metricNames,
-        data: agents.map(() => 
-          scenarios.map(() => 
-            metricNames.map(() => Math.random() * 100) // Placeholder data
-          )
-        ),
-        timestamp: new Date().toISOString()
-      };
-      
-      setHeatmapData(heatmap);
+      const metrics = Array.from(metricsSet);
+      setSelectedMetrics(metrics.slice(0, 5)); // Select first 5 metrics by default
     } catch (error) {
       console.error('Error processing metrics data:', error);
     } finally {
@@ -375,18 +358,22 @@ const MetricsVisualization: React.FC<MetricsVisualizationProps> = ({
                 Benchmark Result
               </label>
               <select
-                value={selectedResult?.benchmark_name || ''}
+                value={selectedResult ? getResultDisplayName(selectedResult as BenchmarkResultCompat) : ''}
                 onChange={(e) => {
-                  const result = benchmarkResults.find(r => r.benchmark_name === e.target.value);
+                  const result = benchmarkResults.find(r => getResultDisplayName(r as BenchmarkResultCompat) === e.target.value);
                   setSelectedResult(result || null);
                 }}
                 className="w-64 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                {benchmarkResults.map(result => (
-                  <option key={result.benchmark_name} value={result.benchmark_name}>
-                    {result.benchmark_name} - {new Date(result.start_time).toLocaleDateString()}
-                  </option>
-                ))}
+                {benchmarkResults.map(result => {
+                  const name = getResultDisplayName(result as BenchmarkResultCompat);
+                  const key = (result as BenchmarkResultCompat).benchmark_id ?? name;
+                  return (
+                    <option key={key} value={name}>
+                      {name} - {new Date(result.start_time).toLocaleDateString()}
+                    </option>
+                  );
+                })}
               </select>
             </div>
 
@@ -397,7 +384,10 @@ const MetricsVisualization: React.FC<MetricsVisualizationProps> = ({
               </label>
               <select
                 value={chartType}
-                onChange={(e) => setChartType(e.target.value as any)}
+                onChange={(e) => {
+                  const v = e.target.value as 'radar' | 'bar' | 'line' | 'area' | 'scatter';
+                  setChartType(v);
+                }}
                 className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="radar">Radar Chart</option>
@@ -413,19 +403,19 @@ const MetricsVisualization: React.FC<MetricsVisualizationProps> = ({
           {selectedResult && (
             <div className="flex gap-2">
               <button
-                onClick={() => onExportResults(selectedResult.benchmark_name, 'json')}
+                onClick={() => onExportResults((selectedResult as BenchmarkResult).benchmark_id, 'json')}
                 className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
               >
                 Export JSON
               </button>
               <button
-                onClick={() => onExportResults(selectedResult.benchmark_name, 'csv')}
+                onClick={() => onExportResults((selectedResult as BenchmarkResult).benchmark_id, 'csv')}
                 className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors"
               >
                 Export CSV
               </button>
               <button
-                onClick={() => onDeleteResult(selectedResult.benchmark_name)}
+                onClick={() => onDeleteResult((selectedResult as BenchmarkResult).benchmark_id)}
                 className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors"
               >
                 Delete
@@ -437,7 +427,7 @@ const MetricsVisualization: React.FC<MetricsVisualizationProps> = ({
         {/* Chart Display */}
         <div className="bg-white rounded-lg shadow-md p-6">
           <h2 className="text-xl font-semibold text-gray-900 mb-4">
-            {selectedResult ? `Metrics for ${selectedResult.benchmark_name}` : 'Select a benchmark result'}
+            {selectedResult ? `Metrics for ${getResultDisplayName(selectedResult as BenchmarkResultCompat)}` : 'Select a benchmark result'}
           </h2>
           {renderChart()}
         </div>

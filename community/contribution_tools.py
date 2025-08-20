@@ -3,6 +3,11 @@ import os
 import importlib.util
 from typing import Dict, Any, List, Optional
 import asyncio
+# Added for runtime usage outside __main__ guard
+import inspect
+import json
+import time
+from dataclasses import dataclass
 
 # Assuming these base classes and manager exist from previous steps
 # from plugins.plugin_framework import PluginManager, PluginError
@@ -10,6 +15,41 @@ import asyncio
 # from plugins.agent_plugins.base_agent_plugin import AgentPlugin
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+@dataclass(frozen=True)
+class QualityAssessment:
+    """
+    Summary of contribution quality used by tests and reports.
+    Provides a normalized, single object importable from community.contribution_tools.
+    """
+    code_quality: float          # 0.0 - 1.0
+    test_coverage: float         # 0.0 - 1.0
+    documentation_score: float   # 0.0 - 1.0
+    security_score: float        # 0.0 - 1.0
+    performance_score: float     # 0.0 - 1.0
+    passed: bool
+
+    @staticmethod
+    def from_results(results: Dict[str, Any]) -> "QualityAssessment":
+        """
+        Build QualityAssessment from heterogeneous validation/benchmark results.
+        Missing fields default to 0.0. 'passed' is derived unless explicitly provided.
+        """
+        cq = float(results.get("code_quality", results.get("lint_score", 0.0)) or 0.0)
+        tc = float(results.get("test_coverage", results.get("coverage", 0.0)) or 0.0)
+        ds = float(results.get("documentation_score", results.get("docs_score", 0.0)) or 0.0)
+        ss = float(results.get("security_score", 1.0 if results.get("security_issues", 0) == 0 else 0.0))
+        ps = float(results.get("performance_score", results.get("throughput_score", 0.0)) or 0.0)
+        passed = bool(results.get("passed",
+                                  (cq >= 0.7 and tc >= 0.8 and ds >= 0.6 and ss >= 0.8 and ps >= 0.6)))
+        return QualityAssessment(
+            code_quality=cq,
+            test_coverage=tc,
+            documentation_score=ds,
+            security_score=ss,
+            performance_score=ps,
+            passed=passed,
+        )
 
 class ContributionManager:
     """

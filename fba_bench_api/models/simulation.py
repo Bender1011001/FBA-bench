@@ -68,8 +68,6 @@ class SimulationStatusResponse(BaseModel):
     statistics: Dict[str, Any]
     simulation_id: Optional[str] = None
     message: Optional[str] = None
-from __future__ import annotations
-
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -112,7 +110,9 @@ class SimulationORM(TimestampMixin, Base):
         default=SimulationStatusEnum.pending,
     )
 
-    metadata: Mapped[dict] = mapped_column(JSONEncoded, nullable=True, default=dict)
+    # IMPORTANT: attribute name 'metadata' is reserved by SQLAlchemy Declarative API.
+    # Use a different Python attribute and map it to DB column 'metadata'.
+    sim_metadata: Mapped[dict] = mapped_column("metadata", JSONEncoded, nullable=True, default=dict)
 
     # Relationships
     experiment = relationship("ExperimentORM", backref="simulations", lazy="joined")
@@ -125,5 +125,5 @@ class SimulationORM(TimestampMixin, Base):
             "websocket_topic": websocket_topic(self.id),
             "created_at": self.created_at,
             "updated_at": self.updated_at,
-            "metadata": self.metadata or {},
+            "metadata": self.sim_metadata or {},
         }

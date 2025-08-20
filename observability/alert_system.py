@@ -181,6 +181,11 @@ def console_notifier(alert_type: str, severity: str, details: Dict[str, Any]):
     print(f"Details: {json.dumps(details, indent=2)}")
     print(f"----------------------\n")
 
+# Backwards-compat alias expected by tests
+class AlertSystem(ObservabilityAlertSystem):
+    pass
+
+
 if __name__ == "__main__":
     alert_system = ObservabilityAlertSystem(notification_callback=console_notifier)
 

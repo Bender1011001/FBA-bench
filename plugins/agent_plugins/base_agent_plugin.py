@@ -90,6 +90,52 @@ class AgentPlugin(Protocol):
             "evaluation_episodes_run": 100
         }
 
+
+class BaseAgentPlugin:
+    """
+    Backwards-compat concrete base class expected by tests:
+    `from plugins.agent_plugins.base_agent_plugin import BaseAgentPlugin`
+    """
+    __is_fba_plugin__ = True
+    plugin_id: str = "base_agent_plugin"
+    version: str = "0.1.0"
+    name: str = "Base Agent Plugin"
+    description: str = "A base class for creating FBA-Bench custom agents."
+    agent_type: str = "general"
+
+    def initialize(self, config: Dict[str, Any]):
+        logging.info(f"Initializing AgentPlugin: {self.name} with config: {config}")
+
+    async def decide_action(self, current_state: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+        current_price = current_state.get("price", 10.0)
+        current_inventory = current_state.get("inventory", 100)
+        if current_inventory < 20:
+            return {"type": "adjust_inventory", "value": 50}
+        if current_state.get("demand", 0) > 80 and current_price < 20.0:
+            return {"type": "set_price", "value": current_price * 1.05}
+        return {"type": "no_action"}
+
+    async def learn_from_experience(self, episode_experience: Dict[str, Any]):
+        logging.info(f"{self.name} learning from experience keys: {list(episode_experience.keys())}")
+
+    def get_plugin_info(self) -> Dict[str, Any]:
+        return {
+            "plugin_id": self.plugin_id,
+            "name": self.name,
+            "version": self.version,
+            "description": self.description,
+            "agent_type": self.agent_type,
+            "supported_actions": ["set_price", "adjust_inventory"],
+        }
+
+    def get_performance_benchmarks(self) -> Dict[str, Any]:
+        return {
+            "average_profit_per_episode": 1500.0,
+            "inventory_turnover_rate": 3.5,
+            "decision_latency_ms": 50,
+            "evaluation_episodes_run": 100,
+        }
+
     def get_sharing_mechanism_info(self) -> Dict[str, Any]:
         """
         Provides information on how this agent's strategy can be shared or distributed.

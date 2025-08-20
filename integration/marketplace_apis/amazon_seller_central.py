@@ -166,6 +166,13 @@ class AmazonSellerCentralAPI:
         self._mock_revenue += total_price
         logging.info(f"Simulated new order: {order_id} for {quantity} of {sku}")
 
+# Backwards compatibility alias expected by tests and examples:
+# tests import: from integration.marketplace_apis.amazon_seller_central import AmazonSellerCentral
+# Provide an alias class that inherits behavior from AmazonSellerCentralAPI.
+class AmazonSellerCentral(AmazonSellerCentralAPI):
+    """Compatibility wrapper for AmazonSellerCentralAPI."""
+    pass
+
 # Example usage (for testing purposes outside the main framework flow)
 async def _main():
     api = AmazonSellerCentralAPI(sandbox_mode=True)

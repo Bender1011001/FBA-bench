@@ -1,5 +1,5 @@
 from services.dashboard_api_service import DashboardAPIService
-from event_bus import EventBus
+from fba_events.bus import InMemoryEventBus as EventBus
 import asyncio
 import json
 import logging

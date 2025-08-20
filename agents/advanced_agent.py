@@ -29,9 +29,16 @@ from typing import Any, Dict, List, Optional, Tuple
 from collections import deque
 import math
 import logging
+from dataclasses import dataclass
 
 # Core runner protocol types (canonical for DIY agents)
 from fba_bench.core.types import SimulationState, ToolCall
+
+# Backwards-compat lightweight AgentConfig expected by some tests
+@dataclass
+class AgentConfig:
+    agent_id: str
+    target_asin: str = "B0DEFAULT"
 
 logger = logging.getLogger(__name__)
 

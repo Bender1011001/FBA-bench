@@ -371,6 +371,11 @@ class ConfigProfile(BaseModel):
     environment: EnvironmentType = Field(EnvironmentType.DEVELOPMENT, description="Target environment")
 
 # Configuration builders
+# Back-compat alias expected by some legacy tests
+# PydanticConfig is an alias of BenchmarkConfig
+PydanticConfig = BenchmarkConfig
+
+
 class ConfigBuilder(Generic[T]):
     """Generic configuration builder."""
     

@@ -9,20 +9,44 @@ dataclass for configuring scenarios.
 import abc
 from dataclasses import dataclass, field
 from typing import Dict, Any, List, Optional
+import uuid
 
-from ..agents.base import BaseAgent # Scenarios interact with agents
-from ..core.results import AgentRunResult # Scenarios produce AgentRunResults
+from ..agents.base import BaseAgent  # Scenarios interact with agents
+from ..core.results import AgentRunResult  # Scenarios produce AgentRunResults
 
 @dataclass
 class ScenarioConfig:
-    """Configuration for a benchmark scenario."""
-    id: str
-    name: str = "Unnamed Scenario"
-    description: str = ""
-    enabled: bool = True
-    priority: int = 1
-    # Custom parameters specific to a scenario's implementation
+    """Configuration for a benchmark scenario (aligned with tests)."""
+    # Required by tests
+    name: str
+    description: str
+    domain: str
+    duration_ticks: int
     parameters: Dict[str, Any] = field(default_factory=dict)
+    enabled: bool = True
+
+    # Optional/legacy fields used by parts of the engine/UI
+    id: Optional[str] = None
+    priority: int = 1
+
+    def ensure_id(self) -> str:
+        """Return a stable id, generating one if absent."""
+        if not self.id or not isinstance(self.id, str) or not self.id.strip():
+            # Prefer a deterministic id from name when available
+            base = (self.name or "scenario").strip().lower().replace(" ", "_")
+            self.id = f"{base}-{uuid.uuid4().hex[:8]}"
+        return self.id
+
+@dataclass
+class ScenarioResult:
+    """Minimal ScenarioResult structure for tests expecting import."""
+    scenario_name: str
+    success: bool = True
+    message: str = ""
+    metrics: Dict[str, Any] = field(default_factory=dict)
+    start_time: Optional[float] = None
+    end_time: Optional[float] = None
+
 
 class BaseScenario(abc.ABC):
     """
@@ -40,7 +64,8 @@ class BaseScenario(abc.ABC):
             config: Scenario configuration.
         """
         self.config = config
-        self.scenario_id = config.id
+        # Ensure we always have a usable scenario identifier
+        self.scenario_id = config.ensure_id() if hasattr(config, "ensure_id") else (getattr(config, "id", None) or getattr(config, "name", "scenario"))
 
     @abc.abstractmethod
     async def setup(self, *args, **kwargs) -> None:
@@ -81,3 +106,21 @@ class BaseScenario(abc.ABC):
             A dictionary containing progress information.
         """
         pass
+
+
+class ScenarioTemplate(BaseScenario):
+    """
+    Backwards-compat alias base used by scenario templates.
+
+    Concrete templates may override additional validation hooks. This class does not
+    add new abstract methods beyond BaseScenario to keep requirements minimal.
+    """
+    pass
+
+
+__all__ = [
+    "ScenarioConfig",
+    "ScenarioResult",
+    "BaseScenario",
+    "ScenarioTemplate",
+]

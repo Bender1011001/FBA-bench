@@ -1,6 +1,22 @@
 from typing import Dict, Any, List, Optional
+from dataclasses import dataclass
+from enum import Enum
 import pandas as pd
 import numpy as np
+
+class CurriculumTier(str, Enum):
+    """Standardized curriculum tiers expected by tests and orchestration."""
+    TIER_0 = "tier_0"
+    TIER_1 = "tier_1"
+    TIER_2 = "tier_2"
+    TIER_3 = "tier_3"
+
+@dataclass(frozen=True)
+class ProgressionCriteria:
+    """Criteria to determine when to advance to the next curriculum tier."""
+    min_score: float = 0.80           # Minimum performance score to consider progression
+    min_episodes: int = 10            # Minimum number of evaluation episodes
+    stable_runs: int = 3              # Number of consecutive passes required for stability
 
 class CurriculumValidator:
     """

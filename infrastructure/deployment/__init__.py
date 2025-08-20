@@ -27,6 +27,7 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Literal
+from enum import Enum
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -35,6 +36,41 @@ logger.setLevel(logging.INFO)
 DeploymentStatus = Literal[
     "provisioning", "running", "scaling", "failed", "stopped", "tearing_down", "terminated"
 ]
+
+# Provide typed config/enums here to avoid circular imports elsewhere
+class DeploymentEnvironment(Enum):
+    DEVELOPMENT = "development"
+    STAGING = "staging"
+    PRODUCTION = "production"
+    LOCAL = "local"
+
+
+class DeploymentType(Enum):
+    DOCKER_COMPOSE = "docker_compose"
+    KUBERNETES = "kubernetes"
+    LOCAL = "local"
+
+
+@dataclass
+class DeploymentConfig:
+    environment: DeploymentEnvironment
+    deployment_type: DeploymentType
+    project_name: str = "fba-bench"
+    docker_image_tag: str = "latest"
+    docker_registry: Optional[str] = None
+    kubernetes_namespace: str = "fba-bench"
+    kubernetes_config_path: Optional[str] = None
+    host_port: int = 8000
+    container_port: int = 8000
+    replicas: int = 1
+    resources: Dict[str, Any] = field(default_factory=dict)
+    env_vars: Dict[str, str] = field(default_factory=dict)
+    volumes: List[Dict[str, str]] = field(default_factory=list)
+    networks: List[str] = field(default_factory=list)
+    depends_on: List[str] = field(default_factory=list)
+    health_check: Optional[Dict[str, Any]] = None
+
+
 
 
 @dataclass
@@ -218,6 +254,7 @@ class DeploymentManager:
     def _find_compose_file(self) -> Optional[Path]:
         candidates = [
             self.base_dir / "infrastructure" / "deployment" / "docker-compose.yml",
+            self.base_dir / "infrastructure" / "deployment" / "docker-compose.yaml",
             self.base_dir / "docker-compose.yml",
             self.base_dir / "docker-compose.yaml",
         ]
@@ -336,4 +373,13 @@ class DeploymentManager:
             return False
 
 
-__all__ = ["DeploymentManager", "DeploymentRecord", "DeploymentStatus"]
+
+
+__all__ = [
+    "DeploymentManager",
+    "DeploymentRecord",
+    "DeploymentStatus",
+    "DeploymentConfig",
+    "DeploymentEnvironment",
+    "DeploymentType",
+]

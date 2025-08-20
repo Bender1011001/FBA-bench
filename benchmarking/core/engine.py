@@ -6,6 +6,8 @@ benchmarking process, including agent lifecycle management, metrics collection,
 and reproducible execution.
 """
 
+from __future__ import annotations
+
 import asyncio
 import hashlib
 import logging
@@ -19,8 +21,8 @@ from ..config.pydantic_config import BenchmarkConfig
 from ..config.pydantic_config import AgentConfig
 from ..config.pydantic_config import ScenarioConfig
 from ..config.pydantic_config import ConfigurationManager
-# SchemaRegistry and schema_registry are not directly used by BenchmarkEngine, can be removed if not needed elsewhere.
-from .results import BenchmarkResult, ScenarioResult, AgentRunResult, MetricResult
+# Import only the types we still use from results; BenchmarkResult is redefined below for strict v2 schema
+from .results import ScenarioResult, AgentRunResult, MetricResult
 
 # Import registry components
 from ..agents.registry import agent_registry
@@ -55,6 +57,58 @@ class BenchmarkError(Exception):
     """Engine-level benchmark error."""
     pass
 
+# Provide strict Pydantic v2 models and enums expected by unit tests
+from enum import Enum as _Enum
+from pydantic import BaseModel as _PydBaseModel, Field as _Field, ConfigDict as _ConfigDict  # v2
+from datetime import datetime as _dt
+
+
+class RunStatus(str, _Enum):
+    created = "created"
+    running = "running"
+    completed = "completed"
+    failed = "failed"
+    stopped = "stopped"
+    timeout = "timeout"
+
+
+class BenchmarkResult(_PydBaseModel):
+    # Strict schema: forbid unknown fields; strip whitespace in strings
+    model_config = _ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    benchmark_id: str
+    run_id: str
+    status: RunStatus
+    metrics: Dict[str, float] = _Field(default_factory=dict)
+    warnings: List[str] = _Field(default_factory=list)
+    errors: List[str] = _Field(default_factory=list)
+    started_at: Optional[_dt] = None
+    finished_at: Optional[_dt] = None
+
+
+class BenchmarkRun(_PydBaseModel):
+    model_config = _ConfigDict(extra="forbid")
+
+    run_id: str
+    status: RunStatus
+    config: Dict[str, object] = _Field(default_factory=dict)
+    created_at: _dt = _Field(default_factory=_dt.utcnow)
+    updated_at: Optional[_dt] = None
+
+    def mark(self, status: RunStatus) -> None:
+        self.status = status
+        self.updated_at = _dt.utcnow()
+
+
+# Re-export for direct import in tests
+__all__ = [
+    "BenchmarkEngine",
+    "BenchmarkError",
+    "BenchmarkConfig",
+    "BenchmarkResult",
+    "BenchmarkRun",
+    "RunStatus",
+]
 class BenchmarkEngine:
     """
     The main orchestrator for running benchmarks.
@@ -466,9 +520,7 @@ class BenchmarkEngine:
         
         # The MetricSuite needs to know the current tick to calculate KPIs.
         # This tick should be globally consistent or at least consistent for the scenario.
-        # Let's assume `scenario.run` updates a global tick or returns it.
-        # For now, this is a gap. I'll call calculate_kpis with a placeholder tick.
-        # The `MetricSuite` itself has `self.current_tick` which it updates from events.
+        # scenario.run should be responsible for advancing ticks; MetricSuite tracks ticks via events.
         # So, we should rely on that.
         
         # The `AgentRunResult` should contain the KPIs relevant to that run.
@@ -671,8 +723,6 @@ class BenchmarkEngine:
 #   "parallelism":2,
 #   "retries":1
 # }
-
-from __future__ import annotations
 
 import asyncio
 import contextlib

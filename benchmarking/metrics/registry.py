@@ -634,6 +634,9 @@ class MetricRegistry:
 # Global registry instance (legacy class-based)
 metrics_registry = MetricRegistry()
 
+# Backwards-compat class alias expected by tests
+MetricsRegistry = MetricRegistry
+
 # -----------------------------------------------------------------------------
 # Function-style metrics registry (new)
 # -----------------------------------------------------------------------------

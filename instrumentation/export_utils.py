@@ -1,4 +1,5 @@
 import json
+import os
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExporter, SpanExportResult
 from opentelemetry.trace import format_span_id, format_trace_id, SpanKind
 from opentelemetry.sdk.util.instrumentation import InstrumentationScope
@@ -19,10 +20,10 @@ class ChromeTracingExporter(SpanExporter):
             end_time_us = span.end_time // 1000
             duration_us = end_time_us - start_time_us
 
-            # Process ID (pid) and Thread ID (tid) can be simplified for now
-            # In a real scenario, you might map resource attributes to pid/tid
-            pid = 1  # Placeholder
-            tid = int(format_span_id(span.context.span_id), 16) % 1000000 # Use span_id as basis for thread id
+            # Process ID (pid) and Thread ID (tid)
+            # Use OS pid and span-based stable tid
+            pid = os.getpid()
+            tid = int(format_span_id(span.context.span_id), 16) % 1000000  # stable per-span thread id surrogate
 
             event = {
                 "name": span.name,
@@ -78,6 +79,15 @@ def export_spans_to_chrome_json(spans) -> str:
     return json.dumps(exporter.get_chrome_trace_format(), indent=2)
 
 # --- Integration Example for setup_tracing in tracer.py ---
+
+class ExportUtils:
+    """
+    Thin utility wrapper expected by some tests. Provides static helpers
+    for exporting spans to Chrome trace JSON format.
+    """
+    @staticmethod
+    def to_chrome_trace(spans) -> str:
+        return export_spans_to_chrome_json(spans)
 # To use this in setup_tracing, you'd add:
 # from instrumentation.export_utils import ChromeTracingExporter
 # chrome_exporter = ChromeTracingExporter()

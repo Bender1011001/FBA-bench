@@ -8,6 +8,7 @@ regardless of the underlying framework (DIY, CrewAI, LangChain, etc.).
 
 import abc
 from abc import ABC, abstractmethod
+import asyncio
 import logging
 import time
 import uuid
@@ -92,7 +93,14 @@ class ToolCall:
     priority: int = 0
 
 
-from agents.skill_modules.base_skill import SkillOutcome
+# Soft dependency guard: avoid hard import to agents.* in core runner base
+try:
+    from agents.skill_modules.base_skill import SkillOutcome  # type: ignore
+except Exception:
+    class SkillOutcome(Protocol):
+        """Protocol fallback for learning outcomes to avoid hard dependency."""
+        success: bool
+        details: Dict[str, Any]
 
 
 @dataclass

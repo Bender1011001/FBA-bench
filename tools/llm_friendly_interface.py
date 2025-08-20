@@ -1,4 +1,8 @@
 import json
+import re
+import math
+from datetime import datetime
+from typing import Any, Dict, List, Tuple, Set
 
 class LLMFriendlyToolWrapper:
     """
@@ -358,58 +362,193 @@ class LLMFriendlyToolWrapper:
         return result
     
     def _assess_data_quality(self, data: dict) -> dict:
-        """Assesses basic data quality aspects like completeness, consistency, and validity."""
-        quality = {
-            "completeness": 1.0,
-            "consistency": 1.0, # Placeholder for actual consistency checks
-            "validity": 1.0,    # Placeholder for actual validity checks
-            "issues": []
-        }
-        
-        # Check for missing values
+        """Assess data quality: completeness, consistency, validity with concrete heuristics and issues list."""
+        issues: List[str] = []
+
+        # 1) Completeness: missing/empty values ratio across entire structure
         total_fields = 0
         missing_fields = 0
-        
-        def check_missing(obj):
+
+        def walk_and_count(obj: Any) -> None:
             nonlocal total_fields, missing_fields
             if isinstance(obj, dict):
-                for key, value in obj.items():
+                for _, v in obj.items():
                     total_fields += 1
-                    if value is None or value == "":
+                    if v is None or (isinstance(v, str) and v.strip() == ""):
                         missing_fields += 1
-                    check_missing(value)
+                    walk_and_count(v)
             elif isinstance(obj, list):
                 for item in obj:
-                    check_missing(item)
-        
-        check_missing(data)
-        quality["completeness"] = (total_fields - missing_fields) / total_fields if total_fields > 0 else 1.0
-        
+                    walk_and_count(item)
+
+        walk_and_count(data)
+        completeness = (total_fields - missing_fields) / total_fields if total_fields > 0 else 1.0
         if missing_fields > 0:
-            quality["issues"].append(f"Found {missing_fields} missing or empty fields")
-        
-        return quality
+            issues.append(f"Missing/empty fields detected: {missing_fields} of {total_fields} scanned")
+
+        # 2) Consistency: for lists of dicts, check that repeated keys maintain stable types
+        # Collect per-key observed types under list-of-dicts collections
+        key_types: Dict[str, Set[type]] = {}
+
+        def collect_key_types(obj: Any) -> None:
+            if isinstance(obj, list) and obj and all(isinstance(x, dict) for x in obj):
+                for row in obj:
+                    for k, v in row.items():
+                        t = type(v)
+                        key_types.setdefault(k, set()).add(t)
+            elif isinstance(obj, dict):
+                for v in obj.values():
+                    collect_key_types(v)
+            elif isinstance(obj, list):
+                for v in obj:
+                    collect_key_types(v)
+
+        collect_key_types(data)
+        inconsistent_keys = [k for k, ts in key_types.items() if len(ts) > 1]
+        consistency = 1.0 if not inconsistent_keys else max(0.0, 1.0 - (len(inconsistent_keys) / max(1, len(key_types))))
+        if inconsistent_keys:
+            issues.append(f"Inconsistent types for keys: {', '.join(sorted(inconsistent_keys))}")
+
+        # 3) Validity: heuristics
+        # - Non-negative for fields like price, amount, total, count, quantity, units, revenue
+        # - Parsable ISO dates for *_at, date, timestamp keys
+        # - Numeric sanity (no NaN/inf)
+        invalid_numeric: List[str] = []
+        negative_fields: List[str] = []
+        bad_dates: List[str] = []
+
+        numeric_key_patterns = re.compile(r"(price|amount|total|count|quantity|units|revenue|cost|profit|value)$", re.IGNORECASE)
+        date_key_patterns = re.compile(r"(created_at|updated_at|date|timestamp)$", re.IGNORECASE)
+
+        def validate(obj: Any, path: str = "") -> None:
+            if isinstance(obj, dict):
+                for k, v in obj.items():
+                    p = f"{path}.{k}" if path else k
+                    # Numeric checks
+                    if isinstance(v, (int, float)):
+                        if math.isnan(v) or math.isinf(v):  # type: ignore[arg-type]
+                            invalid_numeric.append(p)
+                        if numeric_key_patterns.search(k) and v < 0:
+                            negative_fields.append(p)
+                    # Date checks
+                    if isinstance(v, str) and date_key_patterns.search(k):
+                        # Accept ISO 8601 basic heuristic
+                        try:
+                            # Flexible parse: allow date or datetime
+                            if "T" in v:
+                                datetime.fromisoformat(v.replace("Z", "+00:00"))
+                            else:
+                                datetime.fromisoformat(v)
+                        except Exception:
+                            bad_dates.append(p)
+                    validate(v, p)
+            elif isinstance(obj, list):
+                for i, item in enumerate(obj):
+                    validate(item, f"{path}[{i}]")
+
+        validate(data)
+
+        if invalid_numeric:
+            issues.append(f"Invalid numeric values (NaN/inf) at: {', '.join(invalid_numeric[:10])}{'…' if len(invalid_numeric) > 10 else ''}")
+        if negative_fields:
+            issues.append(f"Negative values in non-negative fields at: {', '.join(negative_fields[:10])}{'…' if len(negative_fields) > 10 else ''}")
+        if bad_dates:
+            issues.append(f"Unparseable date/timestamp fields at: {', '.join(bad_dates[:10])}{'…' if len(bad_dates) > 10 else ''}")
+
+        # Validity score: penalize per category proportionally
+        problem_count = len(invalid_numeric) + len(negative_fields) + len(bad_dates)
+        # Scale by total fields scanned to avoid over-penalizing small samples
+        validity = 1.0 if total_fields == 0 else max(0.0, 1.0 - min(1.0, problem_count / max(1, total_fields)))
+
+        return {
+            "completeness": round(completeness, 6),
+            "consistency": round(consistency, 6),
+            "validity": round(validity, 6),
+            "issues": issues,
+        }
     
     def _identify_relationships(self, data: dict) -> dict:
-        """Identifies potential relationships (references, hierarchies) within the data."""
-        relationships = {
-            "references": [],
-            "hierarchies": [],
-            "dependencies": [] # Placeholder for actual dependency analysis
+        """Identify references, hierarchies, and dependencies via structural and key-based heuristics."""
+        references: List[str] = []
+        hierarchies: List[str] = []
+        dependencies: List[Dict[str, str]] = []
+
+        # Collect object IDs and their paths; and collect all fields ending with *_id
+        object_ids: Dict[str, List[str]] = {}  # id_value -> paths
+        foreign_keys: List[Tuple[str, str]] = []  # (path, key_name)
+
+        def scan(obj: Any, path: str = "") -> None:
+            if isinstance(obj, dict):
+                # Hierarchy recording
+                hierarchies.append(path or "<root>")
+                # Record id-like fields and their values
+                for k, v in obj.items():
+                    p = f"{path}.{k}" if path else k
+                    if isinstance(v, (str, int)) and re.search(r"(?:^|_)id$", k, re.IGNORECASE):
+                        object_ids.setdefault(str(v), []).append(p)
+                    if isinstance(v, (str, int)) and re.search(r"_id$", k, re.IGNORECASE) and not re.fullmatch(r"(?:^|_)id$", k, re.IGNORECASE):
+                        foreign_keys.append((p, k))
+                    scan(v, p)
+            elif isinstance(obj, list):
+                for i, item in enumerate(obj):
+                    scan(item, f"{path}[{i}]")
+
+        scan(data)
+
+        # References: list all paths that define IDs
+        for id_value, paths in object_ids.items():
+            for p in paths:
+                references.append(p)
+
+        # Dependencies: if a *_id field's value matches some object's id value, record dependency
+        def value_at_path(obj: Any, path: str) -> Any:
+            # Best effort: walk dict/list by tokens; only used for small lookups
+            tokens = re.split(r"\.(?![^\[]*\])", path)
+            cur = obj
+            for tok in tokens:
+                if tok == "":
+                    continue
+                m = re.match(r"(.+)\[(\d+)\]$", tok)
+                if m:
+                    key, idx = m.group(1), int(m.group(2))
+                    if isinstance(cur, dict):
+                        cur = cur.get(key)
+                    else:
+                        return None
+                    if isinstance(cur, list) and 0 <= idx < len(cur):
+                        cur = cur[idx]
+                    else:
+                        return None
+                else:
+                    if isinstance(cur, dict):
+                        cur = cur.get(tok)
+                    else:
+                        return None
+            return cur
+
+        for fk_path, fk_key in foreign_keys:
+            fk_val = value_at_path(data, fk_path)
+            if fk_val is None:
+                continue
+            hit_paths = object_ids.get(str(fk_val), [])
+            for target_path in hit_paths:
+                if target_path == fk_path:
+                    continue
+                dependencies.append({
+                    "from": fk_path,
+                    "to": target_path,
+                    "via": fk_key
+                })
+
+        # Deduplicate simple lists
+        references = sorted(set(references))
+        hierarchies = sorted(set(hierarchies))
+
+        return {
+            "references": references,
+            "hierarchies": hierarchies,
+            "dependencies": dependencies
         }
-        
-        # Look for ID references (simple heuristic)
-        id_fields = []
-        for key, value in data.items():
-            if isinstance(value, dict):
-                for sub_key, sub_value in value.items():
-                    if "id" in sub_key.lower() and isinstance(sub_value, str):
-                        id_fields.append(f"{key}.{sub_key}")
-        
-        if id_fields:
-            relationships["references"] = id_fields
-        
-        return relationships
     
     def _calculate_comprehensive_statistics(self, data: dict) -> dict:
         """Calculates comprehensive statistics including distribution metrics like median and percentiles."""

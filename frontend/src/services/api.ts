@@ -54,7 +54,8 @@ export interface ApiResponse<T = unknown> {
  */
 type ViteImportMeta = ImportMeta & { env: Record<string, string | undefined> };
 const viteMeta = import.meta as ViteImportMeta;
-const BASE_URL: string = viteMeta.env?.VITE_API_BASE_URL ?? '/api';
+// Standardize on VITE_API_URL; fallback to /api for local dev reverse proxy setups
+const BASE_URL: string = viteMeta.env?.VITE_API_URL ?? '/api';
 const DEFAULT_TIMEOUT_MS = 15000;
 
 /**

@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from event_bus import EventBus, get_event_bus
+from services.trust_score_service import TrustScoreService
 from money import Money
 from services.world_store import WorldStore
 from fba_events.pricing import SetPriceCommand
@@ -64,6 +65,9 @@ class MarketSimulationService:
         # Internal caches
         self._competitors_by_asin: Dict[str, List[CompetitorSnapshot]] = {}
         self._price_reference_by_asin: Dict[str, Money] = {}
+
+        # Services
+        self._trust_service = TrustScoreService()
 
         # Control flags
         self._started = False
@@ -204,9 +208,36 @@ class MarketSimulationService:
 
             total_profit = Money(revenue.cents - total_fees.cents - total_cost.cents)
 
-            # Trust score / BSR not yet integrated in WorldStore; use placeholders suitable for initial step
-            trust_score = float(product.metadata.get("trust_score", 0.9)) if hasattr(product, "metadata") and isinstance(product.metadata, dict) else 0.9
-            bsr = int(product.metadata.get("bsr", 1000)) if hasattr(product, "metadata") and isinstance(product.metadata, dict) else 1000
+            # Compute trust score using TrustScoreService with available metadata (robust defaults)
+            violations = 0
+            feedback: List[float] = []
+            total_days = 1
+            if hasattr(product, "metadata") and isinstance(product.metadata, dict):
+                md = product.metadata
+                violations = int(md.get("violations_count", 0) or 0)
+                raw_fb = md.get("buyer_feedback_scores", [])
+                if isinstance(raw_fb, list):
+                    # Keep only numeric values within 0..5 range
+                    feedback = [float(x) for x in raw_fb if isinstance(x, (int, float))]
+                    feedback = [max(0.0, min(5.0, x)) for x in feedback]
+                total_days = int(md.get("total_days_observed", total_days) or total_days)
+
+            trust_score = float(self._trust_service.calculate_trust_score(
+                violations_count=violations,
+                buyer_feedback_scores=feedback,
+                total_days=total_days
+            ))
+            # BSR: derive from metadata if present; otherwise estimate from demand proxy
+            if hasattr(product, "metadata") and isinstance(product.metadata, dict) and "bsr" in product.metadata:
+                bsr = int(product.metadata.get("bsr") or 1000)
+            else:
+                # Simple heuristic: higher demand -> better (lower) BSR within a bounded range
+                # Map units_demanded to a rank in [100, 200000]
+                max_rank = 200_000
+                min_rank = 100
+                demand_clamped = max(0, min(units_demanded, 10_000))
+                # Inverse proportion; add 1 to avoid div-by-zero
+                bsr = int(max(min_rank, min(max_rank, max_rank - (demand_clamped * (max_rank - min_rank) // 10_000))))
 
             sale = SaleOccurred(
                 event_id=f"sale_{asin}_{int(datetime.now().timestamp()*1000)}",

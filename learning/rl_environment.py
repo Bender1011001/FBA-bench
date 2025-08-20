@@ -4,8 +4,8 @@ import numpy as np
 from typing import Dict, Any, Tuple, List
 from dataclasses import dataclass
 
-# Placeholder for FBA-Bench simulation interface
-# In a real scenario, this would import the actual simulation components
+# Lightweight reference simulator interface for RL integration examples.
+# In production, import the actual simulation components.
 class FBABenchSimulator:
     def __init__(self):
         self._state = {"time": 0, "inventory": 100, "price": 10.0, "demand": 50, "cash": 1000.0}
@@ -202,10 +202,16 @@ class FBABenchRLEnvironment(gym.Env):
         reward = 0.0
         for objective in self.reward_function_config.get("objectives", []):
             if objective == "profit_maximization":
-                # Assume info contains 'revenue' and 'cost' (placeholder for cost)
-                revenue = info.get("revenue", 0.0)
-                cost = state.get("inventory_cost", 0.0) # Placeholder
-                reward += (revenue - cost) # Maximize profit
+                # Profit = revenue - cost; derive cost from info when available
+                revenue = float(info.get("revenue", 0.0) or 0.0)
+                if "cost" in info:
+                    cost = float(info.get("cost") or 0.0)
+                else:
+                    # best-effort: unit_cost from state times units_sold from step info
+                    unit_cost = float(state.get("unit_cost", 0.0) or 0.0)
+                    units_sold = int(info.get("units_sold", 0) or 0)
+                    cost = unit_cost * units_sold
+                reward += (revenue - cost)  # Maximize profit
             elif objective == "revenue_maximization":
                 reward += info.get("revenue", 0.0)
             elif objective == "inventory_efficiency":

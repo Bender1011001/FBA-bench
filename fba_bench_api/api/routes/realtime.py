@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from typing import Optional, Set, Dict, Any
 import json
 import logging
+import os
+import jwt
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Query, Header
 
@@ -14,6 +16,36 @@ from fba_bench_api.core.redis_client import get_pubsub, get_redis
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["simulation"])
+
+def _get_jwt_env():
+    """Read JWT verification environment."""
+    public_key = os.getenv("AUTH_JWT_PUBLIC_KEY")
+    alg = os.getenv("AUTH_JWT_ALG", "RS256")
+    issuer = os.getenv("AUTH_JWT_ISSUER")
+    audience = os.getenv("AUTH_JWT_AUDIENCE")
+    try:
+        leeway = int(os.getenv("AUTH_JWT_CLOCK_SKEW", "60") or "60")
+    except Exception:
+        leeway = 60
+    return public_key, alg, issuer, audience, leeway
+
+def _extract_ws_token(websocket: WebSocket) -> dict:
+    """
+    Extract bearer token from Sec-WebSocket-Protocol subprotocol:
+    expected subprotocol pattern: 'auth.bearer.token.<JWT>'
+    Returns: {"token": str|None, "subprotocol": str|None}
+    """
+    hdr = websocket.headers.get("sec-websocket-protocol")
+    token = None
+    chosen = None
+    if hdr:
+        parts = [p.strip() for p in hdr.split(",") if p.strip()]
+        for p in parts:
+            if p.startswith("auth.bearer.token."):
+                token = p[len("auth.bearer.token."):]
+                chosen = p
+                break
+    return {"token": token, "subprotocol": chosen}
 
 # Protocol documentation:
 # Client -> Server JSON frames:
@@ -155,7 +187,7 @@ async def get_recent_events(
 
 
 @router.websocket("/ws/realtime")
-async def websocket_realtime(websocket: WebSocket, origin: Optional[str] = Header(None)):
+async def websocket_realtime(websocket: WebSocket, origin: Optional[str] = Header(None), token: Optional[str] = Query(None)):
     """
     Topic-based realtime WebSocket over Redis pub/sub.
 
@@ -168,8 +200,40 @@ async def websocket_realtime(websocket: WebSocket, origin: Optional[str] = Heade
     - Server event: {"type":"event","topic":"X","data":{...},"ts": "..."}
     - Error:        {"type":"error","error":"..."}
     """
-    # Accept connection up-front
-    await websocket.accept()
+    # Authentication (require JWT if configured; allow anonymous only when no public key configured)
+    public_key, alg, issuer, audience, leeway = _get_jwt_env()
+    proto = _extract_ws_token(websocket)
+    effective_token = token or proto.get("token")
+    selected_subprotocol = proto.get("subprotocol")
+
+    if public_key:
+        if not effective_token:
+            await websocket.close(code=4401)
+            return
+        try:
+            options = {
+                "require": ["exp", "iat"],
+                "verify_signature": True,
+                "verify_exp": True,
+                "verify_aud": bool(audience),
+                "verify_iss": bool(issuer),
+            }
+            jwt.decode(
+                effective_token,
+                public_key,
+                algorithms=[alg],
+                audience=audience,
+                issuer=issuer,
+                leeway=leeway,
+                options=options,
+            )
+        except Exception as e:
+            logger.warning("WS JWT verification failed: %s", e)
+            await websocket.close(code=4401)
+            return
+
+    # Accept connection after auth; echo back chosen subprotocol if any
+    await websocket.accept(subprotocol=selected_subprotocol)
 
     # Prepare per-connection state
     subscribed_topics: Set[str] = set()
@@ -343,77 +407,9 @@ async def websocket_realtime(websocket: WebSocket, origin: Optional[str] = Heade
             await websocket.close()
         except Exception:
             pass
-    """
-    WebSocket stream for real-time events.
-
-    Behavior:
-      - Accepts connections and emits JSON messages.
-      - If event stream exists, forwards events (future integration).
-      - Else, sends a heartbeat every 2 seconds:
-        { "type": "heartbeat", "status": "idle|running|stopped", "timestamp": ISO-8601 }
-    """
-    client_id = await connection_manager.connect(websocket, origin)
-    if not client_id:
-        return
-
-    try:
-        # Acknowledge connection
-        await connection_manager.send_to_connection(
-            websocket,
-            {
-                "type": "connection_established",
-                "message": "Events WebSocket connection established",
-                "timestamp": _now_iso(),
-                "client_id": client_id,
-                "origin": origin,
-            },
-        )
-
-        # Initial snapshot (canonical shape)
-        try:
-            initial = _map_dashboard_snapshot() if dashboard_service else _default_snapshot()
-            await connection_manager.send_to_connection(
-                websocket,
-                {"type": "snapshot", "data": initial, "timestamp": _now_iso()},
-            )
-        except Exception:
-            await connection_manager.send_to_connection(
-                websocket,
-                {
-                    "type": "error",
-                    "message": "Failed to load initial snapshot",
-                    "timestamp": _now_iso(),
-                },
-            )
-
-        # Heartbeat loop (2s)
-        while True:
-            try:
-                # Non-blocking receive to detect disconnects/keepalive pings
-                await asyncio.wait_for(websocket.receive_text(), timeout=2.0)
-                # We don't process commands yet; send immediate heartbeat response
-                await connection_manager.send_to_connection(
-                    websocket,
-                    {
-                        "type": "heartbeat",
-                        "status": _current_status(),
-                        "timestamp": _now_iso(),
-                    },
-                )
-            except asyncio.TimeoutError:
-                # Periodic heartbeat
-                await connection_manager.send_to_connection(
-                    websocket,
-                    {
-                        "type": "heartbeat",
-                        "status": _current_status(),
-                        "timestamp": _now_iso(),
-                    },
-                )
-            except WebSocketDisconnect:
-                break
-    finally:
-        await connection_manager.disconnect(websocket)
+    # Note: Single canonical implementation lives above using Redis pub/sub.
+    # Keep this docstring placeholder removed to avoid double-accept behavior.
+    # ConnectionManager-based alternative has been removed to prevent duplication.
 # Back-compat alias: keep /ws/events endpoint working by delegating to /ws/realtime
 @router.websocket("/ws/events")
 async def websocket_events(websocket: WebSocket, origin: Optional[str] = Header(None)):

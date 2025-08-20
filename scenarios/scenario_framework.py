@@ -234,6 +234,22 @@ class ScenarioConfig:
 
         return processed_products
 
+
+class ScenarioFramework:
+    """
+    Thin wrapper expected by tests; provides helpers to load and validate scenario configs.
+    """
+
+    @staticmethod
+    def from_yaml(path: str) -> ScenarioConfig:
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        return ScenarioConfig(data)
+
+    @staticmethod
+    def build(config_data: Dict[str, Any]) -> ScenarioConfig:
+        return ScenarioConfig(config_data)
+
     def schedule_external_events(self, timeline: int, event_types: List[str]) -> List[Dict[str, Any]]:
         """
         Plans scenario-specific disruptions across a simulation timeline.

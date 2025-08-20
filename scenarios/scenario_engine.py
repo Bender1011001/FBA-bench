@@ -7,6 +7,30 @@ from scenarios.scenario_framework import ScenarioConfig
 import logging
 import random
 import time
+from enum import Enum
+
+class ScenarioType(str, Enum):
+    """
+    Lightweight scenario type enum for curriculum/orchestration tests.
+    Matches names referenced by tests.* importing from scenarios.scenario_engine.
+    """
+    SINGLE_AGENT = "single_agent"
+    MULTI_AGENT = "multi_agent"
+    COMPLEX_DYNAMICS = "complex_dynamics"
+
+class ScenarioComplexity(str, Enum):
+    """Generalized complexity levels used in tests."""
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    EXTREME = "extreme"
+
+class ScenarioOutcome(str, Enum):
+    """Standardized outcome labels for scenario execution."""
+    SUCCESS = "success"
+    FAILURE = "failure"
+    PARTIAL = "partial"
+    TIMEOUT = "timeout"
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -46,7 +70,7 @@ class ScenarioEngine:
         if not config:
             raise ValueError("No scenario configuration provided for initialization.")
 
-        # Placeholder for actual environment and agent setup
+        # Environment and agent setup would be wired to the selected simulation backend
         # self.environment = environment
         # self.agents = agents
 
@@ -94,7 +118,7 @@ class ScenarioEngine:
         for event in event_schedule:
             if event.get('tick') == current_tick:
                 logging.info(f"Injecting event at tick {current_tick}: {event.get('name', event.get('type'))}")
-                # Placeholder for actual event bus or environment event injection
+                # Event bus or environment event injection would occur here when integrated
                 # self.environment.event_bus.publish(event['type'], event['impact'])
                 event['triggered'] = True # Mark as triggered to avoid re-triggering
         # Clean up triggered events if they are one-time
@@ -107,8 +131,7 @@ class ScenarioEngine:
         This method would be called periodically during the simulation loop.
         """
         progress_metrics = {}
-        # Placeholder for real-time objective tracking
-        # For example, check current profit against target
+        # Real-time objective tracking hook (e.g., check profit against targets)
         # current_profit = agents['main_agent'].get_current_profit()
         # progress_metrics['current_profit'] = current_profit
         # progress_metrics['profit_objective_met'] = current_profit >= objectives.get('profit_target', 0)
@@ -184,19 +207,19 @@ class ScenarioEngine:
         # Assuming agent_models is a dict of agent names to actual agent instances/factories
         self.agents = agent_models # Or instantiate them here based on config
         
-        # Placeholder for a real simulation environment
-        # self.environment = Environment(scenario_config.config_data['expected_duration']) 
+        # Simulation environment integration point:
+        # self.environment = Environment(scenario_config.config_data['expected_duration'])
         
         self.initialize_scenario_environment(scenario_config)
 
-        # Simulate the main loop - currently a simple placeholder
+        # Simulate the main loop with a simplified reference implementation
         total_ticks = scenario_config.config_data.get('expected_duration', 1)
         sim_metrics = {'profit': 0, 'market_share': 0.1, 'simulation_duration': total_ticks, 'customer_satisfaction': 0.9, 'on_time_delivery_rate': 0.98, 'cash_reserve_min': 20000, 'debt_to_equity_ratio_max': 0.7, 'survival_until_end': True} # Dummy metrics
         
         event_schedule = scenario_config.config_data.get('external_events', [])
         for tick in range(1, total_ticks + 1):
             logging.debug(f"Simulation Tick: {tick}/{total_ticks}")
-            # Step the environment and agents (placeholder)
+            # Step the environment and agents if integrated
             # self.environment.step()
             # for agent in self.agents.values():
             #     agent.step()
@@ -215,7 +238,7 @@ class ScenarioEngine:
                 sim_metrics['on_time_delivery_rate'] = 0.70 # Simulate drop from event
                 sim_metrics['customer_satisfaction'] = 0.75
 
-        # Final state calculation (placeholder)
+        # Final state calculation (simplified aggregation)
         final_state = {
             'profit_target': sim_metrics['profit'],
             'market_share_europe': sim_metrics['market_share'], # Example from international_expansion

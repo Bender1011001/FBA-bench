@@ -11,6 +11,7 @@ import statistics
 from typing import Dict, Any, List, Optional, Tuple, Union
 from dataclasses import dataclass
 from enum import Enum
+from dataclasses import dataclass
 
 import numpy as np
 from scipy import stats
@@ -39,6 +40,40 @@ class StatisticalResult:
     alpha: float = 0.05
 
 
+# Simple container for confidence interval values
+@dataclass
+class ConfidenceInterval:
+    lower: float
+    upper: float
+
+
+# Enum for significance test types expected by tests
+class SignificanceTest(Enum):
+    T_TEST = "t_test"
+    PAIRED_T_TEST = "paired_t_test"
+    WILCOXON = "wilcoxon"
+    MANN_WHITNEY_U = "mann_whitney_u"
+    ANOVA = "anova"
+    CHI_SQUARE = "chi_square"
+
+
+# Basic outlier detector using median absolute deviation
+class OutlierDetector:
+    def __init__(self, k: float = 5.0):
+        self.k = k
+
+    def detect(self, values: List[float]) -> Dict[str, Any]:
+            if not values:
+                return {"indices": [], "count": 0, "median": None, "mad": None}
+            med = statistics.median(values)
+            abs_dev = [abs(v - med) for v in values]
+            mad = statistics.median(abs_dev) if any(abs_dev) else 0.0
+            if mad == 0:
+                return {"indices": [], "count": 0, "median": med, "mad": mad}
+            outlier_idx = [i for i, v in enumerate(values) if abs(v - med) > self.k * mad]
+            return {"indices": outlier_idx, "count": len(outlier_idx), "median": med, "mad": mad}
+
+
 class StatisticalValidator:
     """
     Statistical validation for benchmarking metrics.
@@ -57,8 +92,8 @@ class StatisticalValidator:
         self.alpha = alpha
     
     def calculate_confidence_interval(
-        self, 
-        data: List[float], 
+        self,
+        data: List[float],
         confidence: float = 0.95
     ) -> Tuple[float, float]:
         """

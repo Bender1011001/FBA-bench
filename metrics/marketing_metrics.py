@@ -7,30 +7,47 @@ class MarketingMetrics:
         self.total_ad_spend = 0.0
         self.total_conversions = 0
         self.total_customer_acquisitions = 0
-        self.campaign_performance: Dict[str, Dict] = {} # campaign_id: {'revenue': float, 'ad_spend': float, 'conversions': int}
+        self.total_opportunities = 0  # visits/clicks tracked from events
+        self.campaign_performance: Dict[str, Dict] = {}  # campaign_id: {'revenue': float, 'ad_spend': float, 'conversions': int}
 
     def update(self, events: List[Dict]):
         for event in events:
-            if event.get('type') == 'SaleOccurred':
-                self.total_revenue += event.get('amount', 0.0)
-                # Assuming sale events might carry campaign info
+            et = event.get('type')
+
+            if et == 'SaleOccurred':
+                amount = event.get('amount', 0.0)
+                if not isinstance(amount, (int, float)):
+                    # fallback compute
+                    units = event.get('units_sold') or event.get('units') or 0
+                    unit_price = event.get('unit_price') or event.get('price') or 0.0
+                    try:
+                        amount = float(units) * float(unit_price)
+                    except Exception:
+                        amount = 0.0
+                self.total_revenue += float(amount)
+                # Campaign attribution (if present)
                 campaign_id = event.get('campaign_id')
                 if campaign_id:
                     if campaign_id not in self.campaign_performance:
                         self.campaign_performance[campaign_id] = {'revenue': 0.0, 'ad_spend': 0.0, 'conversions': 0}
-                    self.campaign_performance[campaign_id]['revenue'] += event.get('amount', 0.0)
+                    self.campaign_performance[campaign_id]['revenue'] += float(amount)
                     self.campaign_performance[campaign_id]['conversions'] += 1
+                # Count conversion
+                self.total_conversions += 1
 
-            elif event.get('type') == 'AdSpendEvent': # Assuming an event for ad spend
-                ad_spend = event.get('cost', 0.0)
+            elif et == 'AdSpendEvent':  # Assuming an event for ad spend
+                ad_spend = float(event.get('cost', 0.0) or 0.0)
                 self.total_ad_spend += ad_spend
                 campaign_id = event.get('campaign_id')
                 if campaign_id:
                     if campaign_id not in self.campaign_performance:
                         self.campaign_performance[campaign_id] = {'revenue': 0.0, 'ad_spend': 0.0, 'conversions': 0}
                     self.campaign_performance[campaign_id]['ad_spend'] += ad_spend
-            
-            elif event.get('type') == 'CustomerAcquisitionEvent':
+
+            elif et in ('VisitEvent', 'AdClickEvent'):  # Track opportunities
+                self.total_opportunities += 1
+
+            elif et == 'CustomerAcquisitionEvent':
                 self.total_customer_acquisitions += 1
 
 
@@ -73,12 +90,12 @@ class MarketingMetrics:
 
 
     def calculate_conversion_rate(self) -> float:
-        # This requires tracking website visits or ad clicks vs conversions.
-        # For now, it's a simplification based on total sales events.
-        # In a real scenario, 'total_visitors' or 'total_clicks' would be needed.
-        total_opportunities = 1000 # Placeholder for total opportunities (e.g., website visitors)
-        if total_opportunities > 0:
-            return (self.total_conversions / total_opportunities) * 100
+        """
+        Conversion rate computed from tracked opportunities (visits/clicks) versus conversions (sales).
+        If no opportunities have been tracked, return 0.0 to avoid division by zero.
+        """
+        if self.total_opportunities > 0:
+            return (self.total_conversions / self.total_opportunities) * 100.0
         return 0.0
 
     def calculate_customer_acquisition_cost(self) -> float:

@@ -1,10 +1,19 @@
 import logging
+from dataclasses import dataclass, field
 from typing import Dict, Any, List, Tuple
 import asyncio
 import time
 
 # Assuming RealWorldAdapter is implemented
 # from .real_world_adapter import RealWorldAdapter
+
+@dataclass
+class ValidationResult:
+    """Standard validation result type expected by tests and examples."""
+    passed: bool
+    score: float
+    issues: List[str] = field(default_factory=list)
+    details: Dict[str, Any] = field(default_factory=dict)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -18,6 +27,7 @@ class IntegrationValidator:
         self.real_world_adapter = real_world_adapter
         self.validation_results: Dict[str, Any] = {}
         logging.info("IntegrationValidator initialized.")
+        
 
     async def validate_action_consistency(self, sim_action: Dict[str, Any], real_expected_action: Dict[str, Any]) -> Tuple[bool, str]:
         """
