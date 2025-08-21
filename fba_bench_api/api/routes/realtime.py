@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Qu
 from fba_bench_api.core.state import dashboard_service
 from fba_bench_api.api.dependencies import connection_manager  # fixed import
 from fba_bench_api.core.redis_client import get_pubsub, get_redis
+from fba_bench_api.models.api import SimulationSnapshot, RecentEventsResponse
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +145,7 @@ def _map_dashboard_snapshot() -> dict:
         return _default_snapshot()
 
 
-@router.get("/api/v1/simulation/snapshot", tags=["simulation"])
+@router.get("/api/v1/simulation/snapshot", tags=["simulation"], response_model=SimulationSnapshot)
 async def get_simulation_snapshot():
     """
     Return a canonical simulation snapshot.
@@ -164,7 +165,7 @@ async def get_simulation_snapshot():
         raise HTTPException(status_code=500, detail=f"Failed to fetch snapshot: {e}")
 
 
-@router.get("/api/v1/simulation/events")
+@router.get("/api/v1/simulation/events", response_model=RecentEventsResponse)
 async def get_recent_events(
     event_type: Optional[str] = Query(None, description="sales|commands"),
     limit: int = Query(20, ge=1, le=100),

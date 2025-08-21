@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Optional, Literal
 
 from fastapi import APIRouter, Depends, status
+from fba_bench_api.api.di import get_event_bus, get_simulation_orchestrator
 from fba_bench_api.api.errors import SimulationNotFoundError, SimulationStateError
 from pydantic import BaseModel, Field
 from fba_bench_api.core.redis_client import get_redis
@@ -110,3 +111,45 @@ async def get_simulation(simulation_id: str, pm: PersistenceManager = Depends(ge
     if not current:
         raise SimulationNotFoundError(simulation_id)
     return Simulation(**current)
+
+# ---------------------------------------------------------------------------
+# Back-compat orchestrator controls (DI-backed), used by frontend UI
+# These manage the SimulationOrchestrator lifecycle directly and return
+# a minimal OK envelope. Database records are managed separately via CRUD.
+# ---------------------------------------------------------------------------
+
+@router.post("/start", description="Start orchestrator (compat)")
+async def compat_start(
+    bus = Depends(get_event_bus),
+    orch = Depends(get_simulation_orchestrator),
+):
+    await orch.start(bus)
+    return {"ok": True, "status": "starting"}
+
+@router.post("/stop", description="Stop orchestrator (compat)")
+async def compat_stop(
+    orch = Depends(get_simulation_orchestrator),
+):
+    await orch.stop()
+    return {"ok": True, "status": "stopped"}
+
+@router.post("/pause", description="Pause orchestrator (compat)")
+async def compat_pause(
+    orch = Depends(get_simulation_orchestrator),
+):
+    await orch.pause()
+    return {"ok": True, "status": "paused"}
+
+@router.post("/resume", description="Resume orchestrator (compat)")
+async def compat_resume(
+    orch = Depends(get_simulation_orchestrator),
+):
+    await orch.resume()
+    return {"ok": True, "status": "running"}
+
+@router.post("/emergency-stop", description="Emergency stop orchestrator (compat)")
+async def compat_emergency_stop(
+    orch = Depends(get_simulation_orchestrator),
+):
+    await orch.stop()
+    return {"ok": True, "status": "stopped"}

@@ -4,15 +4,9 @@ import { handleError, ErrorCategory } from '../utils/errorHandler';
 import type { AppError } from '../utils/errorHandler';
 import type { ApiResponse } from '../types';
 import type { ResultsData, ExperimentExecution } from '../types';
+import { appConfig } from '../config/appConfig';
 
-// Configuration using environment variables
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000';
-const API_KEY = import.meta.env.VITE_API_KEY || '';
-const DEFAULT_TIMEOUT = parseInt(import.meta.env.VITE_API_TIMEOUT || '15000', 10); // 15 seconds
-const RETRY_ATTEMPTS = parseInt(import.meta.env.VITE_API_RETRY_ATTEMPTS || '3', 10);
-const RETRY_DELAY_MS = parseInt(import.meta.env.VITE_API_RETRY_DELAY_MS || '1000', 10); // Initial retry delay
-const ALLOW_API_KEY_AUTH = import.meta.env.VITE_ALLOW_API_KEY_AUTH === 'true';
+ // Configuration is centralized via appConfig (frontend/src/config/appConfig.ts)
 
 // Type definition for environment configuration
 interface EnvironmentConfig {
@@ -26,46 +20,23 @@ interface EnvironmentConfig {
   isProduction: boolean;
 }
 
-// Validate and parse environment variables
+// Validate and parse configuration from centralized appConfig
 const validateEnvironment = (): EnvironmentConfig => {
   const config: EnvironmentConfig = {
-    apiBaseUrl: API_BASE_URL,
-    wsUrl: WS_URL,
-    apiKey: API_KEY,
-    defaultTimeout: DEFAULT_TIMEOUT,
-    retryAttempts: RETRY_ATTEMPTS,
-    retryDelayMs: RETRY_DELAY_MS,
-    allowApiKeyAuth: ALLOW_API_KEY_AUTH,
-    isProduction: import.meta.env.PROD,
+    apiBaseUrl: appConfig.apiBaseUrl,
+    wsUrl: appConfig.wsUrl,
+    apiKey: appConfig.apiKey,
+    defaultTimeout: appConfig.defaultTimeout,
+    retryAttempts: appConfig.retryAttempts,
+    retryDelayMs: appConfig.retryDelayMs,
+    allowApiKeyAuth: appConfig.allowApiKeyAuth,
+    isProduction: appConfig.isProduction,
   };
 
-  // Validate required environment variables
-  if (!config.apiBaseUrl) {
-    throw new Error('VITE_API_URL environment variable is required');
+  // Minimal guarding to avoid accidental empty base URLs
+  if (!config.apiBaseUrl || !config.wsUrl) {
+    throw new Error('Frontend API configuration is invalid: apiBaseUrl and wsUrl are required');
   }
-  
-  if (!config.wsUrl) {
-    throw new Error('VITE_WS_URL environment variable is required');
-  }
-  
-  // Validate numeric values
-  if (isNaN(config.defaultTimeout) || config.defaultTimeout <= 0) {
-    throw new Error('VITE_API_TIMEOUT must be a positive number');
-  }
-  
-  if (isNaN(config.retryAttempts) || config.retryAttempts < 0) {
-    throw new Error('VITE_API_RETRY_ATTEMPTS must be a non-negative number');
-  }
-  
-  if (isNaN(config.retryDelayMs) || config.retryDelayMs < 0) {
-    throw new Error('VITE_API_RETRY_DELAY_MS must be a non-negative number');
-  }
-  
-  // In production, API key should be required
-  if (config.isProduction && !config.apiKey) {
-    throw new Error('VITE_API_KEY environment variable is required in production');
-  }
-  
   return config;
 };
 
@@ -256,8 +227,8 @@ class ApiService {
                              caughtError.message.includes('Failed to fetch'); // Common fetch network error message
 
       if (isNetworkError && retries > 0) {
-        console.warn(`Retrying request to ${url} (Attempt ${attempt}/${RETRY_ATTEMPTS})...`);
-        await new Promise(res => setTimeout(res, delay));
+        console.warn(`Retrying request to ${url} (Attempt ${attempt}/${appConfig.retryAttempts})...`);
+        await new Promise((res) => setTimeout(res, delay));
         return this.fetchWithRetry(url, options, retries - 1, delay * 2, attempt + 1); // Exponential backoff
       }
 

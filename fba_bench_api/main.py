@@ -3,13 +3,14 @@ import logging
 import os
 from typing import List
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from fba_bench_api.core.lifespan import lifespan
 from fba_bench.core.logging import setup_logging, RequestIdMiddleware
 from fba_bench_api.api.exception_handlers import add_exception_handlers
 from fba_bench import __version__
+from fba_bench_api.core.container import AppContainer
 
 from fba_bench_api.api.routes import root as root_routes
 from fba_bench_api.api.routes import config as config_routes
@@ -117,6 +118,10 @@ def create_app() -> FastAPI:
         version=__version__,
         lifespan=lifespan,
     )
+
+    # Dependency Injection container
+    app.state.container = AppContainer()
+
     # Correlation id middleware (adds X-Request-ID and injects into logs)
     app.add_middleware(RequestIdMiddleware)
     # JWT middleware (protects all but health/docs) - only if explicitly enabled and key provided
@@ -155,7 +160,7 @@ def create_app() -> FastAPI:
 
     # Health endpoint (unauthenticated) with Redis/DB/EventBus checks
     @app.get("/health")
-    async def health():
+    async def health(request: Request):
         from starlette.responses import JSONResponse as _JSON
         status: dict = {"status": "ok", "redis": "unknown", "event_bus": "unknown", "db": "unknown"}
 
@@ -168,10 +173,10 @@ def create_app() -> FastAPI:
         except Exception as e:
             status["redis"] = f"down:{type(e).__name__}"
 
-        # Event bus
+        # Event bus via DI container
         try:
-            from fba_bench_api.core.state import active_event_bus
-            bus = active_event_bus()
+            container = request.app.state.container  # type: ignore[attr-defined]
+            bus = container.event_bus() if container else None
             status["event_bus"] = "ok" if bus is not None else "down"
         except Exception as e:
             status["event_bus"] = f"down:{type(e).__name__}"

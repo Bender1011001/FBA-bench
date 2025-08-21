@@ -7,7 +7,6 @@ from .state import dashboard_service, active_event_bus
 from .state import dashboard_service as _dash_ref, active_event_bus as _bus_ref
 from .persistence import config_persistence_manager
 from services.dashboard_api_service import DashboardAPIService
-from fba_events.bus import InMemoryEventBus as EventBus
 from fba_bench_api.api.dependencies import connection_manager  # fixed import
 from fba_bench_api.core.redis_client import close_redis  # Graceful Redis shutdown
 
@@ -19,8 +18,11 @@ async def lifespan(app: FastAPI):
     # init persistence layer cache
     config_persistence_manager.initialize_from_storage()
 
-    # Event bus + dashboard service
-    bus = EventBus()
+    # Resolve EventBus from DI container and initialize services
+    container = getattr(app.state, "container", None)
+    if container is None:
+        raise RuntimeError("AppContainer not initialized on app.state.container")
+    bus = container.event_bus()
     dash = DashboardAPIService(bus)
     # expose to global state
     globals()["_dash_ref"] = dash
