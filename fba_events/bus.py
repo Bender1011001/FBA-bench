@@ -73,6 +73,14 @@ class EventBus:
     async def get_recorded_events(self) -> List[Dict[str, Any]]:
         raise NotImplementedError
 
+    async def log_event(self, event: Any, event_type: str, ts: str) -> None:
+        """
+        Hook for logging/auditing events when they are published.
+        Implementations should ensure this is non-blocking and resilient.
+        Default is a no-op for compatibility.
+        """
+        return None
+
 
 class InMemoryEventBus(EventBus):
     """
@@ -101,6 +109,9 @@ class InMemoryEventBus(EventBus):
         # Cap for recorded events; default 5000, configurable via env
         self._recording_max: int = self._read_recording_max()
         self._recording_truncated: bool = False
+
+        # Logging controls (enabled by default, configurable via env EVENT_LOGGING_ENABLED)
+        self._logging_enabled: bool = self._read_logging_enabled()
 
         # Pre-compiled redaction configuration
         self._redact_key_patterns: List[re.Pattern] = [
@@ -135,9 +146,15 @@ class InMemoryEventBus(EventBus):
     async def publish(self, event: Any) -> None:
         """
         Enqueue an event for dispatch with resolved type string and ISO-8601 timestamp.
+        Also logs the event via log_event to provide an audit trail.
         """
         event_type = self._event_type_name(event)
         ts = datetime.now(timezone.utc).isoformat()
+        try:
+            await self.log_event(event, event_type, ts)
+        except Exception as e:
+            # Never let logging failures impact publish path
+            logger.debug("log_event failed: %s", e)
         await self._queue.put((event, event_type, ts))
 
     async def subscribe(self, event_selector: Any, handler: Any) -> SubscriptionHandle:
@@ -178,6 +195,29 @@ class InMemoryEventBus(EventBus):
         # Return a shallow copy to ensure stability for callers
         # Non-blocking, respects cap (we stop appending once cap reached)
         return list(self._recorded)
+
+    async def log_event(self, event: Any, event_type: str, ts: str) -> None:
+        """
+        Structured event logging hook.
+        Creates a redacted, JSON-serializable summary and emits it to the logger.
+        This is separate from in-memory recording used for observability snapshots.
+        """
+        if not getattr(self, "_logging_enabled", True):
+            return
+        try:
+            summary = self._event_to_summary(event)
+            safe_summary = self._redact_sensitive(summary)
+            logger.info(
+                "Event published",
+                extra={
+                    "event_type": event_type,
+                    "timestamp": ts,
+                    "event": safe_summary,
+                },
+            )
+        except Exception as e:
+            # Logging must never interfere with event flow
+            logger.debug("Event logging skipped: %s", e)
 
     # -------------------------
     # Internal implementation
@@ -373,6 +413,17 @@ class InMemoryEventBus(EventBus):
             return parsed if parsed > 0 else default_max
         except Exception:
             return default_max
+
+    def _read_logging_enabled(self) -> bool:
+        """
+        Read EVENT_LOGGING_ENABLED env to toggle structured logging on publish.
+        Accepts: "0", "false", "no" (case-insensitive) to disable; enabled otherwise.
+        """
+        try:
+            val = os.getenv("EVENT_LOGGING_ENABLED", "1").strip().lower()
+            return val not in ("0", "false", "no")
+        except Exception:
+            return True
 
     def get_recording_stats(self) -> Dict[str, Any]:
         """

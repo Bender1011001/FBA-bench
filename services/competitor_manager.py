@@ -4,11 +4,10 @@ import numpy as np
 from typing import Dict, List, Optional, Tuple, Any, TYPE_CHECKING
 from datetime import datetime
 from enum import Enum
-
-from money import Money # Ensure Money is imported
+from fba_money import Money  # Import project-local Money
 from models.competitor import Competitor
 from events import TickEvent, CompetitorPricesUpdated, CompetitorState
-from personas import CompetitorPersona # New import
+from personas import CompetitorPersona  # New import
 
 # Import get_event_bus for instantiation and EventBus for type hinting
 from event_bus import get_event_bus

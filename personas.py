@@ -15,7 +15,8 @@ from dataclasses import dataclass
 from typing import Dict, Any, Optional
 from decimal import Decimal
 
-from money import Money, max_money, min_money
+# Use project-local money implementation explicitly to avoid third-party shadowing
+from fba_money import Money, max_money, min_money
 from events import CompetitorState
 
 

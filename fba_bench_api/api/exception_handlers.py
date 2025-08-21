@@ -10,6 +10,7 @@ from starlette import status
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from fba_bench.core.logging import get_request_id
+from fba_bench_api.api.errors import AppError
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,7 @@ def add_exception_handlers(app: FastAPI) -> None:
       - RequestValidationError (422)
       - Starlette/FastAPI HTTPException (as-is status)
       - TimeoutError (504)
+      - AppError (custom structured application errors)
       - Generic Exception (500)
     """
 
@@ -130,6 +132,26 @@ def add_exception_handlers(app: FastAPI) -> None:
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             code="timeout",
             message="Operation timed out. Please retry.",
+        )
+
+    @app.exception_handler(AppError)
+    async def on_app_error(request: Request, exc: AppError) -> JSONResponse:  # type: ignore[override]
+        # Centralized handling for domain-specific application errors
+        logger.info(
+            "AppError",
+            extra={
+                "request_id": get_request_id() or "-",
+                "path": str(request.url.path),
+                "code": exc.code,
+                "status_code": exc.status_code,
+            },
+        )
+        return _problem_detail(
+            request,
+            status_code=exc.status_code,
+            code=exc.code,
+            message=exc.message,
+            detail=exc.detail,
         )
 
     @app.exception_handler(Exception)

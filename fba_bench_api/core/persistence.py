@@ -273,7 +273,7 @@ class SimulationRepository:
             id=data["id"],
             experiment_id=data.get("experiment_id"),
             # status defaults to pending
-            metadata=data.get("metadata") or {},
+            sim_metadata=data.get("metadata") or {},
         )
         self.db.add(obj)
         self.db.flush()
@@ -291,7 +291,7 @@ class SimulationRepository:
         if "status" in data and data["status"] is not None:
             obj.status = data["status"]
         if "metadata" in data and data["metadata"] is not None:
-            obj.metadata = data["metadata"]
+            obj.sim_metadata = data["metadata"]
         obj.updated_at = utcnow()
         self.db.flush()
         return obj.to_dict_with_topic()

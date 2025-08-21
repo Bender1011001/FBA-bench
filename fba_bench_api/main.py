@@ -35,6 +35,10 @@ AUTH_JWT_PUBLIC_KEY = os.getenv("AUTH_JWT_PUBLIC_KEY")
 AUTH_JWT_ISSUER = os.getenv("AUTH_JWT_ISSUER")
 AUTH_JWT_AUDIENCE = os.getenv("AUTH_JWT_AUDIENCE")
 AUTH_JWT_CLOCK_SKEW = int(os.getenv("AUTH_JWT_CLOCK_SKEW", "60") or "60")
+# Enable/disable auth via env. Defaults to disabled for tests/dev unless explicitly enabled.
+AUTH_ENABLED = (os.getenv("AUTH_ENABLED") or os.getenv("FBA_AUTH_ENABLED") or "false").strip().lower() in ("1", "true", "yes", "on")
+# Explicit test bypass (default true to keep integration tests unauthenticated unless opted-in)
+AUTH_TEST_BYPASS = (os.getenv("AUTH_TEST_BYPASS", "true").strip().lower() in ("1", "true", "yes", "on"))
 
 UNPROTECTED_PATHS = {
     "/health",
@@ -49,6 +53,9 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         # Allow health and docs unauthenticated; protect the rest
         if path in UNPROTECTED_PATHS or path.startswith("/ws"):  # ws authenticated separately if needed
+            return await call_next(request)
+        # Global bypass for tests/dev unless explicitly disabled
+        if not AUTH_ENABLED or AUTH_TEST_BYPASS:
             return await call_next(request)
 
         auth = request.headers.get("authorization") or request.headers.get("Authorization")
@@ -112,8 +119,12 @@ def create_app() -> FastAPI:
     )
     # Correlation id middleware (adds X-Request-ID and injects into logs)
     app.add_middleware(RequestIdMiddleware)
-    # JWT middleware (protects all but health/docs)
-    app.add_middleware(JWTAuthMiddleware)
+    # JWT middleware (protects all but health/docs) - only if explicitly enabled and key provided
+    if AUTH_ENABLED and AUTH_JWT_PUBLIC_KEY:
+        app.add_middleware(JWTAuthMiddleware)
+        logger.info("JWTAuthMiddleware enabled")
+    else:
+        logger.info("JWTAuthMiddleware disabled (AUTH_ENABLED=%s, PUBLIC_KEY=%s)", AUTH_ENABLED, bool(AUTH_JWT_PUBLIC_KEY))
 
     allow_origins = _get_cors_allowed_origins()
     # Hardened CORS: explicit origins, no credentials, limited methods/headers

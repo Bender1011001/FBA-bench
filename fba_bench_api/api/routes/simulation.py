@@ -5,7 +5,8 @@ import logging
 from datetime import datetime
 from typing import Optional, Literal
 
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, Depends, status
+from fba_bench_api.api.errors import SimulationNotFoundError, SimulationStateError
 from pydantic import BaseModel, Field
 from fba_bench_api.core.redis_client import get_redis
 from sqlalchemy.orm import Session
@@ -83,9 +84,9 @@ async def create_simulation(payload: SimulationCreate, pm: PersistenceManager = 
 async def start_simulation(simulation_id: str, pm: PersistenceManager = Depends(get_pm)):
     current = pm.simulations().get(simulation_id)
     if not current:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Simulation '{simulation_id}' not found")
+        raise SimulationNotFoundError(simulation_id)
     if current["status"] != "pending":
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Simulation '{simulation_id}' is not pending")
+        raise SimulationStateError(simulation_id, expected="pending", actual=current.get("status", "unknown"))
     updates = {"status": "running", "updated_at": _now()}
     updated = pm.simulations().update(simulation_id, updates)
     await _publish_status(simulation_id, "running")
@@ -95,9 +96,9 @@ async def start_simulation(simulation_id: str, pm: PersistenceManager = Depends(
 async def stop_simulation(simulation_id: str, pm: PersistenceManager = Depends(get_pm)):
     current = pm.simulations().get(simulation_id)
     if not current:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Simulation '{simulation_id}' not found")
+        raise SimulationNotFoundError(simulation_id)
     if current["status"] != "running":
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Simulation '{simulation_id}' is not running")
+        raise SimulationStateError(simulation_id, expected="running", actual=current.get("status", "unknown"))
     updates = {"status": "stopped", "updated_at": _now()}
     updated = pm.simulations().update(simulation_id, updates)
     await _publish_status(simulation_id, "stopped")
@@ -107,5 +108,5 @@ async def stop_simulation(simulation_id: str, pm: PersistenceManager = Depends(g
 async def get_simulation(simulation_id: str, pm: PersistenceManager = Depends(get_pm)):
     current = pm.simulations().get(simulation_id)
     if not current:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Simulation '{simulation_id}' not found")
+        raise SimulationNotFoundError(simulation_id)
     return Simulation(**current)

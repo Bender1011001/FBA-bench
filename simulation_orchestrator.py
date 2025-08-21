@@ -15,16 +15,30 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from event_bus import EventBus # For type hinting only
 
-# OpenTelemetry Imports
-from opentelemetry import trace
-from instrumentation.tracer import setup_tracing
-from instrumentation.simulation_tracer import SimulationTracer
+# Observability/Tracing (robust optional imports; tests can run without OTEL)
+try:
+    from opentelemetry import trace  # type: ignore
+except Exception:
+    trace = None  # type: ignore
+
+try:
+    from instrumentation.tracer import Tracer  # Minimal tracer implementation
+except Exception:
+    Tracer = None  # type: ignore
+
+try:
+    from instrumentation.simulation_tracer import SimulationTracer  # High-level tracer
+except Exception:
+    SimulationTracer = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 
-# Initialize tracer for SimulationOrchestrator module
-orchestrator_tracer_provider = setup_tracing(service_name="fba-bench-simulation-orchestrator")
-simulation_tracer = SimulationTracer(orchestrator_tracer_provider)
+# Initialize tracer for SimulationOrchestrator module (fallback to None gracefully)
+try:
+    _tracer = Tracer() if Tracer is not None else None  # type: ignore
+    simulation_tracer = SimulationTracer(_tracer) if (SimulationTracer is not None and _tracer is not None) else None  # type: ignore
+except Exception:
+    simulation_tracer = None  # type: ignore
 
 
 @dataclass
