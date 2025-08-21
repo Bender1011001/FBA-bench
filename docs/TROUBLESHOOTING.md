@@ -121,9 +121,9 @@ This guide provides solutions to common issues you might encounter while using F
    ```
 
 3. **Run in debug mode**:
-   ```bash
-   python api_server.py --debug
-   ```
+    ```bash
+    poetry run uvicorn fba_bench_api.main:app --reload --host 0.0.0.0 --port 8000 --log-level debug
+    ```
 
 4. **Check port availability**:
    ```bash
@@ -355,9 +355,9 @@ This guide provides solutions to common issues you might encounter while using F
    - Check agent configuration
 
 3. **Run in verbose mode**:
-   ```bash
-   python api_server.py --verbose
-   ```
+    ```bash
+    poetry run uvicorn fba_bench_api.main:app --host 0.0.0.0 --port 8000 --log-level info
+    ```
 
 ### Benchmark Results Inconsistent
 
@@ -550,9 +550,9 @@ This guide provides solutions to common issues you might encounter while using F
    ```
 
 2. **Enable debug mode at runtime**:
-   ```bash
-   python api_server.py --debug
-   ```
+    ```bash
+    poetry run uvicorn fba_bench_api.main:app --reload --host 0.0.0.0 --port 8000 --log-level debug
+    ```
 
 3. **Set environment variable**:
    ```bash
@@ -564,9 +564,9 @@ This guide provides solutions to common issues you might encounter while using F
 **Solutions**:
 
 1. **Generate system report**:
-   ```bash
-   python api_server.py --diagnostic
-   ```
+    ```bash
+    curl -fsS http://localhost:8000/api/v1/health
+    ```
 
 2. **Collect logs**:
    ```bash

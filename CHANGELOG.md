@@ -23,6 +23,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - (To be filled if any parts are removed before release)
 
+## [3.0.0] - 2025-08-20
+
+### Added
+- Production Dockerfile running FastAPI via uvicorn (`fba_bench_api.main:app`) with healthcheck.
+- GitHub Actions CI matrix using Poetry for backend and Node for frontend, plus Docker build-and-healthcheck job.
+- .env.example templates for backend and frontend (environment variable references in docs and tests).
+
+### Changed
+- Standardized versioning across pyproject, docs, and release notes to 3.0.0.
+- CI now installs dependencies via Poetry and runs full backend + frontend test suites with coverage.
+- Frontend dev:all script uses uvicorn for the canonical backend app.
+
+### Fixed
+- Removed reliance on deprecated `api_server.py` in container startup.
+- Improved integration surfaces to avoid direct legacy RunnerFactory imports.
+
+### Removed
+- Inline Node/npm installation from backend container image.
+
 ## [2.0.0] - 2025-08-16
 
 ### Added

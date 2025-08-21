@@ -143,8 +143,8 @@ graph TD
     # .env
     OPENROUTER_API_KEY="your_openrouter_api_key_here"
     OPENAI_API_KEY="your_openai_api_key_here"
-    FBA_BENCH_REDIS_URL="redis://localhost:6379/0" # Only needed for distributed mode
-    FBA_BENCH_DB_URL="sqlite:///./fba_bench.db" # Default SQLite, can be postgresql/mysql
+    FBA_BENCH_REDIS_URL="redis://localhost:6379/0"  # Only needed for distributed mode
+    FBA_BENCH_DB_URL="sqlite:///./fba_bench.db"     # Default SQLite, can be postgresql/mysql
     ```
 
 ### Frontend Setup
@@ -164,8 +164,8 @@ graph TD
     Create a `.env` file in the `frontend/` directory based on `frontend/.env.example`.
     ```ini
     # frontend/.env
-    VITE_API_BASE_URL=http://localhost:8000 # Adjust if your backend runs on a different port
-    VITE_WEBSOCKET_URL=ws://localhost:8000/ws # Adjust if your backend runs on a different host/port
+    VITE_API_BASE_URL=http://localhost:8000
+    VITE_WEBSOCKET_URL=ws://localhost:8000/ws
     ```
 
 ## 🏃‍♀️ Usage
@@ -246,11 +246,11 @@ This will execute tests using Vitest/React Testing Library, as configured in `fr
 
 ## 🤝 Contribution Guidelines
 
-We welcome contributions to FBA-Bench! Please refer to `CONTRIBUTING.md` (to be created) for detailed guidelines on how to set up your development environment, propose changes, and submit pull requests.
+We welcome contributions to FBA-Bench! Please refer to `CONTRIBUTING.md` for detailed guidelines on how to set up your development environment, propose changes, and submit pull requests.
 
 ## 📝 License
 
-This project is licensed under the MIT License - see the `LICENSE` file (to be created or identified if existing) for details.
+This project is licensed under the MIT License - see the `LICENSE` file for details.
 
 ---
 **FBA-Bench v3: Research Toolkit for Financial & Business Agent Benchmarking**

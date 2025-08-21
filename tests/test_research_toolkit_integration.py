@@ -149,7 +149,7 @@ class ResearchToolkitIntegrationTest:
             
         except requests.exceptions.RequestException:
             print("⚠️  API server not running - skipping REST API tests")
-            print("   💡 To test APIs, run: python api_server.py")
+            print("   💡 To test APIs, run: poetry run uvicorn fba_bench_api.main:app --reload --host 0.0.0.0 --port 8000")
     
     async def _test_websocket_if_available(self):
         """Test WebSocket connection if server is running."""
@@ -177,7 +177,7 @@ class ResearchToolkitIntegrationTest:
                 
         except (websockets.exceptions.ConnectionRefused, asyncio.TimeoutError):
             print("⚠️  WebSocket server not available - skipping WebSocket tests")
-            print("   💡 To test WebSocket, run: python api_server.py")
+            print("   💡 To test WebSocket, run: poetry run uvicorn fba_bench_api.main:app --reload --host 0.0.0.0 --port 8000")
         except Exception as e:
             print(f"⚠️  WebSocket test error: {e}")
     

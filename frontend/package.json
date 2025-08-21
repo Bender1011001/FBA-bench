@@ -1,11 +1,11 @@
 {
   "name": "frontend",
   "private": true,
-  "version": "0.0.0",
+  "version": "3.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:all": "concurrently \"cd .. && uvicorn api_server:app --reload --host 0.0.0.0 --port 8000\" \"npm run dev\" --names \"backend,frontend\" --prefix-colors \"blue,green\"",
+    "dev:all": "concurrently \"cd .. && poetry run uvicorn fba_bench_api.main:app --reload --host 0.0.0.0 --port 8000\" \"npm run dev\" --names \"backend,frontend\" --prefix-colors \"blue,green\"",
     "build": "tsc -b && vite build",
     "build:skip-tests": "vite build",
     "lint": "eslint .",

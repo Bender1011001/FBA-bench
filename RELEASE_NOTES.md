@@ -1,6 +1,6 @@
-# FBA-Bench v0.9.0-rc.1
+# FBA-Bench v3.0.0
 
-This release candidate focuses on determinism, safety, CI hardening, and configuration UX. It removes reliance on deprecated agent runner factories at runtime surfaces, adds baseline plugin security validation, and documents tier/budget configuration.
+This GA release focuses on determinism, safety, CI hardening, and configuration UX, with a production container entrypoint and aligned versioning.
 
 ## Highlights
 
@@ -17,12 +17,16 @@ This release candidate focuses on determinism, safety, CI hardening, and configu
   - External config discovery, baseline validation, code/git/fee hash computation, cache integrity checks.
 
 - Plugin security baseline:
-  - Production tooling now leverages the real PluginManager security validator when available; falls back to a safe, explicit no-op with warning if unavailable.
+  - Production tooling leverages the real PluginManager security validator when available; falls back to a safe, explicit no-op with warning if unavailable.
   - File: `community/contribution_tools_production.py`
 
 - CI hardening:
-  - GitHub Actions workflow runs invariants on Linux and Windows and includes a production CLI smoke test when present.
+  - GitHub Actions workflow installs via Poetry and runs full backend + frontend test matrices on Linux and Windows, plus a Docker build-and-healthcheck job.
   - File: `.github/workflows/ci.yml`
+
+- Containerization:
+  - Production Dockerfile now runs FastAPI via uvicorn (`fba_bench_api.main:app`), installs dependencies from `pyproject.toml`, and provides a healthcheck.
+  - File: `Dockerfile`
 
 - Agent runner deprecation handling:
   - Adapter no longer imports legacy RunnerFactory directly.
@@ -33,6 +37,9 @@ This release candidate focuses on determinism, safety, CI hardening, and configu
 
 - CI:
   - `.github/workflows/ci.yml`
+
+- Docker:
+  - `Dockerfile`
 
 - Docs:
   - `docs/CONFIGURATION.md`
@@ -64,20 +71,19 @@ This release candidate focuses on determinism, safety, CI hardening, and configu
 ## CI Entry Points
 
 - Invariants: `pytest -q tests/test_invariants.py`
-- Production CLI smoke: `pytest -q tests/test_experiment_cli_production.py` (optional; runs when present)
+- Production CLI smoke: `pytest -q tests/test_experiment_cli_production.py` (when present)
+- Full suite: `pytest` (backend) and `cd frontend && npm test` (frontend)
 
-## Known Deferrals to GA
+## Known Deferrals
 
-- Learning stack (PPO + simulator) remains in-progress for the next release.
+- Learning stack (PPO + simulator) remains in-progress for the next minor release.
 - Advanced Observability UI (baseline hooks are documented and recommended).
 - Larger-scale integration/performance realism.
-- Refactor out remaining legacy RunnerFactory references in integration tests (runtime surfaces are already resilient).
 
 ## Changelog (condensed)
 
-- feat(ci): add GitHub Actions with invariants + CLI smoke
-- feat(security): production contribution manager uses real PluginManager validator when available
-- docs: add tier/budget CLI/env configuration guide with determinism and audit overview
-- fix(integration): AgentAdapter no longer imports RunnerFactory directly
-- fix(integration): IntegrationManager gracefully handles ImportError from deprecated factory paths
+- feat(container): uvicorn entrypoint for FastAPI and Poetry-driven installs
+- feat(ci): matrix tests + Docker healthcheck
+- docs: configuration and determinism guidance
+- fix(integration): remove legacy RunnerFactory runtime coupling
 - test: deterministic sim fixtures ensure invariants pass and RNG isolation holds

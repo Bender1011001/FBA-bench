@@ -1,59 +1,38 @@
 # FBA-Bench Dockerfile
-# This Dockerfile creates a container for the FBA-Bench LLM benchmarking tool
+# Production backend image for FastAPI API (uvicorn)
 
-# Use Python 3.11 slim image
 FROM python:3.11-slim
 
-# Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
 
-# Install system dependencies
+# Install system dependencies required for building some wheels and healthcheck
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \
         curl \
         git \
-        nodejs \
-        npm \
     && rm -rf /var/lib/apt/lists/*
 
-# Set work directory
 WORKDIR /app
 
-# Copy requirements file
-COPY requirements.txt .
+# Upgrade pip tooling early
+RUN python -m pip install --upgrade pip setuptools wheel
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy package.json and package-lock.json for frontend
-COPY frontend/package*.json ./frontend/
-
-# Install frontend dependencies
-RUN cd frontend && npm install
-
-# Copy the entire project
+# Copy project files
 COPY . .
 
-# Build the frontend
-RUN cd frontend && npm run build:skip-tests
+# Install project with PEP 517 using poetry-core build backend
+# This installs runtime dependencies from pyproject.toml
+RUN pip install --no-cache-dir .
 
-# Create a non-root user
-RUN useradd --create-home --shell /bin/bash app \
-    && chown -R app:app /app
-USER app
-
-# Create directories for data
-RUN mkdir -p /app/scenario_results /app/logs
-
-# Expose port
+# Expose API port
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/api/v1/health || exit 1
+# Health check for FastAPI app
+HEALTHCHECK --interval=30s --timeout=30s --start-period=10s --retries=3 \
+    CMD curl -fsS http://localhost:8000/api/v1/health || exit 1
 
-# Start the application
-CMD ["python", "api_server.py"]
+# Start FastAPI using uvicorn
+CMD ["uvicorn", "fba_bench_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
