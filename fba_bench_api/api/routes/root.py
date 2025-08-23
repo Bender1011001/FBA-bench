@@ -32,75 +32,8 @@ async def root() -> str:
     """
 
 
-@router.get("/api/v1/health")
-async def health_check() -> Dict[str, Any]:
-    # Base metadata
-    ts = datetime.now(tz=timezone.utc).isoformat()
-    uptime = max(0.0, time.time() - _START_TIME) if _START_TIME else 0.0
-    build = get_build_metadata()
-    env_name = os.getenv("ENV_NAME", "unknown")
-
-    # Optional dependency checks gated by env flags
-    redis_ok = None
-    db_ok = None
-
-    try:
-        if os.getenv("CHECK_REDIS", "0") == "1":
-            redis_url = (
-                os.getenv("REDIS_URL")
-                or os.getenv("FBA_BENCH_REDIS_URL")
-                or os.getenv("FBA_REDIS_URL")
-            )
-            if redis_url:
-                try:
-                    import redis  # type: ignore
-
-                    client = redis.from_url(redis_url)
-                    client.ping()
-                    redis_ok = True
-                except Exception:
-                    redis_ok = False
-    except Exception:
-        # Never raise from health endpoint
-        redis_ok = False
-
-    try:
-        if os.getenv("CHECK_DB", "0") == "1":
-            db_url = os.getenv("DATABASE_URL") or os.getenv("FBA_BENCH_DB_URL")
-            if db_url:
-                try:
-                    from sqlalchemy import create_engine  # type: ignore
-
-                    engine = create_engine(db_url, pool_pre_ping=True)
-                    with engine.connect() as conn:
-                        conn.execute("SELECT 1")
-                    db_ok = True
-                except Exception:
-                    db_ok = False
-    except Exception:
-        db_ok = False
-
-    payload: Dict[str, Any] = {
-        "status": "healthy",
-        "service": "FBA-Bench Research Toolkit API",
-        "version": __version__,
-        "timestamp": ts,
-        "environment": env_name,
-        "build_time": build.get("build_time", "unknown"),
-        "git_sha": build.get("git_sha", "unknown"),
-        "uptime_s": round(uptime, 3),
-        "dashboard_service_running": bool(
-            dashboard_service and getattr(dashboard_service, "is_running", False)
-        ),
-        "websocket_connections": len(getattr(connection_manager, "active_connections", [])),
-    }
-
-    if redis_ok is not None:
-        payload["redis_ok"] = redis_ok
-    if db_ok is not None:
-        payload["db_ok"] = db_ok
-
-    return payload
+# Removed: /api/v1/health is now provided as an alias in the main app and delegates
+# to the primary /health handler to ensure identical payload and status codes.
 
 
 @router.get("/api/v1/websocket/stats")

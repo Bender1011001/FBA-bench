@@ -6,10 +6,10 @@ from typing import Optional, Literal
 
 from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from fba_bench_api.core.database import get_db_session
-from fba_bench_api.core.persistence import PersistenceManager
+from fba_bench_api.core.database_async import get_async_db_session
+from fba_bench_api.core.persistence_async import AsyncPersistenceManager
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/experiments", tags=["Experiments"])
@@ -68,8 +68,8 @@ class Experiment(ExperimentBase):
     created_at: datetime
     updated_at: datetime
 
-def get_pm(db: Session = Depends(get_db_session)) -> PersistenceManager:
-    return PersistenceManager(db)
+def get_pm(db: AsyncSession = Depends(get_async_db_session)) -> AsyncPersistenceManager:
+    return AsyncPersistenceManager(db)
 
 # Utilities
 import uuid as _uuid
@@ -96,12 +96,12 @@ def _validate_transition(current: ExperimentStatus, desired: ExperimentStatus) -
 # Routes
 
 @router.get("", response_model=list[Experiment], description="List all experiments")
-async def list_experiments(pm: PersistenceManager = Depends(get_pm)):
-    items = pm.experiments().list()
+async def list_experiments(pm: AsyncPersistenceManager = Depends(get_pm)):
+    items = await pm.experiments().list()
     return [Experiment(**i) for i in items]
 
 @router.post("", response_model=Experiment, status_code=status.HTTP_201_CREATED, description="Create a new experiment (starts as draft)")
-async def create_experiment(payload: ExperimentCreate, pm: PersistenceManager = Depends(get_pm)):
+async def create_experiment(payload: ExperimentCreate, pm: AsyncPersistenceManager = Depends(get_pm)):
     data = payload.model_dump()
     item = {
         "id": _uuid4(),
@@ -114,19 +114,19 @@ async def create_experiment(payload: ExperimentCreate, pm: PersistenceManager = 
         "created_at": _now(),
         "updated_at": _now(),
     }
-    created = pm.experiments().create(item)
+    created = await pm.experiments().create(item)
     return Experiment(**created)
 
 @router.get("/{experiment_id}", response_model=Experiment, description="Retrieve experiment by id")
-async def get_experiment(experiment_id: str, pm: PersistenceManager = Depends(get_pm)):
-    item = pm.experiments().get(experiment_id)
+async def get_experiment(experiment_id: str, pm: AsyncPersistenceManager = Depends(get_pm)):
+    item = await pm.experiments().get(experiment_id)
     if not item:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Experiment '{experiment_id}' not found")
     return Experiment(**item)
 
 @router.patch("/{experiment_id}", response_model=Experiment, description="Update experiment metadata or transition status")
-async def update_experiment(experiment_id: str, payload: ExperimentUpdate, pm: PersistenceManager = Depends(get_pm)):
-    current = pm.experiments().get(experiment_id)
+async def update_experiment(experiment_id: str, payload: ExperimentUpdate, pm: AsyncPersistenceManager = Depends(get_pm)):
+    current = await pm.experiments().get(experiment_id)
     if not current:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Experiment '{experiment_id}' not found")
     update_data = payload.model_dump(exclude_unset=True)
@@ -134,12 +134,37 @@ async def update_experiment(experiment_id: str, payload: ExperimentUpdate, pm: P
     if "status" in update_data:
         _validate_transition(current["status"], update_data["status"])  # type: ignore[arg-type]
     update_data["updated_at"] = _now()
-    updated = pm.experiments().update(experiment_id, update_data)
+    updated = await pm.experiments().update(experiment_id, update_data)
     return Experiment(**updated)  # type: ignore[arg-type]
 
 @router.delete("/{experiment_id}", status_code=status.HTTP_204_NO_CONTENT, description="Delete an experiment")
-async def delete_experiment(experiment_id: str, pm: PersistenceManager = Depends(get_pm)):
-    ok = pm.experiments().delete(experiment_id)
+async def delete_experiment(experiment_id: str, pm: AsyncPersistenceManager = Depends(get_pm)):
+    ok = await pm.experiments().delete(experiment_id)
     if not ok:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Experiment '{experiment_id}' not found")
     return None
+
+
+@router.post("/{experiment_id}/stop", response_model=Experiment, description="Gracefully stop a running experiment (transitions to 'completed')")
+async def stop_experiment(experiment_id: str, pm: AsyncPersistenceManager = Depends(get_pm)):
+    current = await pm.experiments().get(experiment_id)
+    if not current:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Experiment '{experiment_id}' not found")
+    if current.get("status") != "running":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Experiment not running")
+    update = {"status": "completed", "updated_at": _now()}
+    updated = await pm.experiments().update(experiment_id, update)
+    return Experiment(**updated)
+
+
+@router.get("/{experiment_id}/results", description="Retrieve experiment results (placeholder payload if not implemented)")
+async def get_experiment_results(experiment_id: str, pm: AsyncPersistenceManager = Depends(get_pm)):
+    current = await pm.experiments().get(experiment_id)
+    if not current:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Experiment '{experiment_id}' not found")
+    current_status = current.get("status", "unknown")
+    return {
+        "experiment_id": experiment_id,
+        "results": [],
+        "summary": {"status": current_status},
+    }

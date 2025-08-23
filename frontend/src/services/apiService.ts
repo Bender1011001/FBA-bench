@@ -77,7 +77,8 @@ class ApiService {
    */
   private getStoredAuthToken(): string | null {
     try {
-      return localStorage.getItem('auth_token');
+      // Prefer unified key 'auth:jwt', fall back to legacy 'auth_token' for backward compatibility
+      return localStorage.getItem('auth:jwt') ?? localStorage.getItem('auth_token');
     } catch (error) {
       console.error('Failed to access localStorage for auth token:', error);
       return null;
@@ -89,7 +90,8 @@ class ApiService {
    */
   private storeAuthToken(token: string): void {
     try {
-      localStorage.setItem('auth_token', token);
+      // Persist to unified key
+      localStorage.setItem('auth:jwt', token);
     } catch (error) {
       console.error('Failed to store auth token:', error);
     }
@@ -100,6 +102,8 @@ class ApiService {
    */
   private clearStoredAuthToken(): void {
     try {
+      // Remove unified key and legacy key for backward compatibility
+      localStorage.removeItem('auth:jwt');
       localStorage.removeItem('auth_token');
     } catch (error) {
       console.error('Failed to clear auth token:', error);
@@ -473,7 +477,7 @@ export async function fetchResultsData(experimentId: string): Promise<ResultsDat
   console.log(`[API Service] Fetching results for experiment: ${experimentId}`);
   
   try {
-    const response = await apiService.get<ResultsData>(`/experiments/${experimentId}/results`);
+    const response = await apiService.get<ResultsData>(`/api/v1/experiments/${experimentId}/results`);
     return response.data;
   } catch (error) {
     console.error(`[API Service] Failed to fetch results for experiment ${experimentId}:`, error);
@@ -492,7 +496,7 @@ export async function fetchExperimentDetails(experimentId: string): Promise<Expe
     console.log(`[API Service] Fetching details for experiment: ${experimentId}`);
     
     try {
-        const response = await apiService.get<ExperimentExecution>(`/experiments/${experimentId}`);
+        const response = await apiService.get<ExperimentExecution>(`/api/v1/experiments/${experimentId}`);
         return response.data;
     } catch (error) {
         console.error(`[API Service] Failed to fetch details for experiment ${experimentId}:`, error);
@@ -511,7 +515,7 @@ export async function startExperiment(experimentConfig: unknown): Promise<Experi
   console.log(`[API Service] Starting new experiment`);
   
   try {
-    const response = await apiService.post<ExperimentExecution>('/experiments', experimentConfig);
+    const response = await apiService.post<ExperimentExecution>('/api/v1/experiments', experimentConfig);
     return response.data;
   } catch (error) {
     console.error(`[API Service] Failed to start experiment:`, error);
@@ -530,7 +534,7 @@ export async function stopExperiment(experimentId: string): Promise<void> {
   console.log(`[API Service] Stopping experiment: ${experimentId}`);
   
   try {
-    await apiService.post<void>(`/experiments/${experimentId}/stop`);
+    await apiService.post<void>(`/api/v1/experiments/${experimentId}/stop`);
   } catch (error) {
     console.error(`[API Service] Failed to stop experiment ${experimentId}:`, error);
     
@@ -547,7 +551,7 @@ export async function fetchExperimentList(): Promise<ExperimentExecution[]> {
   console.log(`[API Service] Fetching experiment list`);
   
   try {
-    const response = await apiService.get<ExperimentExecution[]>('/experiments');
+    const response = await apiService.get<ExperimentExecution[]>('/api/v1/experiments');
     return response.data;
   } catch (error) {
     console.error(`[API Service] Failed to fetch experiment list:`, error);
@@ -566,7 +570,7 @@ export async function deleteExperiment(experimentId: string): Promise<void> {
   console.log(`[API Service] Deleting experiment: ${experimentId}`);
   
   try {
-    await apiService.delete<void>(`/experiments/${experimentId}`);
+    await apiService.delete<void>(`/api/v1/experiments/${experimentId}`);
   } catch (error) {
     console.error(`[API Service] Failed to delete experiment ${experimentId}:`, error);
     

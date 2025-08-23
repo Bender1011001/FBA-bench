@@ -1,0 +1,58 @@
+name: Alembic Migrate
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment (maps to GitHub Environments for secrets and protection rules)'
+        required: true
+        default: 'staging'
+        type: string
+  workflow_call:
+    secrets:
+      DATABASE_URL:
+        required: true
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    # Use the provided environment input when manually dispatched; default to 'staging' if not set.
+    environment: ${{ inputs.environment || 'staging' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Poetry
+        uses: abatilo/actions-poetry@v2
+        with:
+          poetry-version: '1.7.1'
+
+      - name: Configure Poetry to create in-project venv
+        run: |
+          poetry config virtualenvs.create true --local
+          poetry config virtualenvs.in-project true --local
+
+      - name: Install dependencies
+        run: poetry install --no-interaction --no-ansi
+
+      - name: Ensure Alembic is available (install if missing)
+        run: poetry run python -c "import alembic" || poetry run pip install alembic
+
+      - name: Run Alembic migrations if configured
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          if [ -f "alembic.ini" ]; then
+            echo "alembic.ini found. Running alembic upgrade head..."
+            poetry run alembic upgrade head
+          elif [ -d "alembic" ]; then
+            echo "alembic/ directory found but no alembic.ini. Skipping migrations. Provide alembic.ini to enable."
+          else
+            echo "No Alembic configuration found; skipping."
+          fi

@@ -10,9 +10,9 @@ from fba_bench_api.models.agents import (
     AgentConfigurationResponse, AgentValidationRequest, AgentValidationResponse, FrameworksResponse
 )
 from benchmarking.config.pydantic_config import UnifiedAgentRunnerConfig, LLMConfig, MemoryConfig, AgentConfig, CrewConfig
-from fba_bench_api.core.database import get_db_session
-from sqlalchemy.orm import Session
-from fba_bench_api.core.persistence import PersistenceManager
+from fba_bench_api.core.database_async import get_async_db_session
+from sqlalchemy.ext.asyncio import AsyncSession
+from fba_bench_api.core.persistence_async import AsyncPersistenceManager
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/agents", tags=["Agents"])
@@ -115,8 +115,8 @@ async def validate_agent_configuration(req: AgentValidationRequest):
 # === CRUD Agent Management (in-memory repository, production-ready interface) ===
 from fastapi import status
 
-def get_pm(db: Session = Depends(get_db_session)) -> PersistenceManager:
-    return PersistenceManager(db)
+def get_pm(db: AsyncSession = Depends(get_async_db_session)) -> AsyncPersistenceManager:
+    return AsyncPersistenceManager(db)
 
 # Pydantic Schemas
 FrameworkEnum = Literal["baseline", "langchain", "crewai", "custom"]
@@ -177,12 +177,12 @@ def _now() -> datetime:
 # CRUD Endpoints
 
 @router.get("", response_model=list[Agent], description="List all agents")
-async def list_agents(pm: PersistenceManager = Depends(get_pm)):
-    items = pm.agents().list()
+async def list_agents(pm: AsyncPersistenceManager = Depends(get_pm)):
+    items = await pm.agents().list()
     return [Agent(**i) for i in items]
 
 @router.post("", response_model=Agent, status_code=status.HTTP_201_CREATED, description="Create a new agent")
-async def create_agent(payload: AgentCreate, pm: PersistenceManager = Depends(get_pm)):
+async def create_agent(payload: AgentCreate, pm: AsyncPersistenceManager = Depends(get_pm)):
     data = payload.model_dump()
     item = {
         "id": _uuid4(),
@@ -192,30 +192,30 @@ async def create_agent(payload: AgentCreate, pm: PersistenceManager = Depends(ge
         "created_at": _now(),
         "updated_at": _now(),
     }
-    created = pm.agents().create(item)
+    created = await pm.agents().create(item)
     return Agent(**created)
 
 @router.get("/{agent_id}", response_model=Agent, description="Retrieve an agent by id")
-async def get_agent(agent_id: str, pm: PersistenceManager = Depends(get_pm)):
-    item = pm.agents().get(agent_id)
+async def get_agent(agent_id: str, pm: AsyncPersistenceManager = Depends(get_pm)):
+    item = await pm.agents().get(agent_id)
     if not item:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Agent '{agent_id}' not found")
     return Agent(**item)
 
 @router.patch("/{agent_id}", response_model=Agent, description="Update an existing agent")
-async def update_agent(agent_id: str, payload: AgentUpdate, pm: PersistenceManager = Depends(get_pm)):
+async def update_agent(agent_id: str, payload: AgentUpdate, pm: AsyncPersistenceManager = Depends(get_pm)):
     # Validate framework transitions are within enum (handled by pydantic)
-    current = pm.agents().get(agent_id)
+    current = await pm.agents().get(agent_id)
     if not current:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Agent '{agent_id}' not found")
     update_data = payload.model_dump(exclude_unset=True)
     update_data["updated_at"] = _now()
-    updated = pm.agents().update(agent_id, update_data)
+    updated = await pm.agents().update(agent_id, update_data)
     return Agent(**updated)  # type: ignore[arg-type]
 
 @router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT, description="Delete an agent")
-async def delete_agent(agent_id: str, pm: PersistenceManager = Depends(get_pm)):
-    ok = pm.agents().delete(agent_id)
+async def delete_agent(agent_id: str, pm: AsyncPersistenceManager = Depends(get_pm)):
+    ok = await pm.agents().delete(agent_id)
     if not ok:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Agent '{agent_id}' not found")
     return None

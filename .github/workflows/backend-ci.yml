@@ -1,0 +1,70 @@
+name: Backend CI
+
+on:
+  push:
+    paths:
+      - 'fba_bench_api/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+      - 'poetry.lock'
+      - '.github/workflows/backend-ci.yml'
+  pull_request:
+    paths:
+      - 'fba_bench_api/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+      - 'poetry.lock'
+      - '.github/workflows/backend-ci.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'poetry'
+
+      - name: Install Poetry
+        uses: abatilo/actions-poetry@v2
+        with:
+          poetry-version: '1.7.1'
+
+      - name: Configure Poetry to create in-project venv
+        run: |
+          poetry config virtualenvs.create true --local
+          poetry config virtualenvs.in-project true --local
+
+      - name: Cache virtualenv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: ${{ runner.os }}-py311-poetry-venv-${{ hashFiles('**/poetry.lock') }}
+
+      - name: Install dependencies
+        run: poetry install --no-interaction --no-ansi
+
+      - name: Run tests
+        env:
+          DATABASE_URL: sqlite+aiosqlite:///./test.db
+          DB_AUTO_CREATE: "true"
+          AUTH_ENABLED: "false"
+          AUTH_TEST_BYPASS: "true"
+          API_RATE_LIMIT: "100/minute"
+          FBA_CORS_ALLOW_ORIGINS: "*"
+        run: |
+          mkdir -p artifacts
+          set -o pipefail
+          poetry run pytest -q 2>&1 | tee artifacts/test-output.txt
+
+      - name: Upload pytest output on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-output
+          path: artifacts/test-output.txt
+          if-no-files-found: warn

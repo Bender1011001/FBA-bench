@@ -10,9 +10,9 @@ from fba_bench_api.api.di import get_event_bus, get_simulation_orchestrator
 from fba_bench_api.api.errors import SimulationNotFoundError, SimulationStateError
 from pydantic import BaseModel, Field
 from fba_bench_api.core.redis_client import get_redis
-from sqlalchemy.orm import Session
-from fba_bench_api.core.database import get_db_session
-from fba_bench_api.core.persistence import PersistenceManager
+from sqlalchemy.ext.asyncio import AsyncSession
+from fba_bench_api.core.database_async import get_async_db_session
+from fba_bench_api.core.persistence_async import AsyncPersistenceManager
 
 logger = logging.getLogger(__name__)
 
@@ -42,8 +42,8 @@ class Simulation(BaseModel):
     updated_at: datetime
     metadata: Optional[dict] = None
 
-def get_pm(db: Session = Depends(get_db_session)) -> PersistenceManager:
-    return PersistenceManager(db)
+def get_pm(db: AsyncSession = Depends(get_async_db_session)) -> AsyncPersistenceManager:
+    return AsyncPersistenceManager(db)
 
 # Utilities
 import uuid as _uuid
@@ -67,7 +67,7 @@ async def _publish_status(sim_id: str, status_value: str) -> None:
 # Routes
 
 @router.post("", response_model=Simulation, status_code=status.HTTP_201_CREATED, description="Create a simulation record (pending). Returns websocket topic to subscribe for progress.")
-async def create_simulation(payload: SimulationCreate, pm: PersistenceManager = Depends(get_pm)):
+async def create_simulation(payload: SimulationCreate, pm: AsyncPersistenceManager = Depends(get_pm)):
     sim_id = _uuid4()
     item = {
         "id": sim_id,
@@ -78,36 +78,36 @@ async def create_simulation(payload: SimulationCreate, pm: PersistenceManager = 
         "updated_at": _now(),
         "metadata": payload.metadata or {},
     }
-    created = pm.simulations().create(item)
+    created = await pm.simulations().create(item)
     return Simulation(**created)
 
 @router.post("/{simulation_id}/start", response_model=Simulation, description="Start a pending simulation")
-async def start_simulation(simulation_id: str, pm: PersistenceManager = Depends(get_pm)):
-    current = pm.simulations().get(simulation_id)
+async def start_simulation(simulation_id: str, pm: AsyncPersistenceManager = Depends(get_pm)):
+    current = await pm.simulations().get(simulation_id)
     if not current:
         raise SimulationNotFoundError(simulation_id)
     if current["status"] != "pending":
         raise SimulationStateError(simulation_id, expected="pending", actual=current.get("status", "unknown"))
     updates = {"status": "running", "updated_at": _now()}
-    updated = pm.simulations().update(simulation_id, updates)
+    updated = await pm.simulations().update(simulation_id, updates)
     await _publish_status(simulation_id, "running")
     return Simulation(**updated)  # type: ignore[arg-type]
 
 @router.post("/{simulation_id}/stop", response_model=Simulation, description="Stop a running simulation")
-async def stop_simulation(simulation_id: str, pm: PersistenceManager = Depends(get_pm)):
-    current = pm.simulations().get(simulation_id)
+async def stop_simulation(simulation_id: str, pm: AsyncPersistenceManager = Depends(get_pm)):
+    current = await pm.simulations().get(simulation_id)
     if not current:
         raise SimulationNotFoundError(simulation_id)
     if current["status"] != "running":
         raise SimulationStateError(simulation_id, expected="running", actual=current.get("status", "unknown"))
     updates = {"status": "stopped", "updated_at": _now()}
-    updated = pm.simulations().update(simulation_id, updates)
+    updated = await pm.simulations().update(simulation_id, updates)
     await _publish_status(simulation_id, "stopped")
     return Simulation(**updated)  # type: ignore[arg-type]
 
 @router.get("/{simulation_id}", response_model=Simulation, description="Get simulation status")
-async def get_simulation(simulation_id: str, pm: PersistenceManager = Depends(get_pm)):
-    current = pm.simulations().get(simulation_id)
+async def get_simulation(simulation_id: str, pm: AsyncPersistenceManager = Depends(get_pm)):
+    current = await pm.simulations().get(simulation_id)
     if not current:
         raise SimulationNotFoundError(simulation_id)
     return Simulation(**current)

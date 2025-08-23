@@ -69,8 +69,39 @@ let authTokenProvider: (() => string | null) | null = null;
  * Allow external code (AuthContext) to register a token getter.
  * Pass undefined or call with no args to reset to null.
  */
-export function setAuthTokenProvider(getter?: () => string | null): void {
-  authTokenProvider = getter ?? null;
+export function setAuthTokenProvider(getterOrToken?: (() => string | null) | string | null): void {
+  if (typeof getterOrToken === 'function') {
+    authTokenProvider = getterOrToken;
+    try {
+      const token = getterOrToken();
+      if (typeof token === 'string' && token) {
+        localStorage.setItem('auth:jwt', token);
+      } else {
+        localStorage.removeItem('auth:jwt');
+      }
+    } catch {
+      // ignore storage access issues
+    }
+  } else if (typeof getterOrToken === 'string') {
+    const value = getterOrToken;
+    authTokenProvider = () => value;
+    try {
+      if (value) {
+        localStorage.setItem('auth:jwt', value);
+      } else {
+        localStorage.removeItem('auth:jwt');
+      }
+    } catch {
+      // ignore storage access issues
+    }
+  } else {
+    authTokenProvider = null;
+    try {
+      localStorage.removeItem('auth:jwt');
+    } catch {
+      // ignore storage issues
+    }
+  }
 }
 
 /**

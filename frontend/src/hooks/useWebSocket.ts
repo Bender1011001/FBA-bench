@@ -56,7 +56,7 @@ const useWebSocket = (options: WebSocketOptions): WebSocketHookResult => {
       // Attach Authorization via Sec-WebSocket-Protocol when token is available in localStorage or via a getter
       let subprotocols: string | string[] | undefined = protocols;
       try {
-        const token = localStorage.getItem('auth:jwt'); // optional: app should set this on login
+        const token = localStorage.getItem('auth:jwt') ?? localStorage.getItem('auth_token'); // prefer unified key, fallback to legacy
         if (token) {
           const proto = `auth.bearer.token.${token}`;
           if (Array.isArray(protocols)) {
